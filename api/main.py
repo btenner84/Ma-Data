@@ -21,16 +21,35 @@ app = FastAPI(
 )
 
 # CORS for Next.js frontend
+cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-S3_BUCKET = "ma-data123"
+S3_BUCKET = os.environ.get("S3_BUCKET", "ma-data123")
 s3 = boto3.client('s3')
+
+
+# === Health Check ===
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Railway."""
+    return {"status": "healthy", "service": "ma-intelligence-api"}
+
+
+@app.get("/")
+def root():
+    """Root endpoint."""
+    return {
+        "service": "MA Intelligence Platform API",
+        "version": "1.0.0",
+        "docs": "/docs"
+    }
 
 
 # === Data Loading Utilities ===
