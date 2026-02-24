@@ -458,7 +458,7 @@ export default function RiskScoresPage() {
                   width={50}
                 />
                 <Tooltip
-                  formatter={(value: number | null) => [value ? value.toFixed(4) : "-", "Risk Score"]}
+                  formatter={(value) => [typeof value === 'number' ? value.toFixed(4) : "-", "Risk Score"]}
                   labelFormatter={(year) => `Year: ${year}`}
                   contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
                 />
