@@ -13,6 +13,20 @@ from io import BytesIO
 from functools import lru_cache
 import zipfile
 import os
+import sys
+
+# Add project root for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import unified data layer (DuckDB + Audit)
+try:
+    from db import get_engine
+    from api.services.enrollment_service import get_enrollment_service
+    from api.services.ai_query_service import get_ai_query_service
+    UNIFIED_DATA_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Unified data layer not available: {e}")
+    UNIFIED_DATA_AVAILABLE = False
 
 app = FastAPI(
     title="MA Intelligence Platform API",
@@ -2937,6 +2951,354 @@ async def get_contract_measure_performance(contract_id: str):
         'total_weight': total_weight,
         'yearly_weighted_avgs': yearly_weighted_avgs,
     }
+
+
+# ================================================================
+# V3 UNIFIED DATA LAYER ENDPOINTS (DuckDB + Full Audit)
+# ================================================================
+# These endpoints use the new unified data architecture with:
+# - DuckDB for fast SQL over S3 Parquet
+# - Full audit logging (who queried what, when)
+# - Data lineage tracing (results -> source files)
+# ================================================================
+
+@app.get("/api/v3/enrollment/timeseries")
+async def get_enrollment_timeseries_v3(
+    parent_org: Optional[str] = None,
+    state: Optional[str] = None,
+    plan_type: Optional[str] = None,
+    product_type: Optional[str] = None,
+    group_type: Optional[str] = None,
+    snp_type: Optional[str] = None,
+    start_year: int = 2015,
+    end_year: int = 2026,
+    month: int = 1,
+    user_id: str = "api"
+):
+    """
+    Get enrollment timeseries using unified data layer (DuckDB + Audit).
+
+    Returns audit_id for lineage tracing.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available", "fallback": "/api/v2/enrollment/timeseries"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.get_timeseries(
+            parent_org=parent_org,
+            state=state,
+            plan_type=plan_type,
+            product_type=product_type,
+            group_type=group_type,
+            snp_type=snp_type,
+            start_year=start_year,
+            end_year=end_year,
+            month=month,
+            user_id=user_id
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/enrollment/by-parent")
+async def get_enrollment_by_parent_v3(
+    year: int = 2026,
+    month: int = 1,
+    limit: int = 20,
+    user_id: str = "api"
+):
+    """
+    Get enrollment by parent organization using unified data layer.
+
+    Returns audit_id for lineage tracing.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available", "fallback": "/api/enrollment/by-parent"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.get_by_parent_org(
+            year=year,
+            month=month,
+            limit=limit,
+            user_id=user_id
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/enrollment/by-state")
+async def get_enrollment_by_state_v3(
+    year: int = 2026,
+    month: int = 1,
+    user_id: str = "api"
+):
+    """
+    Get enrollment by state using unified data layer.
+
+    Note: State totals may be 1-3% lower than national due to HIPAA suppression.
+    Returns audit_id for lineage tracing.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.get_by_state(
+            year=year,
+            month=month,
+            user_id=user_id
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/enrollment/by-dimensions")
+async def get_enrollment_by_dimensions_v3(
+    year: int = 2026,
+    month: int = 1,
+    plan_type: Optional[str] = None,
+    product_type: Optional[str] = None,
+    group_type: Optional[str] = None,
+    snp_type: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get enrollment by dimension combinations (plan_type, product_type, group_type, snp_type).
+
+    Supports any filter combination. Returns audit_id for lineage tracing.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.get_by_dimensions(
+            year=year,
+            month=month,
+            plan_type=plan_type,
+            product_type=product_type,
+            group_type=group_type,
+            snp_type=snp_type,
+            user_id=user_id
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/enrollment/plan/{contract_id}/{plan_id}")
+async def get_plan_details_v3(
+    contract_id: str,
+    plan_id: str,
+    year: int = 2026,
+    user_id: str = "api"
+):
+    """
+    Get detailed information for a specific plan.
+
+    Joins data from enrollment, stars, and risk scores.
+    Returns audit_id for lineage tracing.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.get_plan_details(
+            contract_id=contract_id,
+            plan_id=plan_id,
+            year=year,
+            user_id=user_id
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/ai/query")
+async def ai_query(
+    question: str,
+    execute: bool = True,
+    user_id: str = "ai_query"
+):
+    """
+    Natural language query endpoint.
+
+    Translates questions into SQL and returns results with full audit trail.
+
+    Example questions:
+    - "What is the total MA enrollment in 2025?"
+    - "Who are the top 10 payers by enrollment?"
+    - "What is the D-SNP enrollment trend?"
+    - "What is UnitedHealth's market share?"
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_ai_query_service()
+        result = service.query(
+            question=question,
+            user_id=user_id,
+            execute=execute
+        )
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/ai/explain")
+async def ai_explain(question: str):
+    """
+    Explain how a natural language question would be interpreted.
+
+    Returns:
+    - Entities, measures, dimensions identified
+    - Generated SQL
+    - Source table and data lineage
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_ai_query_service()
+        result = service.explain_query(question)
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/ai/suggestions")
+async def ai_suggestions(partial: str = ""):
+    """
+    Get query suggestions based on partial input.
+
+    Useful for autocomplete in UI.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"suggestions": [
+            "What is the total MA enrollment?",
+            "Who are the top 10 payers?",
+            "What is the D-SNP enrollment trend?",
+            "Which states have the highest enrollment?",
+        ]}
+
+    try:
+        service = get_ai_query_service()
+        suggestions = service.get_suggestions(partial)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        return {"error": str(e), "suggestions": []}
+
+
+@app.get("/api/v3/lineage/{audit_id}")
+async def trace_lineage(audit_id: str):
+    """
+    Trace data lineage for a previous query.
+
+    Returns:
+    - Query details (SQL, timestamp, user)
+    - Tables accessed
+    - Source files (CMS data files that produced the data)
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.trace_lineage(audit_id)
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/tables")
+async def list_available_tables():
+    """
+    List all available tables in the unified data layer.
+
+    Returns table names, types (fact/dimension/aggregation), and descriptions.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        engine = get_engine()
+        tables = engine.get_available_tables()
+        return {"tables": tables}
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/sql")
+async def execute_sql(
+    sql: str,
+    user_id: str = "api",
+    context: str = "direct_sql"
+):
+    """
+    Execute a SQL query directly against the unified data layer.
+
+    USE WITH CAUTION - prefer semantic endpoints when possible.
+    All queries are logged for audit.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        engine = get_engine()
+        df, audit_id = engine.query_with_audit(
+            sql=sql,
+            user_id=user_id,
+            context=context
+        )
+        return {
+            "data": df.to_dict(orient='records'),
+            "row_count": len(df),
+            "columns": list(df.columns),
+            "audit_id": audit_id
+        }
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/status")
+async def unified_layer_status():
+    """
+    Check status of the unified data layer.
+
+    Returns availability and table registration status.
+    """
+    status = {
+        "unified_data_available": UNIFIED_DATA_AVAILABLE,
+        "version": "3.0.0",
+        "features": [
+            "DuckDB SQL over S3 Parquet",
+            "Full audit logging",
+            "Data lineage tracing",
+            "AI natural language queries"
+        ]
+    }
+
+    if UNIFIED_DATA_AVAILABLE:
+        try:
+            engine = get_engine()
+            tables = engine.get_available_tables()
+            status["tables_registered"] = len(tables)
+            status["status"] = "healthy"
+        except Exception as e:
+            status["status"] = "degraded"
+            status["error"] = str(e)
+    else:
+        status["status"] = "unavailable"
+        status["fallback"] = "Using v2 endpoints with direct S3 reads"
+
+    return status
 
 
 @app.get("/api/health")
