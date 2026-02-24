@@ -96,9 +96,8 @@ def load_crosswalk(year: int) -> Optional[pd.DataFrame]:
     for key in key_patterns:
         try:
             data = download_from_s3(key)
-            break
-        except s3.exceptions.NoSuchKey:
-            continue
+            if data:
+                break
         except Exception as e:
             continue
 

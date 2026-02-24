@@ -29,9 +29,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import boto3
 
-# Add parent for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from unified.audit_lineage import create_audit_logger
+# Add current dir for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from audit_lineage import create_audit_logger
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+    create_audit_logger = None
+    print("[WARN] Audit lineage module not available")
 
 S3_BUCKET = "ma-data123"
 FACTS_PREFIX = "processed/facts"
@@ -157,13 +163,14 @@ def build_agg_by_parent_year(df: pd.DataFrame, audit) -> pd.DataFrame:
     agg['_created_at'] = datetime.now().isoformat()
 
     # Log aggregation
-    audit.log_aggregate(
-        source='fact_enrollment_unified',
-        group_by=['parent_org', 'year', 'month'],
-        agg_functions={'enrollment': 'sum', 'plan_id': 'nunique'},
-        result_df=agg,
-        description='Aggregate by parent org and year'
-    )
+    if audit:
+        audit.log_aggregate(
+            source='fact_enrollment_unified',
+            group_by=['parent_org', 'year', 'month'],
+            agg_functions={'enrollment': 'sum', 'plan_id': 'nunique'},
+            result_df=agg,
+            description='Aggregate by parent org and year'
+        )
 
     print(f"  Generated {len(agg):,} rows for {agg['parent_org'].nunique()} parent orgs")
     return agg
@@ -207,13 +214,14 @@ def build_agg_by_state_year(df_geo: pd.DataFrame, audit) -> pd.DataFrame:
     agg['_created_at'] = datetime.now().isoformat()
     agg['_note'] = 'Totals may be ~1-3% lower than unified due to suppression'
 
-    audit.log_aggregate(
-        source='fact_enrollment_geographic',
-        group_by=['state', 'year', 'month'],
-        agg_functions={'enrollment': 'sum', 'is_suppressed': 'sum'},
-        result_df=agg,
-        description='Aggregate by state and year'
-    )
+    if audit:
+        audit.log_aggregate(
+            source='fact_enrollment_geographic',
+            group_by=['state', 'year', 'month'],
+            agg_functions={'enrollment': 'sum', 'is_suppressed': 'sum'},
+            result_df=agg,
+            description='Aggregate by state and year'
+        )
 
     print(f"  Generated {len(agg):,} rows for {agg['state'].nunique()} states")
     return agg
@@ -250,13 +258,14 @@ def build_agg_by_dimensions(df: pd.DataFrame, audit) -> pd.DataFrame:
     agg['_aggregation'] = 'agg_by_dimensions'
     agg['_created_at'] = datetime.now().isoformat()
 
-    audit.log_aggregate(
-        source='fact_enrollment_unified',
-        group_by=['year', 'month', 'plan_type_simplified', 'product_type', 'group_type', 'snp_type'],
-        agg_functions={'enrollment': 'sum'},
-        result_df=agg,
-        description='Aggregate by all dimension combinations'
-    )
+    if audit:
+        audit.log_aggregate(
+            source='fact_enrollment_unified',
+            group_by=['year', 'month', 'plan_type_simplified', 'product_type', 'group_type', 'snp_type'],
+            agg_functions={'enrollment': 'sum'},
+            result_df=agg,
+            description='Aggregate by all dimension combinations'
+        )
 
     print(f"  Generated {len(agg):,} dimension combinations")
     return agg
@@ -312,13 +321,14 @@ def build_agg_industry_totals(df: pd.DataFrame, audit) -> pd.DataFrame:
     agg['_aggregation'] = 'agg_industry_totals'
     agg['_created_at'] = datetime.now().isoformat()
 
-    audit.log_aggregate(
-        source='fact_enrollment_unified',
-        group_by=['year', 'month'],
-        agg_functions={'enrollment': 'sum', 'plan_id': 'nunique'},
-        result_df=agg,
-        description='Industry-level totals by year/month'
-    )
+    if audit:
+        audit.log_aggregate(
+            source='fact_enrollment_unified',
+            group_by=['year', 'month'],
+            agg_functions={'enrollment': 'sum', 'plan_id': 'nunique'},
+            result_df=agg,
+            description='Industry-level totals by year/month'
+        )
 
     print(f"  Generated {len(agg):,} rows ({agg['year'].nunique()} years)")
     return agg
@@ -395,8 +405,13 @@ def main():
     print("=" * 70)
     print(f"Timestamp: {datetime.now().isoformat()}")
 
-    # Initialize audit
-    audit = create_audit_logger('build_aggregation_tables')
+    # Initialize audit (optional)
+    audit = None
+    if AUDIT_AVAILABLE and create_audit_logger:
+        try:
+            audit = create_audit_logger('build_aggregation_tables')
+        except Exception as e:
+            print(f"[WARN] Could not initialize audit: {e}")
 
     try:
         # Load source data
@@ -442,11 +457,12 @@ def main():
             len(agg_totals) if agg_totals is not None else 0,
         ])
 
-        audit.finish_run(
-            success=validations['status'] == 'passed',
-            output_tables=output_tables,
-            output_row_count=total_rows
-        )
+        if audit:
+            audit.finish_run(
+                success=validations['status'] == 'passed',
+                output_tables=output_tables,
+                output_row_count=total_rows
+            )
 
         print("\n" + "=" * 70)
         print("AGGREGATION TABLES COMPLETE")
@@ -464,7 +480,8 @@ def main():
         return validations['status'] == 'passed'
 
     except Exception as e:
-        audit.finish_run(success=False, error_message=str(e))
+        if audit:
+            audit.finish_run(success=False, error_message=str(e))
         print(f"\nERROR: {e}")
         raise
 

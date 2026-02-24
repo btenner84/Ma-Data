@@ -36,7 +36,15 @@ import boto3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import audit lineage system
-from audit_lineage import AuditLogger, create_audit_logger
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from audit_lineage import AuditLogger, create_audit_logger
+    AUDIT_AVAILABLE = True
+except ImportError:
+    AUDIT_AVAILABLE = False
+    print("[WARN] Audit lineage module not available")
 
 # Configuration
 S3_BUCKET = "ma-data123"
@@ -549,26 +557,56 @@ def main():
     print("=" * 70)
     print(f"Started: {datetime.now()}")
 
+    # Initialize audit logger
+    audit = None
+    if AUDIT_AVAILABLE:
+        try:
+            audit = create_audit_logger('build_fact_enrollment_unified')
+        except Exception as e:
+            print(f"[WARN] Could not initialize audit: {e}")
+
+    # Get current date to avoid processing future months
+    current_date = datetime.now()
+    current_year = current_date.year
+    current_month = current_date.month
+
     # Process all available months
     total_enrollment = 0
     total_records = 0
     months_processed = 0
+    errors = []
 
-    for year in range(2007, 2027):
+    for year in range(2007, current_year + 1):
         print(f"\n=== Year {year} ===")
 
         for month in range(1, 13):
-            # Skip future months
-            if year == 2026 and month > 2:
+            # Skip future months dynamically
+            if year == current_year and month > current_month:
                 continue
 
-            df = process_month(year, month)
+            try:
+                df = process_month(year, month)
 
-            if df is not None and len(df) > 0:
-                upload_parquet(df, year, month)
-                total_enrollment += df['enrollment'].sum()
-                total_records += len(df)
-                months_processed += 1
+                if df is not None and len(df) > 0:
+                    upload_parquet(df, year, month)
+                    total_enrollment += df['enrollment'].sum()
+                    total_records += len(df)
+                    months_processed += 1
+            except Exception as e:
+                print(f"    [ERROR] {year}-{month:02d}: {e}")
+                errors.append({'year': year, 'month': month, 'error': str(e)})
+
+    # Finish audit
+    if audit:
+        try:
+            audit.finish_run(
+                success=len(errors) == 0,
+                output_tables=['fact_enrollment_unified'],
+                output_row_count=total_records,
+                error_message=str(errors) if errors else None
+            )
+        except Exception as e:
+            print(f"[WARN] Could not finish audit: {e}")
 
     # Summary
     print("\n" + "=" * 70)
@@ -577,7 +615,11 @@ def main():
     print(f"Months processed: {months_processed}")
     print(f"Total records: {total_records:,}")
     print(f"Total enrollment: {total_enrollment:,}")
+    if errors:
+        print(f"Errors: {len(errors)}")
     print(f"Finished: {datetime.now()}")
+
+    return len(errors) == 0
 
 
 if __name__ == '__main__':

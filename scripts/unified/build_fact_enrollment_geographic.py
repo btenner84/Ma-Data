@@ -27,6 +27,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import boto3
+from io import BytesIO
 
 # Configuration
 S3_BUCKET = "ma-data123"
@@ -167,7 +168,7 @@ def load_unified_dimensions(year: int, month: int) -> Optional[pd.DataFrame]:
 
     try:
         response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
-        df = pd.read_parquet(response['Body'])
+        df = pd.read_parquet(BytesIO(response['Body'].read()))
         return df[[
             'contract_id', 'plan_id',
             'parent_org', 'plan_type', 'plan_type_simplified',
@@ -266,27 +267,38 @@ def main():
     print("=" * 70)
     print(f"Started: {datetime.now()}")
 
+    # Get current date to avoid processing future months
+    current_date = datetime.now()
+    current_year = current_date.year
+    current_month = current_date.month
+
     total_records = 0
     total_suppressed = 0
     months_processed = 0
+    errors = []
 
-    for year in range(2013, 2027):  # CPSC starts 2013
+    for year in range(2013, current_year + 1):  # CPSC starts 2013
         print(f"\n=== Year {year} ===")
 
         for month in range(1, 13):
-            if year == 2026 and month > 2:
+            # Skip future months dynamically
+            if year == current_year and month > current_month:
                 continue
 
-            result = process_month(year, month)
+            try:
+                result = process_month(year, month)
 
-            if result:
-                for state, df in result.items():
-                    upload_parquet(df, year, month, state)
-                    total_records += len(df)
-                    total_suppressed += df['is_suppressed'].sum()
+                if result:
+                    for state, df in result.items():
+                        upload_parquet(df, year, month, state)
+                        total_records += len(df)
+                        total_suppressed += df['is_suppressed'].sum()
 
-                months_processed += 1
-                print(f"    Uploaded {len(result)} state partitions")
+                    months_processed += 1
+                    print(f"    Uploaded {len(result)} state partitions")
+            except Exception as e:
+                print(f"    [ERROR] {year}-{month:02d}: {e}")
+                errors.append({'year': year, 'month': month, 'error': str(e)})
 
     # Summary
     suppression_pct = (total_suppressed / total_records * 100) if total_records > 0 else 0
@@ -297,7 +309,11 @@ def main():
     print(f"Months processed: {months_processed}")
     print(f"Total records: {total_records:,}")
     print(f"Total suppressed: {total_suppressed:,} ({suppression_pct:.1f}%)")
+    if errors:
+        print(f"Errors: {len(errors)}")
     print(f"Finished: {datetime.now()}")
+
+    return len(errors) == 0
 
 
 if __name__ == '__main__':
