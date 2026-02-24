@@ -99,6 +99,7 @@ coverage.xml
 # Node (for web frontend)
 # =============================================================================
 node_modules/
+!web/lib/
 .next/
 out/
 .nuxt/
