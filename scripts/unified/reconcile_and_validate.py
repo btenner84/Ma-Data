@@ -23,6 +23,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import boto3
+from io import BytesIO
 
 # Configuration
 S3_BUCKET = "ma-data123"
@@ -39,7 +40,7 @@ def load_unified_totals(year: int, month: int) -> Optional[Dict]:
 
     try:
         response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
-        df = pd.read_parquet(response['Body'])
+        df = pd.read_parquet(BytesIO(response['Body'].read()))
 
         return {
             'total_enrollment': df['enrollment'].sum(),
@@ -86,7 +87,7 @@ def load_geographic_totals(year: int, month: int) -> Optional[Dict]:
 
         for s3_key in files:
             response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
-            df = pd.read_parquet(response['Body'])
+            df = pd.read_parquet(BytesIO(response['Body'].read()))
 
             total_enrollment += df['enrollment'].fillna(0).sum()
             total_suppressed += df['is_suppressed'].sum()
