@@ -96,30 +96,47 @@ class MAQueryEngine:
     def _register_tables(self):
         """Register all tables as views pointing to S3 Parquet files."""
 
+        # Primary tables - using existing data paths
         tables = {
-            # Dimensions
-            'dim_entity': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/dimensions/dim_entity.parquet',
-            'dim_parent_org': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/dimensions/dim_parent_org.parquet',
+            # Main enrollment fact table (v6 has correct classifications)
+            'fact_enrollment_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_v6.parquet',
 
-            # Facts (partitioned - use glob)
-            'fact_enrollment_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/facts/fact_enrollment_unified/**/*.parquet',
-            'fact_enrollment_geographic': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/facts/fact_enrollment_geographic/**/*.parquet',
-            'fact_star_ratings': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/facts/fact_star_ratings/**/*.parquet',
-            'fact_risk_scores': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/facts/fact_risk_scores/**/*.parquet',
+            # Geographic enrollment (state-level)
+            'fact_enrollment_by_state': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_by_state.parquet',
+            'fact_enrollment_by_geography': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_by_geography.parquet',
+
+            # Stars data
+            'stars_enrollment_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_enrollment_unified.parquet',
+            'stars_summary': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_summary.parquet',
+            'measure_data': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/measure_data_complete.parquet',
+
+            # Risk scores
+            'fact_risk_scores': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_risk_scores_unified.parquet',
+            'risk_scores_by_parent': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/risk_scores_by_parent_year.parquet',
+
+            # SNP data
+            'fact_snp': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_snp_by_parent.parquet',
+            'fact_snp_historical': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_snp_by_parent_historical.parquet',
 
             # Aggregations
-            'agg_by_parent_year': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/aggregations/agg_by_parent_year.parquet',
-            'agg_by_state_year': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/aggregations/agg_by_state_year.parquet',
-            'agg_by_dimensions': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/aggregations/agg_by_dimensions.parquet',
-            'agg_industry_totals': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/aggregations/agg_industry_totals.parquet',
+            'agg_enrollment_by_year': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/agg_enrollment_by_year_v2.parquet',
+            'agg_enrollment_by_plantype': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/agg_enrollment_by_plantype_v2.parquet',
+            'enrollment_by_parent': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/enrollment_by_parent_annual.parquet',
+
+            # Lookups
+            'dim_county': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/dim_county.parquet',
+            'parent_org_summary': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/parent_org_summary.parquet',
         }
+
+        self.registered_tables = []
 
         for table_name, s3_path in tables.items():
             try:
                 self.conn.execute(f"""
                     CREATE OR REPLACE VIEW {table_name} AS
-                    SELECT * FROM read_parquet('{s3_path}', hive_partitioning=true)
+                    SELECT * FROM read_parquet('{s3_path}')
                 """)
+                self.registered_tables.append(table_name)
             except Exception as e:
                 print(f"Warning: Could not register {table_name}: {e}")
 

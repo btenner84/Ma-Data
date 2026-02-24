@@ -66,164 +66,316 @@ def root():
     }
 
 
-# === Data Loading Utilities ===
+# === Data Loading Utilities (DuckDB-based with fallback) ===
+
+# Global DuckDB engine instance
+_duckdb_engine = None
+
+def get_duckdb_engine():
+    """Get or create DuckDB engine singleton."""
+    global _duckdb_engine
+    if _duckdb_engine is None and UNIFIED_DATA_AVAILABLE:
+        try:
+            _duckdb_engine = get_engine()
+        except Exception as e:
+            print(f"Warning: Could not initialize DuckDB engine: {e}")
+    return _duckdb_engine
+
 
 @lru_cache(maxsize=32)
 def load_parquet(s3_key: str) -> pd.DataFrame:
-    """Load parquet file from S3 with caching."""
+    """Load parquet file from S3 with caching (fallback for when DuckDB unavailable)."""
     response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
     return pd.read_parquet(BytesIO(response['Body'].read()))
 
 
+def query_duckdb(sql: str, fallback_fn=None) -> pd.DataFrame:
+    """
+    Query using DuckDB with fallback to direct S3 if unavailable.
+
+    Args:
+        sql: SQL query to execute
+        fallback_fn: Function to call if DuckDB unavailable
+    """
+    engine = get_duckdb_engine()
+    if engine:
+        try:
+            return engine.query(sql)
+        except Exception as e:
+            print(f"DuckDB query failed: {e}")
+            if fallback_fn:
+                return fallback_fn()
+    elif fallback_fn:
+        return fallback_fn()
+    return pd.DataFrame()
+
+
 def get_enrollment_data():
     """Load unified enrollment data."""
-    return load_parquet('processed/unified/enrollment_by_parent_annual.parquet')
+    sql = """
+        SELECT * FROM enrollment_by_parent
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/enrollment_by_parent_annual.parquet'))
 
 
 def get_enrollment_unified():
     """Load unified enrollment with all dimensions (plan_type, product_type, group_type)."""
-    try:
-        # Use v6 (correct classifications from CPSC files)
-        df = load_parquet('processed/unified/fact_enrollment_v6.parquet')
-        return consolidate_parent_org_names(df)
-    except:
+    sql = """
+        SELECT * FROM fact_enrollment_unified
+    """
+    def fallback():
         try:
-            df = load_parquet('processed/unified/fact_enrollment_v4.parquet')
+            df = load_parquet('processed/unified/fact_enrollment_v6.parquet')
             return consolidate_parent_org_names(df)
         except:
-            return pd.DataFrame()
+            try:
+                df = load_parquet('processed/unified/fact_enrollment_v4.parquet')
+                return consolidate_parent_org_names(df)
+            except:
+                return pd.DataFrame()
+
+    df = query_duckdb(sql, fallback)
+    return consolidate_parent_org_names(df) if not df.empty else df
 
 
 def get_enrollment_by_state_data():
     """Load enrollment data with state dimension."""
-    try:
-        return load_parquet('processed/unified/fact_enrollment_by_state.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM fact_enrollment_by_state
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/fact_enrollment_by_state.parquet'))
 
 
 def get_enrollment_by_geography():
     """Load enrollment data with state and county dimensions."""
-    try:
-        df = load_parquet('processed/unified/fact_enrollment_by_geography.parquet')
-        return consolidate_parent_org_names(df)
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM fact_enrollment_by_geography
+    """
+    def fallback():
+        try:
+            df = load_parquet('processed/unified/fact_enrollment_by_geography.parquet')
+            return consolidate_parent_org_names(df)
+        except:
+            return pd.DataFrame()
+
+    df = query_duckdb(sql, fallback)
+    return consolidate_parent_org_names(df) if not df.empty else df
 
 
 def get_county_lookup():
     """Load county lookup table."""
-    try:
-        return load_parquet('processed/unified/dim_county.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM dim_county
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/dim_county.parquet'))
 
 
 def get_enrollment_by_year():
     """Load enrollment aggregated by year."""
-    try:
-        return load_parquet('processed/unified/agg_enrollment_by_year_v2.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM agg_enrollment_by_year
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/agg_enrollment_by_year_v2.parquet'))
 
 
 def get_enrollment_by_plantype():
     """Load enrollment by year and plan type."""
-    try:
-        return load_parquet('processed/unified/agg_enrollment_by_plantype_v2.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM agg_enrollment_by_plantype
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/agg_enrollment_by_plantype_v2.parquet'))
 
 
 def get_enrollment_by_product():
     """Load enrollment by year and product type (derived from plan type)."""
-    df = get_enrollment_unified()
-    if df.empty:
-        return pd.DataFrame()
-    return df.groupby(['year', 'product_type']).agg({
-        'enrollment': 'sum',
-        'contract_count': 'sum',
-        'parent_org': 'nunique'
-    }).reset_index().rename(columns={'parent_org': 'parent_count'})
+    sql = """
+        SELECT
+            year,
+            product_type,
+            SUM(enrollment) as enrollment,
+            COUNT(DISTINCT contract_id) as contract_count,
+            COUNT(DISTINCT parent_org) as parent_count
+        FROM fact_enrollment_unified
+        GROUP BY year, product_type
+        ORDER BY year, product_type
+    """
+    def fallback():
+        df = get_enrollment_unified()
+        if df.empty:
+            return pd.DataFrame()
+        return df.groupby(['year', 'product_type']).agg({
+            'enrollment': 'sum',
+            'contract_count': 'sum',
+            'parent_org': 'nunique'
+        }).reset_index().rename(columns={'parent_org': 'parent_count'})
+
+    return query_duckdb(sql, fallback)
 
 
 def get_enrollment_detail():
     """Load detailed enrollment by contract/plan/county."""
-    # Get latest year's January data for detailed view
-    try:
-        return load_parquet('processed/fact_enrollment/2025/1/enrollment.parquet')
-    except:
-        return load_parquet('processed/fact_enrollment/2024/1/enrollment.parquet')
+    sql = """
+        SELECT * FROM fact_enrollment_unified
+        WHERE year = 2026
+        LIMIT 10000
+    """
+    def fallback():
+        try:
+            return load_parquet('processed/fact_enrollment/2025/1/enrollment.parquet')
+        except:
+            return load_parquet('processed/fact_enrollment/2024/1/enrollment.parquet')
+
+    return query_duckdb(sql, fallback)
 
 
 def get_stars_summary():
     """Load unified stars summary."""
-    return load_parquet('processed/unified/stars_summary.parquet')
+    sql = """
+        SELECT * FROM stars_summary
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/stars_summary.parquet'))
 
 
 def get_measure_data():
     """Load complete measure-level data."""
-    return load_parquet('processed/unified/measure_data_complete.parquet')
+    sql = """
+        SELECT * FROM measure_data
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/measure_data_complete.parquet'))
 
 
 def get_parent_summary():
     """Load parent organization summary."""
-    return load_parquet('processed/unified/parent_org_summary.parquet')
+    sql = """
+        SELECT * FROM parent_org_summary
+    """
+    return query_duckdb(sql, lambda: load_parquet('processed/unified/parent_org_summary.parquet'))
 
 
 def get_risk_scores():
     """Load risk scores summary."""
-    try:
-        return load_parquet('processed/unified/risk_scores_summary.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM fact_risk_scores
+    """
+    def fallback():
+        try:
+            return load_parquet('processed/unified/risk_scores_summary.parquet')
+        except:
+            return pd.DataFrame()
+
+    return query_duckdb(sql, fallback)
 
 
 def get_risk_scores_unified():
     """Load unified risk scores with enrollment for v2 endpoints."""
-    try:
-        df = load_parquet('processed/unified/fact_risk_scores_unified.parquet')
-        return consolidate_parent_org_names(df)
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM fact_risk_scores
+    """
+    def fallback():
+        try:
+            df = load_parquet('processed/unified/fact_risk_scores_unified.parquet')
+            return consolidate_parent_org_names(df)
+        except:
+            return pd.DataFrame()
+
+    df = query_duckdb(sql, fallback)
+    return consolidate_parent_org_names(df) if not df.empty else df
 
 
 def get_risk_scores_by_parent_year():
     """Load risk scores aggregated by parent org and year."""
-    try:
-        df = load_parquet('processed/unified/risk_scores_by_parent_year.parquet')
-        return consolidate_parent_org_names(df)
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM risk_scores_by_parent
+    """
+    def fallback():
+        try:
+            df = load_parquet('processed/unified/risk_scores_by_parent_year.parquet')
+            return consolidate_parent_org_names(df)
+        except:
+            return pd.DataFrame()
+
+    df = query_duckdb(sql, fallback)
+    return consolidate_parent_org_names(df) if not df.empty else df
 
 
 def get_risk_scores_by_parent_dims():
     """Load risk scores with plan_type, snp_type, group_type dimensions."""
-    try:
-        df = load_parquet('processed/unified/risk_scores_by_parent_dims.parquet')
-        return consolidate_parent_org_names(df)
-    except:
-        return pd.DataFrame()
+    def fallback():
+        try:
+            df = load_parquet('processed/unified/risk_scores_by_parent_dims.parquet')
+            return consolidate_parent_org_names(df)
+        except:
+            return pd.DataFrame()
+
+    return fallback()  # Use fallback for now, could add DuckDB query later
 
 
 def get_risk_scores_summary_v2():
     """Load risk scores summary v2."""
-    try:
-        return load_parquet('processed/unified/risk_scores_summary_v2.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM fact_risk_scores
+    """
+    def fallback():
+        try:
+            return load_parquet('processed/unified/risk_scores_summary_v2.parquet')
+        except:
+            return pd.DataFrame()
+
+    return query_duckdb(sql, fallback)
 
 
 def get_snp_enrollment():
     """Load SNP enrollment data (legacy)."""
-    try:
-        return load_parquet('processed/unified/fact_snp_enrollment.parquet')
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM fact_snp
+    """
+    def fallback():
+        try:
+            return load_parquet('processed/unified/fact_snp_enrollment.parquet')
+        except:
+            return pd.DataFrame()
+
+    return query_duckdb(sql, fallback)
 
 
 def get_snp_by_parent():
     """Load SNP enrollment by parent org with full dimensions."""
+    sql = """
+        SELECT * FROM fact_snp
+    """
+    def fallback():
+        try:
+            # Load detailed SNP data (2023-2026 with D-SNP, C-SNP, I-SNP)
+            detailed = load_parquet('processed/unified/fact_snp_by_parent.parquet')
+        except:
+            detailed = pd.DataFrame()
+
+        try:
+            # Load historical SNP data (2014-2022 with generic SNP type)
+            historical = load_parquet('processed/unified/fact_snp_by_parent_historical.parquet')
+            # Filter to years not in detailed
+            if not detailed.empty:
+                detailed_years = detailed['year'].unique()
+                historical = historical[~historical['year'].isin(detailed_years)]
+        except:
+            historical = pd.DataFrame()
+
+        # Combine both
+        if not detailed.empty and not historical.empty:
+            return pd.concat([historical, detailed], ignore_index=True)
+        elif not detailed.empty:
+            return detailed
+        elif not historical.empty:
+            return historical
+        else:
+            return pd.DataFrame()
+
+    df = query_duckdb(sql, fallback)
+    return consolidate_parent_org_names(df) if not df.empty else fallback()
+
+
+def _get_snp_by_parent_fallback():
+    """Fallback for SNP data loading."""
     try:
         # Load detailed SNP data (2023-2026 with D-SNP, C-SNP, I-SNP)
         detailed = load_parquet('processed/unified/fact_snp_by_parent.parquet')
@@ -916,11 +1068,18 @@ async def get_stars_distribution_timeseries(
 
 def get_stars_enrollment_unified():
     """Load unified stars + enrollment table with all dimensions (FAST)."""
-    try:
-        df = load_parquet('processed/unified/stars_enrollment_unified.parquet')
-        return consolidate_parent_org_names(df)
-    except:
-        return pd.DataFrame()
+    sql = """
+        SELECT * FROM stars_enrollment_unified
+    """
+    def fallback():
+        try:
+            df = load_parquet('processed/unified/stars_enrollment_unified.parquet')
+            return consolidate_parent_org_names(df)
+        except:
+            return pd.DataFrame()
+
+    df = query_duckdb(sql, fallback)
+    return consolidate_parent_org_names(df) if not df.empty else df
 
 
 @app.get("/api/stars/fourplus-timeseries")
