@@ -1,0 +1,441 @@
+# MA Intelligence Platform - Semantic Model for AI Querying
+# Version: 1.0
+# Last Updated: 2026-02-24
+#
+# This configuration defines how an AI system should understand and query
+# the Medicare Advantage data platform.
+
+version: "1.0"
+name: "MA Intelligence Platform"
+description: |
+  Medicare Advantage data model supporting comprehensive analytics across
+  enrollment, quality ratings, risk scores, and geographic dimensions.
+
+  Data Coverage: 2007-2026 (19 years)
+  Total Enrollment: ~35M MA beneficiaries
+  Data Sources: CMS Public Use Files
+
+# =============================================================================
+# ENTITIES
+# =============================================================================
+entities:
+  payer:
+    description: "Medicare Advantage insurer/parent organization"
+    table: dim_parent_org
+    primary_key: parent_org_id
+    display_field: canonical_name
+    aliases:
+      - "insurer"
+      - "carrier"
+      - "parent org"
+      - "parent organization"
+      - "company"
+      - "organization"
+      - "health plan"
+      - "insurance company"
+    examples:
+      - "UnitedHealth Group"
+      - "Humana"
+      - "CVS Health"
+      - "Elevance Health"
+      - "Kaiser Permanente"
+      - "Centene"
+
+  plan:
+    description: "Specific MA plan (contract + plan_id combination)"
+    table: dim_entity
+    primary_key: entity_id
+    display_field: "contract_id || '-' || plan_id"
+    aliases:
+      - "MA plan"
+      - "Medicare Advantage plan"
+      - "benefit package"
+      - "plan option"
+    note: "Plans can be tracked across years via entity_id, even when IDs change"
+
+  contract:
+    description: "CMS contract (can have multiple plans)"
+    primary_key: contract_id
+    aliases:
+      - "MA contract"
+      - "CMS contract"
+      - "H-number"
+      - "R-number"
+    note: "Contracts starting with H are local, R are regional, S are PDP"
+
+# =============================================================================
+# MEASURES
+# =============================================================================
+measures:
+  enrollment:
+    description: "Number of Medicare beneficiaries enrolled"
+    column: enrollment
+    calculation: "SUM(enrollment)"
+    fact_table: fact_enrollment_unified
+    aliases:
+      - "members"
+      - "beneficiaries"
+      - "lives"
+      - "membership"
+      - "enrollees"
+      - "member count"
+    format: "integer"
+    typical_range: [0, 10000000]
+
+  market_share:
+    description: "Percentage of total MA enrollment"
+    calculation: "(enrollment / industry_total) * 100"
+    derived_from: enrollment
+    unit: "percent"
+    format: "percentage"
+    aliases:
+      - "share"
+      - "market percentage"
+      - "percent of market"
+
+  risk_score:
+    description: "CMS risk adjustment factor (higher = sicker/more costly population)"
+    column: avg_risk_score
+    calculation: "AVG(avg_risk_score)"
+    weighted_calculation: "SUM(avg_risk_score * enrollment) / SUM(enrollment)"
+    fact_table: fact_risk_scores
+    typical_range: [0.8, 1.5]
+    aliases:
+      - "RAF"
+      - "risk adjustment factor"
+      - "HCC score"
+      - "acuity"
+      - "risk adjustment"
+    format: "decimal"
+    note: "Score of 1.0 is average; higher means sicker population"
+
+  star_rating:
+    description: "CMS quality rating (1-5 stars, higher is better)"
+    column: overall_rating
+    calculation: "AVG(overall_rating)"
+    weighted_calculation: "SUM(overall_rating * enrollment) / SUM(enrollment)"
+    fact_table: fact_star_ratings
+    typical_range: [1, 5]
+    aliases:
+      - "quality rating"
+      - "stars"
+      - "CMS rating"
+      - "quality score"
+      - "overall rating"
+    format: "decimal"
+    note: "4+ stars qualifies for bonus payments"
+
+# =============================================================================
+# DIMENSIONS
+# =============================================================================
+dimensions:
+  plan_type:
+    description: "Network structure of the plan"
+    column: plan_type_simplified
+    values:
+      HMO: "Health Maintenance Organization - closed network, lower cost"
+      PPO: "Preferred Provider Organization - open network, more flexibility"
+      RPPO: "Regional PPO - multi-state PPO network"
+      PFFS: "Private Fee-for-Service - any Medicare provider"
+      MSA: "Medical Savings Account - high deductible with savings account"
+      PACE: "Program of All-Inclusive Care for the Elderly"
+      Cost: "Cost plan (legacy Medicare plan type)"
+      PDP: "Standalone Part D drug plan"
+      Other: "Other plan types"
+    available_in:
+      - fact_enrollment_unified
+      - fact_enrollment_geographic
+    aliases:
+      - "plan category"
+      - "network type"
+
+  product_type:
+    description: "Medicare product category"
+    column: product_type
+    values:
+      MA-only: "Medicare Advantage without drug coverage (Part C only)"
+      MAPD: "Medicare Advantage with Part D drug coverage"
+      PDP: "Standalone Part D drug plan (no Part C)"
+      Employer: "Employer group plans"
+      Other: "Other product types"
+    available_in:
+      - fact_enrollment_unified
+      - fact_enrollment_geographic
+    aliases:
+      - "product category"
+      - "coverage type"
+    note: "MAPD is the most common product type (~75% of MA)"
+
+  group_type:
+    description: "Market segment - individual vs employer group"
+    column: group_type
+    values:
+      Individual: "Individual market - beneficiaries enrolled directly"
+      Group: "Employer/union group market - through employer benefits"
+      Unknown: "Unable to determine from available data"
+    available_in:
+      - fact_enrollment_unified
+      - fact_enrollment_geographic
+    confidence_field: group_type_confidence
+    source_field: group_type_source
+    aliases:
+      - "market segment"
+      - "individual vs group"
+      - "EGHP"
+    note: |
+      Derived from EGHP field or plan_id heuristic.
+      Check group_type_confidence for reliability (0-1 scale).
+      Individual market is ~85% of MA enrollment.
+
+  snp_type:
+    description: "Special Needs Plan type"
+    column: snp_type
+    values:
+      D-SNP: "Dual Eligible - for beneficiaries with both Medicare and Medicaid"
+      C-SNP: "Chronic Condition - for specific chronic conditions"
+      I-SNP: "Institutional - for nursing facility residents"
+      Non-SNP: "Not a Special Needs Plan"
+      SNP-Unknown: "Is a SNP but specific type not determined"
+    available_in:
+      - fact_enrollment_unified
+      - fact_enrollment_geographic
+    source_field: snp_type_source
+    aliases:
+      - "special needs"
+      - "SNP"
+      - "dual eligible"
+    note: |
+      D-SNP is the fastest growing segment (~7M+ enrolled).
+      D-SNP/C-SNP/I-SNP detail from SNP Report; some plans may show as SNP-Unknown.
+
+  state:
+    description: "US State"
+    column: state
+    available_in:
+      - fact_enrollment_geographic
+    aliases:
+      - "geography"
+      - "location"
+      - "region"
+    note: "State-level data available from 2013+ (CPSC data)"
+
+  county:
+    description: "County within state"
+    column: county
+    available_in:
+      - fact_enrollment_geographic
+    parent_dimension: state
+    aliases:
+      - "local"
+      - "county-level"
+    note: |
+      County data has ~1-3% suppression for HIPAA compliance.
+      Small county/plan combinations with <11 enrollees are suppressed.
+
+  year:
+    description: "Reporting year"
+    column: year
+    available_in:
+      - fact_enrollment_unified
+      - fact_enrollment_geographic
+      - fact_star_ratings
+      - fact_risk_scores
+    range: [2007, 2026]
+
+  month:
+    description: "Reporting month (1-12)"
+    column: month
+    available_in:
+      - fact_enrollment_unified
+      - fact_enrollment_geographic
+    range: [1, 12]
+    note: "Most analysis uses January data for year-over-year comparison"
+
+# =============================================================================
+# QUERY ROUTING
+# =============================================================================
+query_routing:
+  - pattern:
+      - "total"
+      - "overall"
+      - "industry"
+      - "national"
+      - "all payers"
+      - "market"
+    use_table: fact_enrollment_unified
+    fallback_aggregation: agg_by_parent_year
+    note: "For total/industry queries, use unified table (no suppression)"
+
+  - pattern:
+      - "state"
+      - "county"
+      - "geographic"
+      - "region"
+      - "local"
+      - "by state"
+      - "in California"
+      - "Texas"
+    use_table: fact_enrollment_geographic
+    fallback_aggregation: agg_by_state_year
+    warning: "Geographic data has ~1-3% suppression for small county/plan combos"
+
+  - pattern:
+      - "quality"
+      - "star"
+      - "rating"
+      - "4 star"
+      - "5 star"
+      - "bonus"
+    use_table: fact_star_ratings
+    join_to: fact_enrollment_unified
+    join_key: contract_id
+    note: "Stars are at contract level, applies to all plans in contract"
+
+  - pattern:
+      - "risk"
+      - "acuity"
+      - "RAF"
+      - "HCC"
+      - "risk score"
+      - "sicker"
+      - "healthier"
+    use_table: fact_risk_scores
+    join_to: fact_enrollment_unified
+    join_key: [contract_id, plan_id, year]
+    note: "Risk scores are annual, at plan level"
+
+  - pattern:
+      - "trend"
+      - "over time"
+      - "growth"
+      - "change"
+      - "year over year"
+      - "YoY"
+    time_series: true
+    note: "Use entity_id for consistent tracking across ID changes"
+
+# =============================================================================
+# CONSTRAINTS & LIMITATIONS
+# =============================================================================
+constraints:
+  - name: "cpsc_suppression"
+    applies_to:
+      - fact_enrollment_geographic
+    description: |
+      County-level data suppresses enrollment <11 for HIPAA compliance.
+      Suppressed values shown as "*" in original data, NULL in our tables.
+    user_message: |
+      Note: Geographic totals may be ~1-3% lower than national totals
+      due to HIPAA suppression of small county/plan combinations.
+
+  - name: "group_type_confidence"
+    applies_to:
+      - group_type
+    description: |
+      Group type is derived from EGHP field or plan ID heuristic.
+      Not all values are explicitly known.
+    user_message: |
+      Group type is derived with varying confidence.
+      Check group_type_confidence field (0-1 scale) for reliability.
+
+  - name: "snp_type_coverage"
+    applies_to:
+      - snp_type
+    description: |
+      D-SNP/C-SNP/I-SNP detail only available for SNP plans in SNP Report.
+      Some SNP plans may show as 'SNP-Unknown' if not in SNP Report.
+    user_message: |
+      Specific SNP types (D-SNP, C-SNP, I-SNP) from SNP Report.
+      ~5% of SNP enrollment may show as 'SNP-Unknown'.
+
+  - name: "stars_contract_level"
+    applies_to:
+      - star_rating
+    description: |
+      Star ratings are at contract level, not plan level.
+      All plans in a contract share the same star rating.
+    user_message: |
+      Star ratings apply to entire contracts, not individual plans.
+
+  - name: "risk_scores_annual"
+    applies_to:
+      - risk_score
+    description: |
+      Risk scores are annual (one value per plan per year).
+      Not available for all years (2006-2024 coverage).
+    user_message: |
+      Risk scores are annual. For monthly queries, uses the annual value.
+
+  - name: "crosswalk_coverage"
+    applies_to:
+      - entity_id
+    description: |
+      Entity tracking uses CMS crosswalk files (2006-2026).
+      Plans can be tracked across ID changes via entity_id.
+    user_message: |
+      Use entity_id for consistent tracking across years.
+      Some very old plans may have incomplete history.
+
+# =============================================================================
+# COMMON QUERIES (Examples for AI)
+# =============================================================================
+example_queries:
+  - question: "What is the total MA enrollment?"
+    approach: |
+      SELECT SUM(enrollment) FROM fact_enrollment_unified
+      WHERE product_type IN ('MA-only', 'MAPD')
+      AND year = (SELECT MAX(year) FROM fact_enrollment_unified)
+      AND month = 1
+
+  - question: "Who are the top 5 payers by enrollment?"
+    approach: |
+      SELECT parent_org, SUM(enrollment) as total
+      FROM fact_enrollment_unified
+      WHERE year = 2026 AND month = 1
+      GROUP BY parent_org
+      ORDER BY total DESC
+      LIMIT 5
+
+  - question: "What is the D-SNP enrollment trend?"
+    approach: |
+      SELECT year, SUM(enrollment) as dsnp_enrollment
+      FROM fact_enrollment_unified
+      WHERE snp_type = 'D-SNP'
+      AND month = 1
+      GROUP BY year
+      ORDER BY year
+
+  - question: "What is UnitedHealth's market share?"
+    approach: |
+      WITH total AS (
+        SELECT SUM(enrollment) as industry_total
+        FROM fact_enrollment_unified
+        WHERE year = 2026 AND month = 1
+      )
+      SELECT
+        SUM(enrollment) as uhc_enrollment,
+        SUM(enrollment) / total.industry_total * 100 as market_share
+      FROM fact_enrollment_unified, total
+      WHERE parent_org LIKE '%UnitedHealth%'
+      AND year = 2026 AND month = 1
+
+  - question: "Which states have the highest MA enrollment?"
+    approach: |
+      SELECT state, SUM(enrollment) as total
+      FROM fact_enrollment_geographic
+      WHERE year = 2026 AND month = 1
+      GROUP BY state
+      ORDER BY total DESC
+      LIMIT 10
+    note: "Uses geographic table, totals may be slightly lower due to suppression"
+
+  - question: "What is the average star rating for 4+ star plans?"
+    approach: |
+      SELECT
+        AVG(overall_rating) as avg_rating,
+        SUM(e.enrollment) as total_enrollment
+      FROM fact_star_ratings s
+      JOIN fact_enrollment_unified e
+        ON s.contract_id = e.contract_id AND s.star_year = e.year
+      WHERE s.overall_rating >= 4
+      AND e.month = 1

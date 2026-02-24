@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-02-21",
+  "s3_bucket": "ma-data123",
+
+  "download_status": {
+    "cpsc": {"total": 231, "downloaded": 2, "status": "in_progress"},
+    "crosswalks": {"total": 21, "downloaded": 0, "status": "pending"},
+    "snp": {"total": 219, "downloaded": 0, "status": "pending"},
+    "stars_ratings": {"total": 20, "downloaded": 0, "status": "pending"},
+    "ratebook": {"total": 37, "downloaded": 0, "status": "pending"},
+    "risk_adjustment": {"total": 21, "downloaded": 0, "status": "pending"},
+    "by_contract": {"total": 231, "downloaded": 0, "status": "pending"},
+    "by_plan": {"total": 236, "downloaded": 0, "status": "pending"},
+    "by_state": {"total": 122, "downloaded": 0, "status": "pending"},
+    "ma_state_county_contract": {"total": 231, "downloaded": 0, "status": "pending"},
+    "pdp_state_county_contract": {"total": 230, "downloaded": 0, "status": "pending"},
+    "summary": {"total": 237, "downloaded": 0, "status": "pending"},
+    "ma_penetration": {"total": 207, "downloaded": 0, "status": "pending"},
+    "pdp_penetration": {"total": 205, "downloaded": 0, "status": "pending"},
+    "ma_service_area": {"total": 231, "downloaded": 0, "status": "pending"},
+    "state_service_area": {"total": 235, "downloaded": 0, "status": "pending"},
+    "lis_by_plan": {"total": 20, "downloaded": 0, "status": "pending"},
+    "lis_by_county": {"total": 17, "downloaded": 0, "status": "pending"},
+    "benefits": {"total": 50, "downloaded": 0, "status": "pending"},
+    "hedis_ma": {"total": 28, "downloaded": 0, "status": "pending"},
+    "hedis_snp": {"total": 17, "downloaded": 0, "status": "pending"},
+    "display_measures": {"total": 20, "downloaded": 0, "status": "pending"},
+    "cut_points": {"total": 15, "downloaded": 0, "status": "pending"},
+    "cat_adj_index": {"total": 13, "downloaded": 0, "status": "pending"},
+    "part_d_rates": {"total": 21, "downloaded": 0, "status": "pending"},
+    "ffs": {"total": 10, "downloaded": 0, "status": "pending"},
+    "icd_mappings": {"total": 21, "downloaded": 0, "status": "pending"}
+  },
+
+  "files_downloaded": [
+    {"dataset": "cpsc", "file": "CPSC_Enrollment_Info_2025_12.csv", "s3_key": "raw/enrollment/2025-12/CPSC_Enrollment_Info_2025_12.csv", "downloaded_at": "2026-02-21"},
+    {"dataset": "cpsc", "file": "CPSC_Enrollment_Info_2026_02.csv", "s3_key": "raw/enrollment/2026-02/CPSC_Enrollment_Info_2026_02.csv", "downloaded_at": "2026-02-21"}
+  ]
+}

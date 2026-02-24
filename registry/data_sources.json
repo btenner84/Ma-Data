@@ -1,0 +1,392 @@
+{
+  "version": "1.0",
+  "created": "2026-02-21",
+  "total_datasets": 30,
+  "total_files": 3022,
+
+  "sources": {
+    "enrollment": {
+      "base_url": "https://www.cms.gov",
+      "description": "Medicare Advantage and Part D enrollment data",
+      "cms_page": "/data-research/statistics-trends-and-reports/medicare-advantagepart-d-contract-and-enrollment-data",
+
+      "datasets": {
+        "cpsc": {
+          "name": "Monthly Enrollment by Contract/Plan/State/County",
+          "description": "Most granular enrollment data - THE BASE/SPINE",
+          "granularity": ["contract", "plan", "state", "county", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-12", "end": "2026-02"},
+          "file_count": 231,
+          "s3_path": "raw/enrollment/cpsc/",
+          "url_patterns": [
+            {"years": "2020-2026", "pattern": "https://www.cms.gov/files/zip/monthly-enrollment-cpsc-{month_name}-{year}.zip"},
+            {"years": "2018-2019", "pattern": "https://downloads.cms.gov/files/cpsc_enrollment_{year}_{month_num}.zip"},
+            {"years": "2017", "pattern": "https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/mcradvpartdenroldata/downloads/2017/{month_abbr}/cpsc_enrollment_2017_{month_num}.zip"},
+            {"years": "2014-2016", "pattern": "https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/mcradvpartdenroldata/downloads/{year}/{month_abbr}/cpsc-enrollment-{year}-{month_num}.zip"},
+            {"years": "2013", "pattern": "https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/mcradvpartdenroldata/downloads/2013/{month_abbr}-2013/cpsc-enrollment-2013-{month_num}.zip"},
+            {"years": "2006-2012", "pattern": "https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/mcradvpartdenroldata/downloads/cpsc-enrollment-files-jul2006-apr2008/cpsc-enrollment-{year}-{month_num}.zip"}
+          ],
+          "join_keys": ["contract_id", "plan_id", "fips_county_code", "year_month"],
+          "priority": 1
+        },
+
+        "by_contract": {
+          "name": "Monthly Enrollment by Contract",
+          "description": "Enrollment aggregated at contract level",
+          "granularity": ["contract", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-12", "end": "2026-02"},
+          "file_count": 231,
+          "s3_path": "raw/enrollment/by_contract/",
+          "join_keys": ["contract_id", "year_month"],
+          "priority": 7
+        },
+
+        "by_plan": {
+          "name": "Monthly Enrollment by Plan",
+          "description": "Enrollment at contract/plan level",
+          "granularity": ["contract", "plan", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-07", "end": "2026-02"},
+          "file_count": 236,
+          "s3_path": "raw/enrollment/by_plan/",
+          "join_keys": ["contract_id", "plan_id", "year_month"],
+          "priority": 8
+        },
+
+        "by_state": {
+          "name": "Monthly Enrollment by State",
+          "description": "Eligibles, MA enrolled, PDP enrolled by state",
+          "granularity": ["state", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2016-01", "end": "2026-02"},
+          "file_count": 122,
+          "s3_path": "raw/enrollment/by_state/",
+          "join_keys": ["state", "year_month"],
+          "priority": 9
+        },
+
+        "ma_state_county_contract": {
+          "name": "MA Enrollment by State/County/Contract",
+          "description": "Medicare Advantage enrollment geographic breakdown",
+          "granularity": ["state", "county", "contract", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-12", "end": "2026-02"},
+          "file_count": 231,
+          "s3_path": "raw/enrollment/ma_state_county_contract/",
+          "join_keys": ["contract_id", "fips_county_code", "year_month"],
+          "priority": 10
+        },
+
+        "pdp_state_county_contract": {
+          "name": "PDP Enrollment by State/County/Contract",
+          "description": "Part D enrollment geographic breakdown",
+          "granularity": ["state", "county", "contract", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2007-01", "end": "2026-02"},
+          "file_count": 230,
+          "s3_path": "raw/enrollment/pdp_state_county_contract/",
+          "join_keys": ["contract_id", "fips_county_code", "year_month"],
+          "priority": 11
+        },
+
+        "summary": {
+          "name": "Monthly Contract and Enrollment Summary",
+          "description": "National-level summary by organization type",
+          "granularity": ["org_type", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-06", "end": "2026-02"},
+          "file_count": 237,
+          "s3_path": "raw/enrollment/summary/",
+          "join_keys": ["year_month"],
+          "priority": 12
+        }
+      }
+    },
+
+    "penetration": {
+      "description": "Market penetration rates",
+      "datasets": {
+        "ma": {
+          "name": "MA State/County Penetration",
+          "description": "Medicare Advantage market share by geography",
+          "granularity": ["state", "county", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2008-12", "end": "2026-02"},
+          "file_count": 207,
+          "s3_path": "raw/penetration/ma/",
+          "join_keys": ["fips_county_code", "year_month"],
+          "priority": 13
+        },
+        "pdp": {
+          "name": "PDP State/County Penetration",
+          "description": "Part D market share by geography",
+          "granularity": ["state", "county", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2009-02", "end": "2026-02"},
+          "file_count": 205,
+          "s3_path": "raw/penetration/pdp/",
+          "join_keys": ["fips_county_code", "year_month"],
+          "priority": 14
+        }
+      }
+    },
+
+    "service_area": {
+      "description": "Contract service territories",
+      "datasets": {
+        "ma_contract": {
+          "name": "MA Contract Service Area",
+          "description": "Counties served by each MA contract",
+          "granularity": ["contract", "county", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-12", "end": "2026-02"},
+          "file_count": 231,
+          "s3_path": "raw/service_area/ma_contract/",
+          "join_keys": ["contract_id", "fips_county_code", "year_month"],
+          "priority": 15
+        },
+        "state": {
+          "name": "State Service Area",
+          "description": "States covered by each contract",
+          "granularity": ["contract", "state", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2006-08", "end": "2026-02"},
+          "file_count": 235,
+          "s3_path": "raw/service_area/state/",
+          "join_keys": ["contract_id", "state", "year_month"],
+          "priority": 16
+        }
+      }
+    },
+
+    "snp": {
+      "description": "Special Needs Plan data",
+      "datasets": {
+        "comprehensive": {
+          "name": "SNP Comprehensive Reports",
+          "description": "Special Needs Plan enrollment by type (C-SNP, D-SNP, I-SNP)",
+          "granularity": ["contract", "plan", "snp_type", "month"],
+          "frequency": "monthly",
+          "date_range": {"start": "2007-12", "end": "2026-02"},
+          "file_count": 219,
+          "s3_path": "raw/snp/",
+          "join_keys": ["contract_id", "plan_id", "year_month"],
+          "priority": 3
+        }
+      }
+    },
+
+    "lis": {
+      "description": "Low-Income Subsidy enrollment",
+      "datasets": {
+        "by_plan": {
+          "name": "LIS Enrollment by Plan",
+          "description": "Low-income subsidy enrollment at plan level",
+          "granularity": ["contract", "plan", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2006", "end": "2025"},
+          "file_count": 20,
+          "s3_path": "raw/lis/by_plan/",
+          "join_keys": ["contract_id", "plan_id", "year"],
+          "priority": 17
+        },
+        "by_county": {
+          "name": "LIS Enrollment by County",
+          "description": "Low-income subsidy enrollment by geography",
+          "granularity": ["contract", "county", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2009", "end": "2025"},
+          "file_count": 17,
+          "s3_path": "raw/lis/by_county/",
+          "join_keys": ["contract_id", "fips_county_code", "year"],
+          "priority": 18
+        }
+      }
+    },
+
+    "crosswalks": {
+      "description": "Plan ID mapping across years",
+      "datasets": {
+        "plan_crosswalk": {
+          "name": "Part C&D Plan Crosswalk",
+          "description": "Maps plan IDs from one year to next (mergers, consolidations, renewals)",
+          "granularity": ["contract", "plan", "from_year", "to_year"],
+          "frequency": "annual",
+          "date_range": {"start": "2006", "end": "2026"},
+          "file_count": 21,
+          "s3_path": "raw/crosswalks/",
+          "join_keys": ["contract_id", "plan_id", "year"],
+          "priority": 2,
+          "critical_note": "ESSENTIAL for longitudinal analysis - without this, cannot track plans across years"
+        }
+      }
+    },
+
+    "benefits": {
+      "description": "Plan benefit packages",
+      "datasets": {
+        "pbp": {
+          "name": "PBP Benefits Data",
+          "description": "Approved MA and Part D benefits (premiums, deductibles, copays)",
+          "granularity": ["contract", "plan", "year"],
+          "frequency": "quarterly/annual",
+          "date_range": {"start": "2001", "end": "2026"},
+          "file_count": 50,
+          "s3_path": "raw/benefits/",
+          "join_keys": ["contract_id", "plan_id", "year"],
+          "priority": 19
+        }
+      }
+    },
+
+    "hedis": {
+      "description": "Healthcare quality measures",
+      "datasets": {
+        "ma": {
+          "name": "MA HEDIS Public Use Files",
+          "description": "Health plan quality measures for MA organizations",
+          "granularity": ["contract", "measure", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "1997", "end": "2025"},
+          "file_count": 28,
+          "s3_path": "raw/hedis/ma/",
+          "join_keys": ["contract_id", "year"],
+          "priority": 20
+        },
+        "snp": {
+          "name": "SNP HEDIS Public Use Files",
+          "description": "Quality measures for Special Needs Plans",
+          "granularity": ["contract", "measure", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2008", "end": "2025"},
+          "file_count": 17,
+          "s3_path": "raw/hedis/snp/",
+          "join_keys": ["contract_id", "year"],
+          "priority": 21
+        }
+      }
+    },
+
+    "stars": {
+      "base_url": "https://www.cms.gov/medicare/health-drug-plans/part-c-d-performance-data",
+      "description": "Star Ratings and performance data",
+      "datasets": {
+        "ratings": {
+          "name": "Star Ratings Data Tables",
+          "description": "Overall star rating (1-5) and component ratings per contract",
+          "granularity": ["contract", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2007", "end": "2026"},
+          "file_count": 20,
+          "s3_path": "raw/stars/ratings/",
+          "join_keys": ["contract_id", "year"],
+          "priority": 4
+        },
+        "display_measures": {
+          "name": "Display Measures",
+          "description": "Individual measure scores (40+ measures)",
+          "granularity": ["contract", "measure", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2007", "end": "2026"},
+          "file_count": 20,
+          "s3_path": "raw/stars/display_measures/",
+          "join_keys": ["contract_id", "year"],
+          "priority": 22
+        },
+        "cut_points": {
+          "name": "Star Ratings Cut Points",
+          "description": "Thresholds for each star level by measure",
+          "granularity": ["measure", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2007", "end": "2026"},
+          "file_count": 15,
+          "s3_path": "raw/stars/cut_points/",
+          "join_keys": ["measure", "year"],
+          "priority": 23
+        },
+        "cat_adj_index": {
+          "name": "Categorical Adjustment Index",
+          "description": "Demographic adjustments for star ratings",
+          "granularity": ["contract", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2015", "end": "2027"},
+          "file_count": 13,
+          "s3_path": "raw/stars/cat_adj_index/",
+          "join_keys": ["contract_id", "year"],
+          "priority": 24
+        }
+      }
+    },
+
+    "rates": {
+      "base_url": "https://www.cms.gov/medicare/health-drug-plans/plan-payment-data",
+      "description": "Payment rates and benchmarks",
+      "datasets": {
+        "ratebook": {
+          "name": "MA Ratebook (County Benchmarks)",
+          "description": "County-level payment benchmarks (what CMS pays plans)",
+          "granularity": ["county", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "1990", "end": "2026"},
+          "file_count": 37,
+          "s3_path": "raw/rates/ratebook/",
+          "join_keys": ["fips_county_code", "year"],
+          "priority": 5
+        },
+        "part_d": {
+          "name": "Part D Rates",
+          "description": "Prescription drug plan payment rates by region",
+          "granularity": ["region", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2006", "end": "2026"},
+          "file_count": 21,
+          "s3_path": "raw/rates/part_d/",
+          "join_keys": ["region", "year"],
+          "priority": 25
+        },
+        "ffs": {
+          "name": "FFS Data (Fee-for-Service Expenditures)",
+          "description": "Original Medicare costs by county for benchmarking",
+          "granularity": ["county", "year"],
+          "frequency": "annual",
+          "date_range": {"start": "2015", "end": "2024"},
+          "file_count": 10,
+          "s3_path": "raw/rates/ffs/",
+          "join_keys": ["fips_county_code", "year"],
+          "priority": 26
+        }
+      }
+    },
+
+    "risk_adjustment": {
+      "base_url": "https://www.cms.gov/medicare/health-plans/medicareadvtgspecratestats/risk-adjustors",
+      "description": "Risk adjustment models and data",
+      "datasets": {
+        "model_software": {
+          "name": "Risk Adjustment Model Software",
+          "description": "HCC model coefficients and calculation logic",
+          "granularity": ["year"],
+          "frequency": "annual",
+          "date_range": {"start": "2006", "end": "2026"},
+          "file_count": 21,
+          "s3_path": "raw/risk_adjustment/model_software/",
+          "join_keys": ["year"],
+          "priority": 6
+        },
+        "icd_mappings": {
+          "name": "ICD to HCC Mappings",
+          "description": "Maps diagnosis codes to Hierarchical Condition Categories",
+          "granularity": ["year"],
+          "frequency": "annual",
+          "date_range": {"start": "2006", "end": "2026"},
+          "file_count": 21,
+          "s3_path": "raw/risk_adjustment/icd_mappings/",
+          "join_keys": ["year"],
+          "priority": 27
+        }
+      }
+    }
+  }
+}
