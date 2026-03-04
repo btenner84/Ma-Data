@@ -3603,6 +3603,38 @@ async def export_distribution(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/stars/cutpoints-export")
+async def export_cutpoints(
+    format: str = "xlsx"
+):
+    """Export all cutpoints data as Excel file."""
+    try:
+        engine = get_engine()
+        
+        sql = """
+            SELECT year, measure_id, measure_key, measure_name, domain, 
+                   cut_2, cut_3, cut_4, cut_5, lower_is_better
+            FROM gold_cutpoints
+            ORDER BY year DESC, measure_id
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="cutpoints_export")
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Cutpoints', index=False)
+        output.seek(0)
+        
+        filename = "cutpoints_all_years.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v3/enrollment/by-parent")
 async def get_enrollment_by_parent_v3(
     year: int = 2026,

@@ -248,13 +248,11 @@ function formatEnrollment(num: number): string {
 // Full-width line chart for a single measure (one row per measure)
 function MeasureRowChart({
   measure,
-  starLevel,
   years,
   selectedPayer,
   isMounted
 }: {
   measure: CutpointsMeasure;
-  starLevel: 2 | 3 | 4 | 5;
   years: number[];
   selectedPayer: string;
   isMounted: boolean;
@@ -295,25 +293,25 @@ function MeasureRowChart({
     staleTime: 60000,
   });
 
-  const cutKey = `cut_${starLevel}_num` as const;
-
-  // Build chart data - API returns string keys, so convert year to string
+  // Build chart data with ALL cutpoint levels - API returns string keys
   const chartData = years.map(year => {
     const yearData = measure.yearly[String(year)];
     return {
       year,
-      value: yearData?.[cutKey] ?? null,
-      displayValue: yearData?.[`cut_${starLevel}` as keyof CutpointYearData] ?? null,
+      cut5: yearData?.cut_5_num ?? null,
+      cut4: yearData?.cut_4_num ?? null,
+      cut3: yearData?.cut_3_num ?? null,
+      cut2: yearData?.cut_2_num ?? null,
     };
   });
 
   // Check if we have any data
-  const hasData = chartData.some(d => d.value !== null);
+  const hasData = chartData.some(d => d.cut5 !== null || d.cut4 !== null || d.cut3 !== null || d.cut2 !== null);
 
-  // Get min/max for scale
-  const values = chartData.filter(d => d.value !== null).map(d => d.value as number);
-  const minVal = values.length > 0 ? Math.min(...values) : 0;
-  const maxVal = values.length > 0 ? Math.max(...values) : 100;
+  // Get min/max for scale across ALL cutpoint levels
+  const allValues = chartData.flatMap(d => [d.cut5, d.cut4, d.cut3, d.cut2].filter(v => v !== null) as number[]);
+  const minVal = allValues.length > 0 ? Math.min(...allValues) : 0;
+  const maxVal = allValues.length > 0 ? Math.max(...allValues) : 100;
   const range = maxVal - minVal || 10;
   const padding = range * 0.15;
 
@@ -395,7 +393,7 @@ function MeasureRowChart({
               <YAxis
                 domain={
                   measure.lower_is_better
-                    ? [Math.ceil(maxVal + padding), Math.floor(minVal - padding)]  // Inverted for lower-is-better
+                    ? [Math.ceil(maxVal + padding), Math.floor(minVal - padding)]
                     : [Math.floor(minVal - padding), Math.ceil(maxVal + padding)]
                 }
                 tick={{ fontSize: 11, fill: '#6b7280' }}
@@ -405,19 +403,23 @@ function MeasureRowChart({
                 reversed={measure.lower_is_better}
               />
               <Tooltip
-                formatter={(value) => [`${value}%`, `${starLevel}★ Cutpoint`]}
+                formatter={(value, name) => {
+                  const starNum = name === 'cut5' ? '5' : name === 'cut4' ? '4' : name === 'cut3' ? '3' : '2';
+                  return [`${value}%`, `${starNum}★ Cutpoint`];
+                }}
                 labelFormatter={(year) => `${year}`}
                 contentStyle={{ fontSize: 12, borderRadius: 8 }}
               />
-              <Line
-                type="monotone"
-                dataKey="value"
-                stroke={starColors[starLevel]}
-                strokeWidth={2.5}
-                dot={{ fill: starColors[starLevel], r: 4 }}
-                activeDot={{ r: 6 }}
-                connectNulls={false}
+              <Legend 
+                formatter={(value) => {
+                  const labels: Record<string, string> = { cut5: '5★', cut4: '4★', cut3: '3★', cut2: '2★' };
+                  return labels[value] || value;
+                }}
               />
+              <Line type="monotone" dataKey="cut5" stroke={starColors[5]} strokeWidth={2} dot={{ r: 3 }} connectNulls={false} name="cut5" />
+              <Line type="monotone" dataKey="cut4" stroke={starColors[4]} strokeWidth={2} dot={{ r: 3 }} connectNulls={false} name="cut4" />
+              <Line type="monotone" dataKey="cut3" stroke={starColors[3]} strokeWidth={2} dot={{ r: 3 }} connectNulls={false} name="cut3" />
+              <Line type="monotone" dataKey="cut2" stroke={starColors[2]} strokeWidth={2} dot={{ r: 3 }} connectNulls={false} name="cut2" />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -1000,7 +1002,6 @@ WHERE measure = '${detailSelection?.measureKey}'
 
 // Cutpoints Tab Component
 function CutpointsTab({ parentOrgs, isMounted }: { parentOrgs: string[]; isMounted: boolean }) {
-  const [starLevel, setStarLevel] = useState<2 | 3 | 4 | 5>(4);
   const [domainFilter, setDomainFilter] = useState<string>("all");
   const [selectedPayer, setSelectedPayer] = useState<string>("Industry");
   const [showPayerDropdown, setShowPayerDropdown] = useState(false);
@@ -1155,24 +1156,39 @@ function CutpointsTab({ parentOrgs, isMounted }: { parentOrgs: string[]; isMount
               </select>
             </div>
 
-            {/* Star Level Toggle */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">Show:</span>
-              <div className="flex bg-gray-100 rounded-lg p-1">
-                {([5, 4, 3, 2] as const).map((level) => (
-                  <button
-                    key={level}
-                    onClick={() => setStarLevel(level)}
-                    className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all ${
-                      starLevel === level
-                        ? starColors[level]
-                        : "text-gray-500 hover:text-gray-700"
-                    }`}
-                  >
-                    {level}★
-                  </button>
-                ))}
-              </div>
+            {/* Download & Audit */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  window.open(`${API_BASE}/api/stars/cutpoints-export?format=xlsx`, '_blank');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+              >
+                <Download className="w-4 h-4" />
+                Export All
+              </button>
+              <details className="relative">
+                <summary className="cursor-pointer text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                  <Info className="w-4 h-4" />
+                  Data Source
+                </summary>
+                <div className="absolute right-0 top-full mt-1 w-80 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-20">
+                  <div className="text-xs text-gray-600 mb-2">
+                    <strong>Source:</strong> CMS Star Ratings Technical Notes (annual PDFs)
+                  </div>
+                  <div className="text-xs text-gray-600 mb-2">
+                    <strong>Cutpoints:</strong> Performance thresholds that determine star ratings
+                  </div>
+                  <div className="bg-gray-900 rounded p-2">
+                    <pre className="text-xs text-green-400 whitespace-pre-wrap">
+{`-- Cutpoints define the performance 
+-- thresholds for each star level
+-- e.g., cut_4 = 81% means ≥81% 
+-- performance earns 4 stars`}
+                    </pre>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </div>
@@ -1194,7 +1210,6 @@ function CutpointsTab({ parentOrgs, isMounted }: { parentOrgs: string[]; isMount
             <MeasureRowChart
               key={measure.measure_key}
               measure={measure}
-              starLevel={starLevel}
               years={years}
               selectedPayer={selectedPayer}
               isMounted={isMounted}
