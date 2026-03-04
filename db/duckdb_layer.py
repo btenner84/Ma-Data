@@ -123,7 +123,7 @@ class MAQueryEngine:
             
             # Fact tables
             'gold_fact_enrollment_national': f's3://{S3_BUCKET}/gold/fact_enrollment_national.parquet',
-            'gold_fact_enrollment_geographic': f's3://{S3_BUCKET}/gold/fact_enrollment_geographic.parquet',
+            'gold_fact_enrollment_geographic': f's3://{S3_BUCKET}/gold/fact_enrollment_geographic/*.parquet',  # Partitioned
             'gold_fact_stars': f's3://{S3_BUCKET}/gold/fact_stars.parquet',
             'gold_fact_risk_scores': f's3://{S3_BUCKET}/gold/fact_risk_scores.parquet',
             

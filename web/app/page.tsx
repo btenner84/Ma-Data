@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
@@ -17,6 +18,15 @@ import {
 import { enrollmentAPIv3, starsAPIv3 } from "@/lib/api";
 import { Users, Star, TrendingUp, ArrowRight, Building2, Calendar } from "lucide-react";
 
+// Hook to check if component is mounted (fixes SSR hydration issues with charts)
+function useIsMounted() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  return mounted;
+}
+
 const STAR_COLORS: Record<number, string> = {
   1: "#dc2626",
   2: "#ea580c",
@@ -32,6 +42,8 @@ function formatNumber(num: number): string {
 }
 
 export default function HomePage() {
+  const isMounted = useIsMounted();
+  
   // Fetch summary data using v3 APIs (with audit trail)
   const { data: enrollmentData, isLoading: enrollmentLoading } = useQuery({
     queryKey: ["enrollment-timeseries-v3"],
@@ -63,9 +75,9 @@ export default function HomePage() {
 
   // Transform stars distribution data for pie chart
   // Using enrollment data from starsData to show 4+ star %
-  const fourPlusPct = starsData?.data?.length > 0
-    ? starsData.data.reduce((sum: number, d: any) => sum + (d.fourplus_enrollment || 0), 0) /
-      starsData.data.reduce((sum: number, d: any) => sum + (d.enrollment || 0), 0) * 100
+  const fourPlusPct = (starsData?.data?.length ?? 0) > 0
+    ? starsData!.data!.reduce((sum: number, d: any) => sum + (d.fourplus_enrollment || 0), 0) /
+      starsData!.data!.reduce((sum: number, d: any) => sum + (d.enrollment || 0), 0) * 100
     : 0;
 
   // Create pie data showing 4+ star vs <4 star contracts
@@ -166,12 +178,12 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="h-64">
-            {enrollmentLoading ? (
+            {enrollmentLoading || !isMounted ? (
               <div className="flex items-center justify-center h-full">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minHeight={240}>
                 <LineChart data={enrollmentChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="year" />
@@ -202,12 +214,12 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="h-64">
-            {bandLoading ? (
+            {bandLoading || !isMounted ? (
               <div className="flex items-center justify-center h-full">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minHeight={240}>
                 <PieChart>
                   <Pie
                     data={starPieData}

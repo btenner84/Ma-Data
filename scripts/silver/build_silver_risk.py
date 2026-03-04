@@ -96,7 +96,17 @@ def process_file(s3_key: str, dry_run: bool = False) -> dict:
                 return result
             
             with zf.open(csv_file) as f:
-                df = pd.read_csv(f, dtype=str, low_memory=False)
+                content = f.read()
+                df = None
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        from io import BytesIO
+                        df = pd.read_csv(BytesIO(content), dtype=str, low_memory=False, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    raise ValueError("Could not decode CSV with any encoding")
             
             df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
             

@@ -14,6 +14,22 @@ from functools import lru_cache
 import zipfile
 import os
 import sys
+import math
+
+
+def sanitize_for_json(obj):
+    """Recursively replace NaN, Inf values with None for JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif pd.isna(obj):
+        return None
+    return obj
 
 # Add project root for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1729,10 +1745,10 @@ async def get_cutpoints_timeseries():
             "yearly": yearly,
         }
 
-    return {
+    return sanitize_for_json({
         "years": sorted(years),
         "measures": list(measures.values())
-    }
+    })
 
 
 # === Contract Detail Endpoints ===

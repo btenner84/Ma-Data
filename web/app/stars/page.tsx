@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart,
@@ -14,6 +14,15 @@ import {
 } from "recharts";
 import { Filter, Plus, X, ChevronDown, Home, Target, BarChart3, FileText } from "lucide-react";
 import { starsAPI } from "@/lib/api";
+
+// Hook to check if component is mounted (fixes SSR hydration issues with charts)
+function useIsMounted() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  return mounted;
+}
 
 type StarsTab = "home" | "cutpoints" | "measures" | "contract";
 
@@ -238,12 +247,14 @@ function MeasureRowChart({
   measure,
   starLevel,
   years,
-  selectedPayer
+  selectedPayer,
+  isMounted
 }: {
   measure: CutpointsMeasure;
   starLevel: 2 | 3 | 4 | 5;
   years: number[];
   selectedPayer: string;
+  isMounted: boolean;
 }) {
   // State for contract audit modal
   const [auditYear, setAuditYear] = useState<number | null>(null);
@@ -365,8 +376,12 @@ function MeasureRowChart({
       <div className="h-48 mb-4">
         {!hasData ? (
           <div className="h-full flex items-center justify-center text-gray-400">No cutpoint data available</div>
+        ) : !isMounted ? (
+          <div className="h-full flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minHeight={180}>
             <LineChart data={chartData} margin={{ top: 10, right: 30, bottom: 10, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis
@@ -919,7 +934,7 @@ function MeasurePerformanceTab({ parentOrgs }: { parentOrgs: string[] }) {
 }
 
 // Cutpoints Tab Component
-function CutpointsTab({ parentOrgs }: { parentOrgs: string[] }) {
+function CutpointsTab({ parentOrgs, isMounted }: { parentOrgs: string[]; isMounted: boolean }) {
   const [starLevel, setStarLevel] = useState<2 | 3 | 4 | 5>(4);
   const [domainFilter, setDomainFilter] = useState<string>("all");
   const [selectedPayer, setSelectedPayer] = useState<string>("Industry");
@@ -1117,6 +1132,7 @@ function CutpointsTab({ parentOrgs }: { parentOrgs: string[] }) {
               starLevel={starLevel}
               years={years}
               selectedPayer={selectedPayer}
+              isMounted={isMounted}
             />
           ))}
         </div>
@@ -1606,6 +1622,8 @@ function ContractTab() {
 }
 
 export default function StarsPage() {
+  const isMounted = useIsMounted();
+  
   // Tab state
   const [activeTab, setActiveTab] = useState<StarsTab>("home");
 
@@ -2028,14 +2046,14 @@ export default function StarsPage() {
 
         {/* Chart */}
         <div className="h-80" style={{ minHeight: '320px', minWidth: '0' }}>
-          {timeseriesLoading ? (
+          {timeseriesLoading || !isMounted ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
             </div>
           ) : timeseriesData?.error ? (
             <div className="flex items-center justify-center h-full text-gray-500">{timeseriesData.error}</div>
           ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />
@@ -2536,7 +2554,7 @@ export default function StarsPage() {
       )}
 
       {/* CUTPOINTS TAB */}
-      {activeTab === "cutpoints" && <CutpointsTab parentOrgs={filterOptions?.parent_orgs || []} />}
+      {activeTab === "cutpoints" && <CutpointsTab parentOrgs={filterOptions?.parent_orgs || []} isMounted={isMounted} />}
 
       {/* MEASURES TAB */}
       {activeTab === "measures" && <MeasurePerformanceTab parentOrgs={filterOptions?.parent_orgs || []} />}

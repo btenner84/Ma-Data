@@ -94,37 +94,30 @@ def get_enrollment_detail(enrollment_year: int, month: int = 2):
 
 def build_unified_table():
     """Build unified stars + enrollment table with all dimensions."""
-    print("Loading stars summary...")
-    stars_df = load_parquet('processed/unified/stars_summary.parquet')
+    print("Loading stars from Gold layer...")
+    stars_df = load_parquet('gold/fact_stars.parquet')
     if stars_df.empty:
         print("No stars data found!")
         return
-
-    star_years = sorted(stars_df['rating_year'].unique().tolist())
-    print(f"Processing {len(star_years)} star years")
+    
+    # Add rating_year column if not present (use year column)
+    if 'rating_year' not in stars_df.columns:
+        stars_df['rating_year'] = stars_df['year']
+    
+    star_years = sorted(stars_df['rating_year'].dropna().unique().tolist())
+    print(f"Processing {len(star_years)} star years: {star_years}")
 
     all_rows = []
 
     for star_year in star_years:
+        star_year = int(star_year)  # Ensure integer
         print(f"\nProcessing star year {star_year}...")
         payment_year = star_year + 1
 
-        # Find overall rating column
-        rating_col = f"{star_year} Overall"
-        if rating_col not in stars_df.columns:
-            for col in stars_df.columns:
-                if 'overall' in col.lower() and str(star_year) in col:
-                    rating_col = col
-                    break
-
-        if rating_col not in stars_df.columns:
-            print(f"  No rating column found")
-            continue
-
-        # Get stars for this year
+        # Get stars for this year (Gold layer already has overall_rating parsed)
         year_stars = stars_df[stars_df['rating_year'] == star_year].copy()
         year_stars['contract_id_clean'] = year_stars['contract_id'].astype(str).str.strip()
-        year_stars['overall_rating'] = year_stars[rating_col].apply(parse_star_rating)
+        # overall_rating is already numeric in Gold layer
         year_stars = year_stars[year_stars['overall_rating'].notna()]
 
         if year_stars.empty:

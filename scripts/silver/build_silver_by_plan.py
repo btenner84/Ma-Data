@@ -137,10 +137,19 @@ def process_file(s3_key: str, dry_run: bool = False) -> dict:
                 result["message"] = f"No CSV found in ZIP. Files: {file_list}"
                 return result
             
-            # Read CSV
+            # Read CSV with encoding fallback
             print(f"  Processing {csv_file}...")
             with zf.open(csv_file) as f:
-                df = pd.read_csv(f, dtype=str, low_memory=False)
+                content = f.read()
+                df = None
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        df = pd.read_csv(BytesIO(content), dtype=str, low_memory=False, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    raise ValueError("Could not decode CSV with any encoding")
             
             # Standardize column names
             df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]

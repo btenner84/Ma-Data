@@ -121,7 +121,7 @@ def main():
             print(f"   Contract lookup: {len(contract_lookup):,} rows")
     sys.stdout.flush()
     
-    print("\n3. Loading silver CPSC enrollment...")
+    print("\n3. Processing silver CPSC enrollment in chunks...")
     enrollment_files = list_files(SILVER_ENROLLMENT_PREFIX, '/enrollment.parquet')
     print(f"   Found {len(enrollment_files)} enrollment files")
     
@@ -129,70 +129,24 @@ def main():
         print("   ERROR: No enrollment files found")
         return
     
-    all_chunks = []
-    total_rows = 0
+    # Process in chunks to avoid OOM - group by year-month
+    from collections import defaultdict
+    files_by_period = defaultdict(list)
+    for f in enrollment_files:
+        parts = f.split('/')
+        for part in parts:
+            if part.isdigit() and len(part) == 4:  # year
+                year = part
+                break
+        for part in parts:
+            if part.isdigit() and len(part) == 2:  # month
+                month = part
+                break
+        period = f"{year}-{month}"
+        files_by_period[period].append(f)
     
-    for i, f in enumerate(enrollment_files):
-        df = load_parquet(f)
-        if df.empty:
-            continue
-        
-        total_rows += len(df)
-        all_chunks.append(df)
-        
-        if (i + 1) % 50 == 0:
-            print(f"   Loaded {i+1}/{len(enrollment_files)} files ({total_rows:,} rows)")
-            sys.stdout.flush()
-    
-    if not all_chunks:
-        print("   ERROR: No enrollment data loaded")
-        return
-    
-    fact_df = pd.concat(all_chunks, ignore_index=True)
-    print(f"   Total rows: {len(fact_df):,}")
-    print(f"   Suppressed rows: {fact_df['is_suppressed'].sum():,}")
+    print(f"   Processing {len(files_by_period)} year-month periods")
     sys.stdout.flush()
-    
-    print("\n4. Enriching with dimension data...")
-    
-    if entity_lookup is not None:
-        fact_df = fact_df.merge(entity_lookup, on=['contract_id', 'year'], how='left')
-        fact_df['entity_id'] = fact_df['entity_id'].fillna(fact_df['contract_id'])
-    else:
-        fact_df['entity_id'] = fact_df['contract_id']
-    
-    if contract_lookup is not None:
-        fact_df = fact_df.merge(
-            contract_lookup,
-            on=['contract_id', 'plan_id', 'year'],
-            how='left',
-            suffixes=('', '_contract')
-        )
-    
-    if plan_lookup is not None:
-        for col in ['plan_type', 'product_type', 'snp_type', 'group_type']:
-            fact_df = fact_df.drop(columns=[col], errors='ignore')
-        
-        fact_df = fact_df.merge(
-            plan_lookup,
-            on=['contract_id', 'plan_id', 'year'],
-            how='left'
-        )
-    sys.stdout.flush()
-    
-    print("\n5. Adding computed columns...")
-    
-    fact_df['time_key'] = fact_df['year'] * 100 + fact_df['month']
-    
-    if 'fips_code' in fact_df.columns:
-        fact_df['geo_key'] = fact_df['fips_code']
-    else:
-        fact_df['geo_key'] = None
-    
-    fact_df['plan_count'] = 1
-    
-    fact_df['_pipeline_run_id'] = PIPELINE_RUN_ID
-    fact_df['_loaded_at'] = datetime.now()
     
     final_cols = [
         'time_key', 'entity_id', 'contract_id', 'plan_id', 'geo_key',
@@ -201,23 +155,110 @@ def main():
         'plan_type', 'product_type', 'snp_type', 'group_type',
         '_source_file', '_source_row', '_pipeline_run_id', '_loaded_at'
     ]
-    for col in final_cols:
-        if col not in fact_df.columns:
-            fact_df[col] = None
     
-    result = fact_df[final_cols].copy()
+    total_rows = 0
+    total_suppressed = 0
+    all_years = set()
+    all_states = set()
+    output_buffers = []
     
-    print(f"   Final fact table: {len(result):,} rows")
-    print(f"   Year range: {result['year'].min()} - {result['year'].max()}")
-    print(f"   States: {result['state'].nunique()}")
-    print(f"   Suppression rate: {result['is_suppressed'].sum() / len(result) * 100:.1f}%")
+    for period_idx, (period, files) in enumerate(sorted(files_by_period.items())):
+        # Load this period's data
+        period_chunks = []
+        for f in files:
+            df = load_parquet(f)
+            if not df.empty:
+                period_chunks.append(df)
+        
+        if not period_chunks:
+            continue
+        
+        fact_df = pd.concat(period_chunks, ignore_index=True)
+        del period_chunks  # Free memory
+        
+        # Enrich with dimension data
+        if entity_lookup is not None:
+            fact_df = fact_df.merge(entity_lookup, on=['contract_id', 'year'], how='left')
+            fact_df['entity_id'] = fact_df['entity_id'].fillna(fact_df['contract_id'])
+        else:
+            fact_df['entity_id'] = fact_df['contract_id']
+        
+        if contract_lookup is not None:
+            fact_df = fact_df.merge(
+                contract_lookup,
+                on=['contract_id', 'plan_id', 'year'],
+                how='left',
+                suffixes=('', '_contract')
+            )
+        
+        if plan_lookup is not None:
+            for col in ['plan_type', 'product_type', 'snp_type', 'group_type']:
+                fact_df = fact_df.drop(columns=[col], errors='ignore')
+            
+            fact_df = fact_df.merge(
+                plan_lookup,
+                on=['contract_id', 'plan_id', 'year'],
+                how='left'
+            )
+        
+        # Add computed columns
+        fact_df['time_key'] = fact_df['year'] * 100 + fact_df['month']
+        fact_df['geo_key'] = fact_df['fips_code'] if 'fips_code' in fact_df.columns else None
+        fact_df['plan_count'] = 1
+        fact_df['_pipeline_run_id'] = PIPELINE_RUN_ID
+        fact_df['_loaded_at'] = datetime.now()
+        
+        # Ensure all columns exist
+        for col in final_cols:
+            if col not in fact_df.columns:
+                fact_df[col] = None
+        
+        result = fact_df[final_cols].copy()
+        del fact_df  # Free memory
+        
+        # Track stats
+        total_rows += len(result)
+        if 'is_suppressed' in result.columns:
+            total_suppressed += result['is_suppressed'].sum()
+        if 'year' in result.columns:
+            all_years.update(result['year'].dropna().unique())
+        if 'state' in result.columns:
+            all_states.update(result['state'].dropna().unique())
+        
+        # Save to temporary buffer
+        buffer = BytesIO()
+        result.to_parquet(buffer, index=False, compression='snappy')
+        output_buffers.append(buffer.getvalue())
+        del result, buffer  # Free memory
+        
+        if (period_idx + 1) % 12 == 0:
+            print(f"   Processed {period_idx + 1}/{len(files_by_period)} periods ({total_rows:,} rows)")
+            sys.stdout.flush()
+    
+    print(f"\n4. Summary:")
+    print(f"   Total rows: {total_rows:,}")
+    print(f"   Suppressed rows: {total_suppressed:,}")
+    print(f"   Year range: {min(all_years) if all_years else 'N/A'} - {max(all_years) if all_years else 'N/A'}")
+    print(f"   States: {len(all_states)}")
+    if total_rows > 0:
+        print(f"   Suppression rate: {total_suppressed / total_rows * 100:.1f}%")
     sys.stdout.flush()
     
-    print("\n6. Saving to S3...")
-    buffer = BytesIO()
-    result.to_parquet(buffer, index=False, compression='snappy')
-    buffer.seek(0)
-    s3.put_object(Bucket=S3_BUCKET, Key=OUTPUT_KEY, Body=buffer.getvalue())
+    # Write partitioned files to avoid OOM on concat
+    print(f"\n5. Saving partitioned files to S3...")
+    partition_count = 0
+    
+    for i, buf in enumerate(output_buffers):
+        partition_key = f"gold/fact_enrollment_geographic/part_{i:04d}.parquet"
+        s3.put_object(Bucket=S3_BUCKET, Key=partition_key, Body=buf)
+        partition_count += 1
+        if (i + 1) % 20 == 0:
+            print(f"   Saved {i+1}/{len(output_buffers)} partitions")
+            sys.stdout.flush()
+    
+    del output_buffers
+    
+    print(f"   Saved {partition_count} partitions to s3://{S3_BUCKET}/gold/fact_enrollment_geographic/")
     
     print(f"Saved to s3://{S3_BUCKET}/{OUTPUT_KEY}")
     print(f"Completed: {datetime.now()}")

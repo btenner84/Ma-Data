@@ -14,6 +14,15 @@ import {
 } from "recharts";
 import { Filter, Plus, X, ChevronDown } from "lucide-react";
 
+// Hook to check if component is mounted (fixes SSR hydration issues with charts)
+function useIsMounted() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  return mounted;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const COLORS = [
@@ -79,6 +88,7 @@ interface ContractDetailsResponse {
 }
 
 export default function RiskScoresPage() {
+  const isMounted = useIsMounted();
   const [selectedPlanTypes, setSelectedPlanTypes] = useState<string[]>([]);
   const [selectedGroupTypes, setSelectedGroupTypes] = useState<string[]>([]);
   const [selectedSnpTypes, setSelectedSnpTypes] = useState<string[]>([]);
@@ -494,12 +504,12 @@ export default function RiskScoresPage() {
           </h2>
         </div>
         <div className="h-96">
-          {isLoading ? (
+          {isLoading || !isMounted ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
             </div>
           ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />

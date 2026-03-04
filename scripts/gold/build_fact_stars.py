@@ -113,6 +113,7 @@ def main():
     
     print("\n3. Standardizing columns...")
     
+    # Handle different source formats
     rating_col_map = {
         'overall_star_rating': 'overall_rating',
         'overall_stars': 'overall_rating',
@@ -121,16 +122,68 @@ def main():
         'part_c_stars': 'part_c_rating',
         'part_d_summary_star_rating': 'part_d_rating',
         'part_d_stars': 'part_d_rating',
+        'summary_rating': 'overall_rating',  # From processed data
+        'parent_organization': 'parent_org',  # From processed data
     }
     
     for old_col, new_col in rating_col_map.items():
         if old_col in fact_df.columns and new_col not in fact_df.columns:
             fact_df[new_col] = fact_df[old_col]
     
+    # If data has 'part' column (Part C / Part D rows), pivot to get overall rating
+    if 'part' in fact_df.columns and 'summary_rating' in fact_df.columns:
+        print("   Pivoting part-level data to contract level...")
+        # Group by contract and year, get the overall rating (usually Part C for MA contracts)
+        pivot_df = fact_df.pivot_table(
+            index=['contract_id', 'year'],
+            columns='part',
+            values='summary_rating',
+            aggfunc='first'
+        ).reset_index()
+        pivot_df.columns.name = None
+        
+        # Use Part C rating as overall for MA contracts, Part D for PDP
+        if 'C' in pivot_df.columns:
+            pivot_df['part_c_rating'] = pd.to_numeric(pivot_df['C'], errors='coerce')
+        if 'D' in pivot_df.columns:
+            pivot_df['part_d_rating'] = pd.to_numeric(pivot_df['D'], errors='coerce')
+        
+        # Overall is typically Part C rating for MA contracts
+        pivot_df['overall_rating'] = pivot_df.get('part_c_rating', pivot_df.get('part_d_rating'))
+        
+        # Merge back parent_org
+        parent_org_lookup = fact_df[['contract_id', 'year', 'parent_org']].drop_duplicates() if 'parent_org' in fact_df.columns else None
+        if parent_org_lookup is not None:
+            pivot_df = pivot_df.merge(parent_org_lookup, on=['contract_id', 'year'], how='left')
+        
+        fact_df = pivot_df
+    
+    # Parse text ratings like "3 out of 5 stars" or "2.5 out of 5 stars" to numeric
+    def parse_rating(val):
+        if pd.isna(val):
+            return None
+        val_str = str(val).strip().lower()
+        # Handle "not enough data", "plan too new", etc.
+        if 'not enough' in val_str or 'plan too new' in val_str or 'n/a' in val_str:
+            return None
+        # Handle "X out of 5 stars" format
+        import re
+        match = re.match(r'^([\d.]+)\s*(out of 5)?\s*stars?', val_str)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                pass
+        # Try direct numeric conversion
+        try:
+            return float(val_str)
+        except ValueError:
+            return None
+    
     rating_cols = ['overall_rating', 'part_c_rating', 'part_d_rating']
     for col in rating_cols:
         if col in fact_df.columns:
-            fact_df[col] = pd.to_numeric(fact_df[col], errors='coerce')
+            fact_df[col] = fact_df[col].apply(parse_rating)
     sys.stdout.flush()
     
     print("\n4. Enriching with entity data...")

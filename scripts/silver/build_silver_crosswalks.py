@@ -99,33 +99,70 @@ def process_file(s3_key: str, dry_run: bool = False) -> dict:
         
         with ZipFile(zip_data, 'r') as zf:
             file_list = zf.namelist()
-            csv_file = next((f for f in file_list if f.endswith('.csv')), None)
+            # Look for crosswalk data file (CSV, TXT, or XLS)
+            # Priority: 1) CSV with crosswalk, 2) TXT with crosswalk (not terminated), 3) XLS with crosswalk
+            data_file = None
+            for f in file_list:
+                f_lower = f.lower()
+                if f.endswith('.csv') and 'crosswalk' in f_lower:
+                    data_file = f
+                    break
+            if not data_file:
+                for f in file_list:
+                    f_lower = f.lower()
+                    if f.endswith('.txt') and 'crosswalk' in f_lower and 'terminated' not in f_lower:
+                        data_file = f
+                        break
             
-            if not csv_file:
+            if not data_file:
                 result["status"] = "error"
-                result["message"] = f"No CSV found in ZIP. Files: {file_list}"
+                result["message"] = f"No CSV/TXT found in ZIP. Files: {file_list}"
                 return result
             
-            with zf.open(csv_file) as f:
-                df = pd.read_csv(f, dtype=str, low_memory=False)
+            with zf.open(data_file) as f:
+                content = f.read()
+                df = None
+                # Try tab-delimited first (common for crosswalk TXT files), then comma
+                separators = ['\t', ',']
+                for sep in separators:
+                    for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                        try:
+                            df = pd.read_csv(BytesIO(content), dtype=str, low_memory=False, encoding=encoding, sep=sep)
+                            # Check if we got reasonable columns (more than 1)
+                            if len(df.columns) > 1:
+                                break
+                            df = None
+                        except (UnicodeDecodeError, pd.errors.ParserError):
+                            continue
+                    if df is not None and len(df.columns) > 1:
+                        break
+                if df is None:
+                    raise ValueError("Could not decode file with any encoding/separator")
             
             df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
             
             rename_map = {}
             for col in df.columns:
                 col_lower = col.lower()
-                if 'old' in col_lower and 'contract' in col_lower:
+                # Handle OLD, PRIOR, PREVIOUS patterns
+                if ('old' in col_lower or 'prior' in col_lower or 'previous' in col_lower) and 'contract' in col_lower:
                     rename_map[col] = 'old_contract_id'
-                elif 'new' in col_lower and 'contract' in col_lower:
+                # Handle NEW, CURRENT patterns
+                elif ('new' in col_lower or 'current' in col_lower) and 'contract' in col_lower:
                     rename_map[col] = 'new_contract_id'
-                elif 'prior' in col_lower and 'contract' in col_lower:
-                    rename_map[col] = 'old_contract_id'
-                elif 'current' in col_lower and 'contract' in col_lower:
-                    rename_map[col] = 'new_contract_id'
-                elif 'old' in col_lower and 'plan' in col_lower:
+                # Plan IDs
+                elif ('old' in col_lower or 'prior' in col_lower or 'previous' in col_lower) and 'plan' in col_lower and 'name' not in col_lower:
                     rename_map[col] = 'old_plan_id'
-                elif 'new' in col_lower and 'plan' in col_lower:
+                elif ('new' in col_lower or 'current' in col_lower) and 'plan' in col_lower and 'name' not in col_lower:
                     rename_map[col] = 'new_plan_id'
+                # SNP types
+                elif ('old' in col_lower or 'prior' in col_lower or 'previous' in col_lower) and 'snp' in col_lower and 'type' in col_lower:
+                    rename_map[col] = 'old_snp_type'
+                elif ('new' in col_lower or 'current' in col_lower) and 'snp' in col_lower and 'type' in col_lower:
+                    rename_map[col] = 'new_snp_type'
+                # Status
+                elif col_lower == 'status':
+                    rename_map[col] = 'crosswalk_status'
             
             df = df.rename(columns=rename_map)
             
@@ -139,7 +176,7 @@ def process_file(s3_key: str, dry_run: bool = False) -> dict:
                 df['new_plan_id'] = df['new_plan_id'].apply(clean_plan_id)
             
             df['effective_year'] = year
-            df['_source_file'] = csv_file
+            df['_source_file'] = data_file
             df['_source_row'] = range(len(df))
             
             result["rows"] = len(df)

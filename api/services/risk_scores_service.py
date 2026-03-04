@@ -103,11 +103,21 @@ class RiskScoresService:
 
         IMPORTANT: Uses risk_scores_by_parent_dims for filters to ensure
         filter values match the timeseries query table.
+        
+        Years are filtered to only include those with enrollment data,
+        since pre-2013 risk data has no enrollment linkage.
         """
-        # Use dims table for consistent filter values with timeseries queries
+        # Get years that have actual enrollment data (required for weighted avg)
+        sql_years = """
+            SELECT DISTINCT year
+            FROM risk_scores_by_parent
+            WHERE enrollment > 0
+            ORDER BY year
+        """
+        
+        # Use dims table for filter values (excluding Unknown)
         sql = """
             SELECT DISTINCT
-                year,
                 parent_org,
                 plan_type,
                 group_type,
@@ -118,6 +128,12 @@ class RiskScoresService:
               AND snp_type != 'Unknown'
         """
 
+        df_years, _ = self.engine.query_with_audit(
+            sql_years,
+            user_id=user_id,
+            context="get_risk_years"
+        )
+        
         df, audit_id = self.engine.query_with_audit(
             sql,
             user_id=user_id,
@@ -138,7 +154,7 @@ class RiskScoresService:
         )
 
         return {
-            'years': sorted(df['year'].unique().tolist()),
+            'years': sorted(df_years['year'].unique().tolist()),
             'parent_orgs': sorted(df['parent_org'].dropna().unique().tolist()),
             'plan_types': sorted(df['plan_type'].dropna().unique().tolist()),
             'group_types': sorted(df['group_type'].dropna().unique().tolist()),
@@ -322,6 +338,7 @@ class RiskScoresService:
                 WHERE r.parent_org IN ({parent_list})
                 {and_clause}
                 GROUP BY {group_by_clause}
+                HAVING SUM(r.enrollment) > 0
                 ORDER BY r.year
             """
         else:
@@ -338,6 +355,7 @@ class RiskScoresService:
                 FROM {table_name} r
                 {where_clause}
                 GROUP BY {group_by_clause}
+                HAVING SUM(r.enrollment) > 0
                 ORDER BY r.year
             """
 
@@ -377,6 +395,7 @@ class RiskScoresService:
                 FROM {table_name} r
                 {where_clause}
                 GROUP BY year
+                HAVING SUM(enrollment) > 0
                 ORDER BY year
             """
 

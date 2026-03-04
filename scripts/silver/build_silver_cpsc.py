@@ -147,7 +147,13 @@ def process_cpsc_file(s3_key: str, dry_run: bool = False) -> dict:
             # =====================================================================
             print(f"  Processing {contract_file}...")
             with zf.open(contract_file) as f:
-                df_contracts = pd.read_csv(f, dtype=str, low_memory=False)
+                content = f.read()
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        df_contracts = pd.read_csv(BytesIO(content), dtype=str, low_memory=False, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
             
             # Standardize column names
             df_contracts.columns = [c.strip().lower().replace(' ', '_') for c in df_contracts.columns]
@@ -186,7 +192,13 @@ def process_cpsc_file(s3_key: str, dry_run: bool = False) -> dict:
             # =====================================================================
             print(f"  Processing {enrollment_file}...")
             with zf.open(enrollment_file) as f:
-                df_enrollment = pd.read_csv(f, dtype=str, low_memory=False)
+                content = f.read()
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        df_enrollment = pd.read_csv(BytesIO(content), dtype=str, low_memory=False, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
             
             # Standardize column names
             df_enrollment.columns = [c.strip().lower().replace(' ', '_') for c in df_enrollment.columns]
