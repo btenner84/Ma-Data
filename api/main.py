@@ -3338,6 +3338,151 @@ async def get_enrollment_timeseries_v3(
         return {"error": str(e), "status": "error"}
 
 
+# ==================== EXPORT ENDPOINTS ====================
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/v3/enrollment/export")
+async def export_enrollment_data(
+    year: Optional[int] = None,
+    parent_org: Optional[str] = None,
+    states: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    format: str = "xlsx"
+):
+    """Export enrollment data as Excel file."""
+    try:
+        engine = get_engine()
+        
+        # Build query
+        conditions = []
+        if year:
+            conditions.append(f"year = {year}")
+        if parent_org:
+            conditions.append(f"parent_org = '{parent_org}'")
+        if states:
+            state_list = [f"'{s.strip()}'" for s in states.split(",")]
+            conditions.append(f"state IN ({', '.join(state_list)})")
+        if plan_types:
+            type_list = [f"'{t.strip()}'" for t in plan_types.split(",")]
+            conditions.append(f"plan_type IN ({', '.join(type_list)})")
+        
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        
+        sql = f"""
+            SELECT year, month, contract_id, parent_org, state, plan_type, 
+                   snp_type, group_type, enrollment
+            FROM gold_fact_enrollment_unified
+            WHERE {where_clause}
+            ORDER BY year DESC, enrollment DESC
+            LIMIT 50000
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="enrollment_export")
+        
+        # Convert to Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Enrollment', index=False)
+        output.seek(0)
+        
+        filename = f"enrollment_export_{year or 'all'}_{parent_org or 'all'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v4/risk-scores/export")
+async def export_risk_scores_data(
+    year: int,
+    parent_org: Optional[str] = None,
+    format: str = "xlsx"
+):
+    """Export risk scores data as Excel file."""
+    try:
+        engine = get_engine()
+        
+        # Build query
+        conditions = [f"year = {year}"]
+        if parent_org:
+            conditions.append(f"parent_org = '{parent_org}'")
+        
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT year, contract_id, plan_id, parent_org, plan_type, 
+                   group_type, snp_type, risk_score, enrollment
+            FROM gold_fact_risk_scores
+            WHERE {where_clause}
+            ORDER BY enrollment DESC
+            LIMIT 50000
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="risk_scores_export")
+        
+        # Convert to Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Risk Scores', index=False)
+        output.seek(0)
+        
+        filename = f"risk_scores_{year}_{parent_org or 'all'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stars/export")
+async def export_stars_data(
+    year: int,
+    parent_org: Optional[str] = None,
+    format: str = "xlsx"
+):
+    """Export stars + enrollment data as Excel file."""
+    try:
+        engine = get_engine()
+        
+        # Build query
+        conditions = [f"year = {year}"]
+        if parent_org:
+            conditions.append(f"parent_org = '{parent_org}'")
+        
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT year, contract_id, parent_org, overall_rating, 
+                   part_c_rating, part_d_rating, enrollment
+            FROM gold_stars_enrollment_unified
+            WHERE {where_clause}
+            ORDER BY enrollment DESC
+            LIMIT 50000
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="stars_export")
+        
+        # Convert to Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Stars', index=False)
+        output.seek(0)
+        
+        filename = f"stars_{year}_{parent_org or 'all'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v3/enrollment/by-parent")
 async def get_enrollment_by_parent_v3(
     year: int = 2026,
