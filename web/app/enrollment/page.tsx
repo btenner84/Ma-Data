@@ -81,7 +81,6 @@ export default function EnrollmentPage() {
   const [showIndustryTotal, setShowIndustryTotal] = useState(true); // Show industry total line
   const [groupBy, setGroupBy] = useState<string | null>(null);
   const [yearRange, setYearRange] = useState<number | null>(null); // null = all years
-  const [viewMode, setViewMode] = useState<"enrollment" | "market_share">("enrollment"); // Toggle enrollment vs market share
   const [dataSource, setDataSource] = useState<"national" | "geographic">("national"); // national = exact totals, geographic = has state/county but suppressed
 
   // Popup states
@@ -139,7 +138,6 @@ export default function EnrollmentPage() {
     }
     if (selectedParentOrgs.length > 0) params.set("parent_orgs", selectedParentOrgs.join("|"));
     if (groupBy) params.set("group_by", groupBy);
-    params.set("view_mode", viewMode);
     params.set("data_source", dataSource);
     params.set("include_total", "true");
     return params.toString();
@@ -147,7 +145,7 @@ export default function EnrollmentPage() {
 
   // Fetch timeseries data
   const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
-    queryKey: ["enrollment-timeseries", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy, viewMode, dataSource],
+    queryKey: ["enrollment-timeseries", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy, dataSource],
     queryFn: async () => {
       const params = buildQueryParams();
       const res = await fetch(`${API_BASE}/api/v3/enrollment/timeseries?${params}`);
@@ -666,26 +664,6 @@ export default function EnrollmentPage() {
                 </button>
               ))}
             </div>
-            {/* View Mode Toggle */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">View:</span>
-              {[
-                { value: "enrollment" as const, label: "Enrollment" },
-                { value: "market_share" as const, label: "Market Share %" },
-              ].map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setViewMode(opt.value)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                    viewMode === opt.value
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
             {/* Year Range Toggle */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">Show:</span>
@@ -721,13 +699,13 @@ export default function EnrollmentPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />
                 <YAxis
-                  tickFormatter={viewMode === "market_share" ? formatPercent : formatNumber}
+                  tickFormatter={formatNumber}
                   tick={{ fill: '#6b7280' }}
-                  domain={viewMode === "market_share" ? [0, Math.min(100, Math.ceil(maxDataValue * 1.2))] : [0, Math.ceil(maxDataValue * 1.1)]}
+                  domain={[0, Math.ceil(maxDataValue * 1.1)]}
                   width={70}
                 />
                 <Tooltip
-                  formatter={(value) => [viewMode === "market_share" ? formatPercent(value as number) : formatNumber(value as number), ""]}
+                  formatter={(value) => [formatNumber(value as number), ""]}
                   labelFormatter={(year) => `Year: ${year}`}
                   contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
                 />
@@ -767,7 +745,7 @@ export default function EnrollmentPage() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">
-              {viewMode === "market_share" ? "Market Share by Year" : "Enrollment by Year"}
+              Enrollment by Year
             </h3>
             {rawTimeseriesData?.audit_id && (
               <AuditButton
@@ -818,9 +796,7 @@ export default function EnrollmentPage() {
                           onClick={() => setCellDetail({ payer: key, year: row.year, value: row[key] })}
                           title="Click to view data source"
                         >
-                          {viewMode === "market_share"
-                            ? formatPercent(row[key])
-                            : formatFullNumber(row[key])}
+                          {formatFullNumber(row[key])}
                         </td>
                       ))}
                     </tr>
@@ -880,12 +856,10 @@ export default function EnrollmentPage() {
               {/* Value Display */}
               <div className="bg-blue-50 rounded-lg p-6 text-center">
                 <div className="text-sm text-blue-600 font-medium mb-1">
-                  {viewMode === "market_share" ? "Market Share" : "Enrollment"}
+                  Enrollment
                 </div>
                 <div className="text-4xl font-bold text-blue-900">
-                  {viewMode === "market_share" 
-                    ? formatPercent(cellDetail.value)
-                    : formatFullNumber(cellDetail.value)}
+                  {formatFullNumber(cellDetail.value)}
                 </div>
               </div>
 
