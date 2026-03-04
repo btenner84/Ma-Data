@@ -405,25 +405,27 @@ export default function EnrollmentPage() {
             )}
           </div>
 
-          {/* Filter by Geography Button - disabled when using National data source */}
+          {/* Filter by Geography Button - auto-switches to geographic source when clicked */}
           <div className="relative">
             <button
-              onClick={() => { if (dataSource === "geographic") { setShowGeoPopup(!showGeoPopup); setShowFilterPopup(false); }}}
-              disabled={dataSource === "national"}
-              title={dataSource === "national" ? "Switch to Geographic source to enable state/county filters" : "Filter by state and county"}
+              onClick={() => { 
+                if (dataSource === "national") {
+                  setDataSource("geographic");
+                }
+                setShowGeoPopup(!showGeoPopup); 
+                setShowFilterPopup(false); 
+              }}
+              title="Filter by state and county (uses CPSC data)"
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all shadow-sm ${
-                dataSource === "national"
-                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                  : hasGeoFilters
-                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                hasGeoFilters
+                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
               }`}
             >
               <Filter className="w-4 h-4" />
               <span>Filter by Geography</span>
-              {dataSource === "national" && <span className="text-xs text-gray-400">(N/A)</span>}
-              {geoFilterCount > 0 && dataSource === "geographic" && (
-                <span className="bg-white text-emerald-600 text-xs px-1.5 py-0.5 rounded-full font-bold">{geoFilterCount}</span>
+              {geoFilterCount > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${hasGeoFilters ? 'bg-white text-emerald-600' : 'bg-emerald-100 text-emerald-600'}`}>{geoFilterCount}</span>
               )}
               <ChevronDown className={`w-4 h-4 transition-transform ${showGeoPopup ? 'rotate-180' : ''}`} />
             </button>
@@ -625,6 +627,26 @@ export default function EnrollmentPage() {
             setShowPayerPopup(false);
           }}
         />
+      )}
+
+      {/* CPSC Data Source Notice */}
+      {dataSource === "geographic" && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 flex items-center gap-3">
+          <Info className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <div className="text-sm">
+            <span className="font-medium text-amber-800">Using CPSC Data Source</span>
+            <span className="text-amber-700 ml-2">
+              Geographic data may have suppressed values (&lt;10 enrollees) per HIPAA. 
+              {hasGeoFilters && <span className="font-medium"> Filtered by: {selectedStates.join(", ")}{selectedCounties.length > 0 && `, ${selectedCounties.length} counties`}</span>}
+            </span>
+          </div>
+          <button 
+            onClick={() => { setDataSource("national"); setSelectedStates([]); setSelectedCounties([]); }}
+            className="ml-auto text-xs text-amber-600 hover:text-amber-800 font-medium whitespace-nowrap"
+          >
+            Switch to National
+          </button>
+        </div>
       )}
 
       {/* Chart */}
