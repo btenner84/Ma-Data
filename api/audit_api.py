@@ -195,6 +195,50 @@ async def get_audit_stats(
     return AuditStatsResponse(**stats)
 
 
+@router.get("/{query_id}/data")
+async def get_audit_raw_data(
+    query_id: str,
+    limit: int = Query(100, ge=1, le=1000, description="Max rows to return"),
+):
+    """
+    Get the raw data for a specific audit query.
+    
+    Re-executes the query with a row limit to fetch sample data.
+    """
+    store = get_audit_store()
+    record = store.get(query_id)
+    
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Audit record not found: {query_id}")
+    
+    try:
+        from db import get_engine
+        engine = get_engine()
+        
+        # Add LIMIT to the original query if not present
+        sql = record.sql.strip().rstrip(';')
+        if 'LIMIT' not in sql.upper():
+            sql = f"{sql} LIMIT {limit}"
+        else:
+            # Replace existing LIMIT with our limit
+            import re
+            sql = re.sub(r'LIMIT\s+\d+', f'LIMIT {limit}', sql, flags=re.IGNORECASE)
+        
+        df, _ = engine.query_with_audit(sql, user_id="audit_viewer", context="audit_data_view")
+        
+        # Convert to records, handling NaN values
+        records = df.replace({float('nan'): None}).to_dict(orient='records')
+        
+        return {
+            "query_id": query_id,
+            "records": records,
+            "total_in_original": record.row_count,
+            "returned": len(records),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch data: {str(e)}")
+
+
 @router.post("/replay/{query_id}")
 async def replay_query(query_id: str):
     """
@@ -209,24 +253,25 @@ async def replay_query(query_id: str):
     if not record:
         raise HTTPException(status_code=404, detail=f"Audit record not found: {query_id}")
     
-    from services.data_service import get_data_service
-    
-    service = get_data_service()
-    
     try:
-        result = service._execute_query(
-            record.sql,
-            record.tables_queried,
-            record.filters_applied
-        )
+        from db import get_engine
+        engine = get_engine()
+        
+        # Re-run the original query
+        sql = record.sql.strip().rstrip(';')
+        df, new_audit_id = engine.query_with_audit(sql, user_id="audit_replay", context="audit_replay")
+        
+        # Convert to records, handling NaN values
+        import pandas as pd
+        records = df.replace({float('nan'): None}).head(100).to_dict(orient='records')
         
         return {
             "original_query_id": query_id,
-            "new_query_id": result.audit.query_id,
+            "new_query_id": new_audit_id,
             "original_row_count": record.row_count,
-            "new_row_count": result.audit.row_count,
-            "match": record.row_count == result.audit.row_count,
-            "data": result.data,
+            "new_row_count": len(df),
+            "match": record.row_count == len(df),
+            "data": records,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query replay failed: {str(e)}")

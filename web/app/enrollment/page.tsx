@@ -12,7 +12,8 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Filter, Plus, X, ChevronDown } from "lucide-react";
+import { Filter, Plus, X, ChevronDown, Info } from "lucide-react";
+import { AuditButton, type AuditMetadata } from "@/components/audit";
 
 // Hook to check if component is mounted (fixes SSR hydration issues with charts)
 function useIsMounted() {
@@ -63,6 +64,8 @@ interface TimeseriesData {
   total_enrollment?: number[];
   series?: Record<string, number[]>;
   group_by?: string;
+  audit_id?: string;
+  filters?: Record<string, unknown>;
 }
 
 export default function EnrollmentPage() {
@@ -747,10 +750,23 @@ export default function EnrollmentPage() {
       {/* Data Table */}
       {chartData.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">
               {viewMode === "market_share" ? "Market Share by Year" : "Enrollment by Year"}
             </h3>
+            {rawTimeseriesData?.audit_id && (
+              <AuditButton
+                audit={{
+                  query_id: rawTimeseriesData.audit_id,
+                  sql: `-- Enrollment Timeseries Query\n-- Source: ${dataSource === 'geographic' ? 'Geographic (state-level)' : 'National'}`,
+                  tables_queried: ['fact_enrollment_unified'],
+                  filters_applied: rawTimeseriesData.filters || {},
+                  row_count: rawTimeseriesData.years?.length || 0,
+                  executed_at: new Date().toISOString(),
+                }}
+                label="View Query"
+              />
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">

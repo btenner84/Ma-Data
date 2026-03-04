@@ -12,7 +12,8 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Filter, Plus, X, ChevronDown } from "lucide-react";
+import { Filter, Plus, X, ChevronDown, Info } from "lucide-react";
+import { AuditButton, type AuditMetadata } from "@/components/audit";
 
 // Hook to check if component is mounted (fixes SSR hydration issues with charts)
 function useIsMounted() {
@@ -57,6 +58,8 @@ interface RiskScoreTimeSeriesV2 {
   enrollment: Record<string, (number | null)[]>;
   metric: "avg" | "wavg";
   group_by: string | null;
+  audit_id?: string;
+  filters?: Record<string, unknown>;
   error?: string;
 }
 
@@ -552,10 +555,23 @@ export default function RiskScoresPage() {
       {/* Risk Score Data Table */}
       {chartData.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">
               Risk Score by Year ({metric === "wavg" ? "Enrollment-Weighted" : "Simple Average"})
             </h3>
+            {rawTimeseriesData?.audit_id && (
+              <AuditButton
+                audit={{
+                  query_id: rawTimeseriesData.audit_id,
+                  sql: `-- Risk Score Timeseries Query\n-- Filters: ${JSON.stringify(rawTimeseriesData.filters || {}, null, 2)}`,
+                  tables_queried: ['risk_scores_by_parent', 'risk_scores_by_parent_dims'],
+                  filters_applied: rawTimeseriesData.filters || {},
+                  row_count: rawTimeseriesData.years?.length || 0,
+                  executed_at: new Date().toISOString(),
+                }}
+                label="View Query"
+              />
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">

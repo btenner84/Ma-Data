@@ -12,8 +12,9 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Filter, Plus, X, ChevronDown, Home, Target, BarChart3, FileText } from "lucide-react";
+import { Filter, Plus, X, ChevronDown, Home, Target, BarChart3, FileText, Info } from "lucide-react";
 import { starsAPI } from "@/lib/api";
+import { AuditButton, type AuditMetadata } from "@/components/audit";
 
 // Hook to check if component is mounted (fixes SSR hydration issues with charts)
 function useIsMounted() {
@@ -65,6 +66,7 @@ interface FilterOptions {
 interface FourPlusTimeseriesData {
   years: number[];
   series: Record<string, (number | null)[]>;
+  audit_id?: string;
   filters: {
     plan_types: string | null;
     product_types: string | null;
@@ -1840,26 +1842,41 @@ export default function StarsPage() {
             4+ Star Enrollment Over Time
             {hasFilters && <span className="text-sm font-normal text-gray-500 ml-2">(filtered)</span>}
           </h2>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500">Show:</span>
-            {[
-              { value: null, label: "All" },
-              { value: 10, label: "10Y" },
-              { value: 5, label: "5Y" },
-              { value: 3, label: "3Y" },
-            ].map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => setYearRange(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                  yearRange === opt.value
-                    ? "bg-gray-900 text-white"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-4">
+            {rawTimeseriesData?.audit_id && (
+              <AuditButton
+                audit={{
+                  query_id: rawTimeseriesData.audit_id,
+                  sql: '-- 4+ Star Enrollment Timeseries Query',
+                  tables_queried: ['stars_enrollment_unified'],
+                  filters_applied: rawTimeseriesData.filters || {},
+                  row_count: rawTimeseriesData.years?.length || 0,
+                  executed_at: new Date().toISOString(),
+                }}
+                label="View Query"
+              />
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Show:</span>
+              {[
+                { value: null, label: "All" },
+                { value: 10, label: "10Y" },
+                { value: 5, label: "5Y" },
+                { value: 3, label: "3Y" },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => setYearRange(opt.value)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    yearRange === opt.value
+                      ? "bg-gray-900 text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
