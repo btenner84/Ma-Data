@@ -1,0 +1,286 @@
+# MA Data Platform - Metrics Catalog (Semantic Layer)
+# ====================================================
+# This file defines all metrics, dimensions, and their relationships.
+# Used by the AI chat interface to understand available data and generate queries.
+
+version: "1.0"
+last_updated: "2026-03-04"
+
+# =============================================================================
+# DATA DOMAINS
+# =============================================================================
+domains:
+  enrollment:
+    description: "Medicare Advantage enrollment data at contract/plan level"
+    primary_table: "gold_fact_enrollment_national"
+    geographic_table: "gold_fact_enrollment_geographic"
+    grain: "contract_id + plan_id + year + month"
+    years: "2007-2026"
+    
+  stars:
+    description: "CMS Star Ratings for quality measurement"
+    primary_table: "gold_fact_stars"
+    grain: "contract_id + year"
+    years: "2009-2026"
+    
+  risk_scores:
+    description: "Risk adjustment scores indicating expected beneficiary costs"
+    primary_table: "gold_fact_risk_scores"
+    grain: "contract_id + plan_id + year"
+    years: "2006-2024"
+
+# =============================================================================
+# METRICS
+# =============================================================================
+metrics:
+  # Enrollment Metrics
+  total_enrollment:
+    domain: enrollment
+    description: "Total number of enrolled beneficiaries"
+    sql: "SUM(enrollment)"
+    unit: "members"
+    format: "integer"
+    
+  plan_count:
+    domain: enrollment
+    description: "Number of active plans"
+    sql: "COUNT(DISTINCT plan_key)"
+    unit: "plans"
+    format: "integer"
+    
+  contract_count:
+    domain: enrollment
+    description: "Number of active contracts"
+    sql: "COUNT(DISTINCT contract_id)"
+    unit: "contracts"
+    format: "integer"
+    
+  market_share:
+    domain: enrollment
+    description: "Percentage of total MA enrollment"
+    sql: "SUM(enrollment) * 100.0 / (SELECT SUM(enrollment) FROM {table} WHERE year = {year} AND month = {month})"
+    unit: "percent"
+    format: "percentage"
+    requires: ["year", "month"]
+    
+  yoy_growth:
+    domain: enrollment
+    description: "Year-over-year enrollment change percentage"
+    sql: "(SUM(enrollment) - LAG(SUM(enrollment)) OVER (ORDER BY year)) * 100.0 / LAG(SUM(enrollment)) OVER (ORDER BY year)"
+    unit: "percent"
+    format: "percentage"
+    requires: ["year"]
+    
+  # Stars Metrics
+  overall_rating:
+    domain: stars
+    description: "Overall star rating (1-5 scale)"
+    sql: "AVG(overall_rating)"
+    unit: "stars"
+    format: "decimal1"
+    
+  part_c_rating:
+    domain: stars
+    description: "Part C (medical) star rating"
+    sql: "AVG(part_c_rating)"
+    unit: "stars"
+    format: "decimal1"
+    
+  part_d_rating:
+    domain: stars
+    description: "Part D (drug) star rating"
+    sql: "AVG(part_d_rating)"
+    unit: "stars"
+    format: "decimal1"
+    
+  four_plus_pct:
+    domain: stars
+    description: "Percentage of contracts with 4+ stars"
+    sql: "SUM(CASE WHEN overall_rating >= 4 THEN 1 ELSE 0 END) * 100.0 / COUNT(*)"
+    unit: "percent"
+    format: "percentage"
+    
+  # Risk Score Metrics
+  avg_risk_score:
+    domain: risk_scores
+    description: "Average risk score (1.0 = national average)"
+    sql: "AVG(risk_score)"
+    unit: "score"
+    format: "decimal3"
+    
+  weighted_risk_score:
+    domain: risk_scores
+    description: "Enrollment-weighted average risk score"
+    sql: "SUM(risk_score * enrollment) / SUM(enrollment)"
+    unit: "score"
+    format: "decimal3"
+
+# =============================================================================
+# DIMENSIONS
+# =============================================================================
+dimensions:
+  # Time Dimensions
+  year:
+    description: "Calendar year"
+    table: "gold_dim_time"
+    column: "year"
+    type: "integer"
+    
+  month:
+    description: "Calendar month (1-12)"
+    table: "gold_dim_time"
+    column: "month"
+    type: "integer"
+    
+  quarter:
+    description: "Calendar quarter (Q1-Q4)"
+    table: "gold_dim_time"
+    column: "quarter_name"
+    type: "string"
+    
+  # Entity Dimensions  
+  parent_org:
+    description: "Parent organization name (e.g., UnitedHealth Group)"
+    column: "parent_org"
+    type: "string"
+    examples: ["UnitedHealth Group, Inc.", "Humana Inc.", "CVS Health Corporation"]
+    
+  contract_id:
+    description: "CMS contract identifier (e.g., H0000)"
+    column: "contract_id"
+    type: "string"
+    
+  entity_id:
+    description: "Stable entity ID (tracks contracts across changes)"
+    column: "entity_id"
+    type: "string"
+    
+  # Plan Dimensions
+  plan_type:
+    description: "Plan type category"
+    column: "plan_type"
+    type: "string"
+    values: ["HMO", "PPO", "PFFS", "MSA", "Cost", "PACE"]
+    
+  product_type:
+    description: "Product offering type"
+    column: "product_type"
+    type: "string"
+    values: ["MAPD", "MA-only", "PDP"]
+    definitions:
+      MAPD: "Medicare Advantage with Part D drug coverage"
+      MA-only: "Medicare Advantage without drug coverage"
+      PDP: "Standalone Prescription Drug Plan"
+      
+  snp_type:
+    description: "Special Needs Plan type"
+    column: "snp_type"
+    type: "string"
+    values: ["Non-SNP", "D-SNP", "C-SNP", "I-SNP"]
+    definitions:
+      Non-SNP: "Not a Special Needs Plan"
+      D-SNP: "Dual Eligible SNP (Medicare + Medicaid)"
+      C-SNP: "Chronic Condition SNP"
+      I-SNP: "Institutional SNP"
+      
+  group_type:
+    description: "Individual vs employer group plans"
+    column: "group_type"
+    type: "string"
+    values: ["Individual", "Group"]
+    definitions:
+      Individual: "Direct enrollment plans (plan IDs 001-799)"
+      Group: "Employer Group Health Plans (plan IDs 800-999)"
+      
+  # Geography Dimensions
+  state:
+    description: "US State code"
+    column: "state"
+    type: "string"
+    examples: ["CA", "TX", "FL", "NY"]
+    
+  county:
+    description: "County name"
+    column: "county"
+    type: "string"
+    
+  region:
+    description: "Census region"
+    table: "gold_dim_geography"
+    column: "region"
+    type: "string"
+    values: ["Northeast", "Midwest", "South", "West", "Territories"]
+
+# =============================================================================
+# COMMON QUERIES (for AI reference)
+# =============================================================================
+example_queries:
+  - question: "What is Humana's total enrollment in 2026?"
+    metric: total_enrollment
+    filters:
+      parent_org: "Humana Inc."
+      year: 2026
+      month: 1
+      
+  - question: "How has UnitedHealth's enrollment grown over time?"
+    metric: total_enrollment
+    dimensions: [year]
+    filters:
+      parent_org: "UnitedHealth Group, Inc."
+    chart_type: "line"
+    
+  - question: "What is the market share breakdown by plan type?"
+    metric: market_share
+    dimensions: [plan_type]
+    filters:
+      year: 2026
+    chart_type: "pie"
+    
+  - question: "How many D-SNP enrollees are there in California?"
+    metric: total_enrollment
+    filters:
+      snp_type: "D-SNP"
+      state: "CA"
+      year: 2026
+      
+  - question: "What is the average star rating by parent organization?"
+    metric: overall_rating
+    dimensions: [parent_org]
+    filters:
+      year: 2026
+    order_by: "enrollment DESC"
+    limit: 10
+    
+  - question: "Which contracts have 5-star ratings?"
+    domain: stars
+    filters:
+      overall_rating: 5
+      year: 2026
+    return_fields: [contract_id, parent_org, overall_rating]
+    
+  - question: "Compare Individual vs Group enrollment trends"
+    metric: total_enrollment
+    dimensions: [year, group_type]
+    chart_type: "stacked_bar"
+
+# =============================================================================
+# DATA NOTES
+# =============================================================================
+notes:
+  suppression: |
+    Geographic enrollment data (CPSC) has HIPAA suppression for counties with 
+    fewer than 10 enrollees. These values are marked with is_suppressed=true.
+    National enrollment data (by_plan) has exact counts without suppression.
+    
+  year_snapshots: |
+    Enrollment is typically analyzed using January of each year for year-over-year 
+    comparisons. December can also be used for year-end snapshots.
+    
+  entity_tracking: |
+    Contract IDs can change due to mergers, acquisitions, or contract renewals.
+    Use entity_id for consistent tracking across these changes.
+    
+  risk_scores: |
+    Risk scores indicate expected healthcare costs relative to the national average.
+    A score of 1.0 is average, >1.0 indicates higher expected costs (sicker population),
+    <1.0 indicates lower expected costs (healthier population).

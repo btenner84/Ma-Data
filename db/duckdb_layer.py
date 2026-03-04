@@ -77,9 +77,23 @@ class MAQueryEngine:
         self.conn.execute("INSTALL httpfs")
         self.conn.execute("LOAD httpfs")
 
-        # Configure S3 credentials from environment
+        # Configure S3 credentials - try multiple sources
         aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
         aws_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+
+        # If not in env, try to read from ~/.aws/credentials
+        if not aws_access_key or not aws_secret_key:
+            try:
+                import configparser
+                creds_path = os.path.expanduser("~/.aws/credentials")
+                if os.path.exists(creds_path):
+                    config = configparser.ConfigParser()
+                    config.read(creds_path)
+                    if 'default' in config:
+                        aws_access_key = config['default'].get('aws_access_key_id', '')
+                        aws_secret_key = config['default'].get('aws_secret_access_key', '')
+            except Exception as e:
+                print(f"Warning: Could not read AWS credentials file: {e}")
 
         if aws_access_key and aws_secret_key:
             self.conn.execute(f"""
@@ -98,34 +112,118 @@ class MAQueryEngine:
 
         # Primary tables - using existing data paths
         tables = {
-            # Main enrollment fact table (v6 has correct classifications)
-            'fact_enrollment_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_v6.parquet',
+            # =================================================================
+            # GOLD LAYER - STAR SCHEMA (NEW)
+            # =================================================================
+            # Dimension tables
+            'gold_dim_time': f's3://{S3_BUCKET}/gold/dim_time.parquet',
+            'gold_dim_geography': f's3://{S3_BUCKET}/gold/dim_geography.parquet',
+            'gold_dim_entity': f's3://{S3_BUCKET}/gold/dim_entity.parquet',
+            'gold_dim_plan': f's3://{S3_BUCKET}/gold/dim_plan.parquet',
+            
+            # Fact tables
+            'gold_fact_enrollment_national': f's3://{S3_BUCKET}/gold/fact_enrollment_national.parquet',
+            'gold_fact_enrollment_geographic': f's3://{S3_BUCKET}/gold/fact_enrollment_geographic.parquet',
+            'gold_fact_stars': f's3://{S3_BUCKET}/gold/fact_stars.parquet',
+            'gold_fact_risk_scores': f's3://{S3_BUCKET}/gold/fact_risk_scores.parquet',
+            
+            # =================================================================
+            # ENROLLMENT (LEGACY - unified with audit)
+            # =================================================================
+            # Main enrollment fact table with audit columns (CPSC - has geography but suppressed)
+            'fact_enrollment_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_all_years.parquet',
+            # Legacy alias for backwards compatibility
+            'fact_enrollment_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_all_years.parquet',
 
-            # Geographic enrollment (state-level)
+            # National enrollment (from by_contract - exact totals, no geography)
+            'fact_enrollment_national': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_national.parquet',
+
+            # Geographic enrollment (state/county level)
             'fact_enrollment_by_state': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_by_state.parquet',
             'fact_enrollment_by_geography': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_enrollment_by_geography.parquet',
 
-            # Stars data
+            # =================================================================
+            # STARS (NEW - unified with audit)
+            # =================================================================
+            # Measure-level data (328K rows, 2008-2026)
+            'measures_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/measures_all_years.parquet',
+            # Summary ratings (33K rows, 2009-2026)
+            'summary_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/summary_all_years.parquet',
+            # Cutpoints (7K rows, 2011-2026)
+            'cutpoints_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/cutpoints_all_years.parquet',
+            # Domain scores (68K rows, 2008-2026)
+            'domain_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/domain_all_years.parquet',
+
+            # Legacy tables (for backwards compatibility)
             'stars_enrollment_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_enrollment_unified.parquet',
+            
+            # National stars enrollment (ALL MA contracts, LEFT JOIN with ratings)
+            'stars_enrollment_national': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_enrollment_national.parquet',
+            'stars_by_parent_national': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_by_parent_national.parquet',
             'stars_summary': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_summary.parquet',
             'measure_data': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/measure_data_complete.parquet',
+            'stars_cutpoints_2014_2026': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_cutpoints_2014_2026.parquet',
+            'stars_measure_specs': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_measure_specs.parquet',
+            'stars_fourplus_by_year': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/stars_fourplus_by_year.parquet',
 
-            # Risk scores
-            'fact_risk_scores': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_risk_scores_unified.parquet',
+            # =================================================================
+            # RISK SCORES
+            # =================================================================
+            # Plan-level risk scores (65K rows)
+            'fact_risk_scores_unified': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_risk_scores_unified.parquet',
+
+            # Pre-aggregated by parent org + year
             'risk_scores_by_parent': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/risk_scores_by_parent_year.parquet',
 
-            # SNP data
+            # By parent with plan type dimensions
+            'risk_scores_by_parent_dims': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/risk_scores_by_parent_dims.parquet',
+            
+            # Risk scores with national enrollment (complete, no suppression)
+            'risk_scores_national': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/risk_scores_national.parquet',
+            'risk_scores_industry_national': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/risk_scores_industry_national.parquet',
+
+            # =================================================================
+            # SNP
+            # =================================================================
             'fact_snp': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_snp_by_parent.parquet',
             'fact_snp_historical': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/fact_snp_by_parent_historical.parquet',
 
-            # Aggregations
+            # =================================================================
+            # AGGREGATIONS
+            # =================================================================
             'agg_enrollment_by_year': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/agg_enrollment_by_year_v2.parquet',
             'agg_enrollment_by_plantype': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/agg_enrollment_by_plantype_v2.parquet',
             'enrollment_by_parent': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/enrollment_by_parent_annual.parquet',
 
-            # Lookups
+            # =================================================================
+            # LOOKUPS
+            # =================================================================
             'dim_county': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/dim_county.parquet',
             'parent_org_summary': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/parent_org_summary.parquet',
+
+            # =================================================================
+            # NEW UNIFIED TABLES (2008-2026 comprehensive rebuild)
+            # =================================================================
+            # Measure data with stable keys - 328K rows, 2008-2026
+            'measures_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/measures_all_years.parquet',
+
+            # Summary ratings - 32K rows, 2009-2026
+            'summary_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/summary_all_years.parquet',
+
+            # Domain scores - 68K rows, 2008-2026
+            'domain_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/domain_all_years.parquet',
+
+            # Cutpoint thresholds - 7K rows, 2011-2026
+            'cutpoints_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/cutpoints_all_years.parquet',
+
+            # Measure dimension with stable keys (measure_key for cross-year tracking)
+            'dim_measure': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/dim_measure.parquet',
+
+            # Entity chains (contract ID tracking across mergers)
+            'dim_entity': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/dim_entity.parquet',
+
+            # Disenrollment reasons - 6K rows, 2024-2026
+            'disenrollment_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/disenrollment_all_years.parquet',
         }
 
         self.registered_tables = []
@@ -225,21 +323,64 @@ class MAQueryEngine:
             self._save_query_audit(audit_record)
             raise
 
+    def query_with_record_audit(
+        self,
+        sql: str,
+        user_id: str = "anonymous",
+        context: str = None,
+        request_id: str = None
+    ) -> Tuple[pd.DataFrame, str]:
+        """
+        Execute query with full audit logging INCLUDING record-level tracking.
+
+        This extends query_with_audit to also track which specific records
+        (by primary key) were accessed, enabling fine-grained data lineage.
+
+        Args:
+            sql: SQL query string
+            user_id: Identifier for who ran the query
+            context: Description of why query was run
+            request_id: Optional external request ID for correlation
+
+        Returns:
+            Tuple of (DataFrame results, audit_id)
+        """
+        from db.record_audit import get_record_audit_manager
+
+        # First do the normal query with audit
+        result, audit_id = self.query_with_audit(
+            sql=sql,
+            user_id=user_id,
+            context=context,
+            request_id=request_id
+        )
+
+        # Now add record-level tracking
+        record_manager = get_record_audit_manager()
+        tables_accessed = self._extract_tables(sql)
+
+        for table_name in tables_accessed:
+            record_manager.track_records(
+                audit_id=audit_id,
+                user_id=user_id,
+                context=context,
+                table_name=table_name,
+                df=result
+            )
+
+        # Save record audit (async by default)
+        record_manager.save_audit(audit_id)
+
+        return result, audit_id
+
     def _extract_tables(self, sql: str) -> List[str]:
         """Extract table names from SQL query."""
-        # Simple extraction - could be enhanced with SQL parser
+        # Use registered tables instead of hardcoded list
         tables = []
-        known_tables = [
-            'dim_entity', 'dim_parent_org',
-            'fact_enrollment_unified', 'fact_enrollment_geographic',
-            'fact_star_ratings', 'fact_risk_scores',
-            'agg_by_parent_year', 'agg_by_state_year',
-            'agg_by_dimensions', 'agg_industry_totals'
-        ]
-
         sql_lower = sql.lower()
-        for table in known_tables:
-            if table in sql_lower:
+
+        for table in self.registered_tables:
+            if table.lower() in sql_lower:
                 tables.append(table)
 
         return tables
@@ -317,59 +458,162 @@ class MAQueryEngine:
         """Get lineage information for a specific table."""
         # Map tables to their source definitions
         table_sources = {
-            'fact_enrollment_unified': {
-                'primary_sources': ['enrollment_by_plan', 'cpsc', 'snp_report'],
-                'build_script': 'build_fact_enrollment_unified.py',
-                'grain': 'contract_id + plan_id + year + month',
+            # ENROLLMENT (NEW - unified with audit)
+            'fact_enrollment_all_years': {
+                'primary_sources': ['processed/fact_enrollment/*/data.parquet', 'dim_contract_v2', 'snp_lookup'],
+                'build_script': 'scripts/build_fact_enrollment.py',
+                'grain': 'contract_id + year + month + state + product_type',
+                'description': 'Unified enrollment 2013-2026 with audit columns',
             },
-            'fact_enrollment_geographic': {
+            # Legacy alias
+            'fact_enrollment_unified': {
+                'primary_sources': ['fact_enrollment_all_years'],
+                'build_script': 'scripts/build_fact_enrollment.py',
+                'grain': 'contract_id + year + month + state + product_type',
+            },
+            'fact_enrollment_by_state': {
+                'primary_sources': ['cpsc'],
+                'build_script': 'build_fact_enrollment_by_state.py',
+                'grain': 'state + year',
+            },
+            'fact_enrollment_by_geography': {
                 'primary_sources': ['cpsc'],
                 'build_script': 'build_fact_enrollment_geographic.py',
-                'grain': 'contract_id + plan_id + year + month + state + county',
+                'grain': 'state + county + year',
             },
-            'fact_star_ratings': {
-                'primary_sources': ['stars'],
-                'build_script': 'build_fact_star_ratings.py',
+            # STARS
+            'stars_enrollment_unified': {
+                'primary_sources': ['stars', 'enrollment_by_plan'],
+                'build_script': 'build_stars_enrollment_unified.py',
                 'grain': 'contract_id + year',
             },
-            'fact_risk_scores': {
-                'primary_sources': ['risk_scores'],
-                'build_script': 'build_fact_risk_scores.py',
-                'grain': 'contract_id + plan_id + year',
+            'stars_summary': {
+                'primary_sources': ['stars'],
+                'build_script': 'build_stars_summary.py',
+                'grain': 'contract_id + year',
+            },
+            'measure_data': {
+                'primary_sources': ['stars'],
+                'build_script': 'build_measure_data.py',
+                'grain': 'contract_id + measure_id + year',
+            },
+            'stars_cutpoints_2014_2026': {
+                'primary_sources': ['stars'],
+                'build_script': 'build_stars_cutpoints.py',
+                'grain': 'measure_id + year',
+            },
+            'stars_measure_specs': {
+                'primary_sources': ['stars'],
+                'build_script': 'build_stars_measure_specs.py',
+                'grain': 'measure_id',
+            },
+            'stars_fourplus_by_year': {
+                'primary_sources': ['stars', 'enrollment_by_plan'],
+                'build_script': 'build_stars_fourplus.py',
+                'grain': 'parent_org + year',
+            },
+            # NEW UNIFIED STARS TABLES (2008-2026)
+            'measures_all_years': {
+                'primary_sources': ['stars'],
+                'build_script': 'scripts/unified/build_measures_all_years.py',
+                'grain': 'contract_id + year + measure_id',
+                'description': 'Measure performance data 2008-2026 with stable keys',
+            },
+            'summary_all_years': {
+                'primary_sources': ['stars'],
+                'build_script': 'scripts/unified/build_summary_all_years.py',
+                'grain': 'contract_id + year + part',
+                'description': 'Summary ratings 2009-2026 in LONG format',
+            },
+            'domain_all_years': {
+                'primary_sources': ['stars'],
+                'build_script': 'scripts/unified/build_domain_all_years.py',
+                'grain': 'contract_id + year + part + domain_name',
+                'description': 'Domain scores 2008-2026 in LONG format',
+            },
+            'cutpoints_all_years': {
+                'primary_sources': ['stars'],
+                'build_script': 'scripts/unified/build_cutpoints_all_years.py',
+                'grain': 'year + part + measure_id + star_level',
+                'description': 'Cutpoint thresholds 2011-2026',
+            },
+            'dim_measure': {
+                'primary_sources': ['stars'],
+                'build_script': 'scripts/unified/build_dim_measure.py',
+                'grain': 'measure_id + year',
+                'description': 'Measure dimension with stable keys',
             },
             'dim_entity': {
                 'primary_sources': ['crosswalk', 'enrollment_by_plan'],
-                'build_script': 'build_entity_chains.py',
+                'build_script': 'scripts/unified/build_dim_entity.py',
                 'grain': 'entity_id',
+                'description': 'Entity chains tracking contract mergers',
             },
-            'dim_parent_org': {
-                'primary_sources': ['stars', 'cpsc'],
-                'build_script': 'build_parent_org_dimension.py',
-                'grain': 'parent_org_id',
+            'disenrollment_all_years': {
+                'primary_sources': ['stars'],
+                'build_script': 'scripts/unified/build_disenrollment.py',
+                'grain': 'contract_id + year',
+                'description': 'Disenrollment reasons 2024-2026',
             },
-            'agg_by_parent_year': {
+            # RISK SCORES
+            'fact_risk_scores_unified': {
+                'primary_sources': ['risk_scores'],
+                'build_script': 'build_fact_risk_scores_unified.py',
+                'grain': 'contract_id + plan_id + year',
+            },
+            'risk_scores_by_parent': {
+                'primary_sources': ['risk_scores', 'enrollment_by_plan'],
+                'build_script': 'build_risk_scores_by_parent.py',
+                'grain': 'parent_org + year',
+                'description': 'Pre-aggregated risk scores by parent org - used for industry totals',
+            },
+            'risk_scores_by_parent_dims': {
+                'primary_sources': ['risk_scores', 'enrollment_by_plan'],
+                'build_script': 'build_risk_scores_by_parent_dims.py',
+                'grain': 'parent_org + year + plan_type + snp_type + group_type',
+                'description': 'Pre-aggregated risk scores with dimension breakdowns',
+            },
+            # SNP
+            'fact_snp': {
+                'primary_sources': ['snp_report'],
+                'build_script': 'build_fact_snp.py',
+                'grain': 'contract_id + plan_id + year',
+            },
+            'fact_snp_historical': {
+                'primary_sources': ['snp_report'],
+                'build_script': 'build_fact_snp_historical.py',
+                'grain': 'parent_org + year',
+            },
+            # AGGREGATIONS
+            'agg_enrollment_by_year': {
                 'primary_sources': ['fact_enrollment_unified'],
-                'build_script': 'build_aggregation_tables.py',
-                'grain': 'parent_org + year + month',
+                'build_script': 'build_agg_enrollment.py',
+                'grain': 'year',
             },
-            'agg_by_state_year': {
-                'primary_sources': ['fact_enrollment_geographic'],
-                'build_script': 'build_aggregation_tables.py',
-                'grain': 'state + year + month',
-            },
-            'agg_by_dimensions': {
+            'agg_enrollment_by_plantype': {
                 'primary_sources': ['fact_enrollment_unified'],
-                'build_script': 'build_aggregation_tables.py',
-                'grain': 'all dimensions + year + month',
+                'build_script': 'build_agg_enrollment.py',
+                'grain': 'year + plan_type',
             },
-            'agg_industry_totals': {
-                'primary_sources': ['fact_enrollment_unified'],
-                'build_script': 'build_aggregation_tables.py',
-                'grain': 'year + month',
+            'enrollment_by_parent': {
+                'primary_sources': ['enrollment_by_plan'],
+                'build_script': 'build_enrollment_by_parent.py',
+                'grain': 'parent_org + year',
+            },
+            # LOOKUPS
+            'dim_county': {
+                'primary_sources': ['cpsc'],
+                'build_script': 'build_dim_county.py',
+                'grain': 'state + county',
+            },
+            'parent_org_summary': {
+                'primary_sources': ['enrollment_by_plan', 'stars'],
+                'build_script': 'build_parent_org_summary.py',
+                'grain': 'parent_org',
             },
         }
 
-        return table_sources.get(table_name, {'error': 'Unknown table'})
+        return table_sources.get(table_name, {'error': 'Unknown table', 'table_name': table_name})
 
     def _build_source_chain(self, tables_lineage: Dict) -> List[str]:
         """Build complete source chain from CMS files to query result."""
@@ -482,3 +726,7 @@ def get_engine() -> MAQueryEngine:
     if _engine_instance is None:
         _engine_instance = MAQueryEngine()
     return _engine_instance
+
+
+# Alias for backward compatibility with data_service
+DuckDBLayer = MAQueryEngine

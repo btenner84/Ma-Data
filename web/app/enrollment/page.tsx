@@ -43,10 +43,10 @@ interface FilterOptions {
   plan_types: string[];
   plan_types_simplified: string[];
   product_types: string[];
-  group_types: string[];
   snp_types: string[];
   states: string[];
   parent_orgs: string[];
+  contracts: string[];
 }
 
 interface TimeseriesData {
@@ -59,8 +59,8 @@ interface TimeseriesData {
 export default function EnrollmentPage() {
   const [selectedPlanTypes, setSelectedPlanTypes] = useState<string[]>([]);
   const [selectedProductTypes, setSelectedProductTypes] = useState<string[]>(['MA']); // Default to MA (includes MA-only + MAPD)
-  const [selectedGroupTypes, setSelectedGroupTypes] = useState<string[]>([]);
   const [selectedSnpTypes, setSelectedSnpTypes] = useState<string[]>([]);
+  const [selectedGroupTypes, setSelectedGroupTypes] = useState<string[]>([]); // Individual vs Group
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
   const [selectedCounties, setSelectedCounties] = useState<string[]>([]);
   const [availableCounties, setAvailableCounties] = useState<{state: string, county: string}[]>([]);
@@ -68,8 +68,8 @@ export default function EnrollmentPage() {
   const [showIndustryTotal, setShowIndustryTotal] = useState(true); // Show industry total line
   const [groupBy, setGroupBy] = useState<string | null>(null);
   const [yearRange, setYearRange] = useState<number | null>(null); // null = all years
-  const [showSnpData, setShowSnpData] = useState(false); // Toggle SNP view
   const [viewMode, setViewMode] = useState<"enrollment" | "market_share">("enrollment"); // Toggle enrollment vs market share
+  const [dataSource, setDataSource] = useState<"national" | "geographic">("national"); // national = exact totals, geographic = has state/county but suppressed
 
   // Popup states
   const [showFilterPopup, setShowFilterPopup] = useState(false);
@@ -82,7 +82,7 @@ export default function EnrollmentPage() {
   const { data: filterOptions } = useQuery<FilterOptions>({
     queryKey: ["enrollment-filters"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v2/enrollment/filters`);
+      const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
       return res.json();
     },
   });
@@ -90,7 +90,7 @@ export default function EnrollmentPage() {
   // Fetch counties when states change
   useEffect(() => {
     if (selectedStates.length > 0) {
-      fetch(`${API_BASE}/api/v2/enrollment/counties?states=${selectedStates.join(',')}`)
+      fetch(`${API_BASE}/api/v3/enrollment/counties?states=${selectedStates.join(',')}`)
         .then(res => res.json())
         .then(data => setAvailableCounties(data.counties || []))
         .catch(() => setAvailableCounties([]));
@@ -105,27 +105,32 @@ export default function EnrollmentPage() {
     const params = new URLSearchParams();
     if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
     if (selectedProductTypes.length > 0) {
-      // Map "MA" to "MA-only,MAPD" for the API
-      const apiProductTypes = selectedProductTypes.flatMap(t => t === "MA" ? ["MA-only", "MAPD"] : [t]);
+      // Both sources now use same table (fact_enrollment_unified) with product_type = 'MAPD' or 'PDP'
+      // Map UI "MA" -> API "MAPD"
+      const apiProductTypes = selectedProductTypes.map(t => t === "MA" ? "MAPD" : t);
       params.set("product_types", apiProductTypes.join(","));
     }
+    if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
     if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
-    if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(",")); // SNP filter
-    if (selectedStates.length > 0) params.set("states", selectedStates.join(",")); // State filter
-    if (selectedCounties.length > 0) params.set("counties", selectedCounties.join("|")); // County filter (| separator)
-    if (selectedParentOrgs.length > 0) params.set("parent_orgs", selectedParentOrgs.join("|")); // Use | separator since org names contain commas
+    // Only include geography filters when using geographic data source
+    if (dataSource === "geographic") {
+      if (selectedStates.length > 0) params.set("states", selectedStates.join(","));
+      if (selectedCounties.length > 0) params.set("counties", selectedCounties.join("|"));
+    }
+    if (selectedParentOrgs.length > 0) params.set("parent_orgs", selectedParentOrgs.join("|"));
     if (groupBy) params.set("group_by", groupBy);
     params.set("view_mode", viewMode);
-    params.set("include_total", "true"); // Always fetch, we filter client-side
+    params.set("data_source", dataSource);
+    params.set("include_total", "true");
     return params.toString();
   };
 
-  // Fetch timeseries data (includes SNP filtering)
+  // Fetch timeseries data
   const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
-    queryKey: ["enrollment-timeseries", selectedPlanTypes, selectedProductTypes, selectedGroupTypes, selectedSnpTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy, viewMode],
+    queryKey: ["enrollment-timeseries", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy, viewMode, dataSource],
     queryFn: async () => {
       const params = buildQueryParams();
-      const res = await fetch(`${API_BASE}/api/v2/enrollment/timeseries?${params}`);
+      const res = await fetch(`${API_BASE}/api/v3/enrollment/timeseries?${params}`);
       return res.json();
     },
   });
@@ -190,18 +195,17 @@ export default function EnrollmentPage() {
     return max || 1000000;
   })();
 
-  const hasTypeFilters = selectedPlanTypes.length > 0 || selectedProductTypes.length > 0 || selectedGroupTypes.length > 0 || selectedSnpTypes.length > 0;
+  const hasTypeFilters = selectedPlanTypes.length > 0 || selectedProductTypes.length > 0 || selectedSnpTypes.length > 0 || selectedGroupTypes.length > 0;
   const hasGeoFilters = selectedStates.length > 0 || selectedCounties.length > 0;
-  const typeFilterCount = selectedPlanTypes.length + selectedProductTypes.length + selectedGroupTypes.length + selectedSnpTypes.length;
+  const typeFilterCount = selectedPlanTypes.length + selectedProductTypes.length + selectedSnpTypes.length + selectedGroupTypes.length;
   const geoFilterCount = selectedStates.length + selectedCounties.length;
 
   const clearTypeFilters = () => {
     setSelectedPlanTypes([]);
     setSelectedProductTypes([]);
-    setSelectedGroupTypes([]);
     setSelectedSnpTypes([]);
+    setSelectedGroupTypes([]);
     setGroupBy(null);
-    setShowSnpData(false);
   };
 
   const clearGeoFilters = () => {
@@ -266,7 +270,7 @@ export default function EnrollmentPage() {
 
             {/* Filter by Type Popup */}
             {showFilterPopup && (
-              <div className="absolute top-full left-0 mt-2 w-96 bg-white rounded-xl shadow-xl border border-gray-200 p-5 z-50">
+              <div className="absolute top-full left-0 mt-2 w-[420px] bg-white rounded-xl shadow-xl border border-gray-200 p-5 z-50 max-h-[80vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-4">
                   <span className="font-semibold text-gray-900">Filter by Type</span>
                   {hasTypeFilters && (
@@ -276,31 +280,7 @@ export default function EnrollmentPage() {
                   )}
                 </div>
 
-                {/* Group Type (Individual vs Group) */}
-                {filterOptions?.group_types && filterOptions.group_types.length > 0 && (
-                  <div className="mb-5">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Market Segment</label>
-                    <div className="flex gap-2">
-                      {filterOptions.group_types.map((type) => (
-                        <button
-                          key={type}
-                          onClick={() => setSelectedGroupTypes(prev =>
-                            prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-                          )}
-                          className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                            selectedGroupTypes.includes(type)
-                              ? "bg-indigo-600 text-white shadow-md"
-                              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                          }`}
-                        >
-                          {type}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Product Type - MA (includes MA-only + MAPD) vs PDP */}
+                {/* Product Type - MA vs PDP */}
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Product Type</label>
                   <div className="flex flex-wrap gap-2">
@@ -310,23 +290,24 @@ export default function EnrollmentPage() {
                         onClick={() => setSelectedProductTypes(prev =>
                           prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
                         )}
-                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                           selectedProductTypes.includes(type)
                             ? "bg-emerald-600 text-white shadow-md"
                             : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                         }`}
                       >
-                        {type}
+                        {type === "MA" ? "Medicare Advantage" : "Part D (PDP)"}
                       </button>
                     ))}
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">MA includes MAPD and MA-only plans</p>
                 </div>
 
-                {/* Plan Type (simplified: HMO includes HMO-POS, PPO includes Local/Regional) */}
+                {/* Plan Type - HMO, PPO, PFFS, etc. */}
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Plan Type</label>
                   <div className="flex flex-wrap gap-2">
-                    {(filterOptions?.plan_types_simplified || filterOptions?.plan_types)?.filter(t => !['Unknown', 'Other', 'Employer PDP', 'Employer PFFS', '1876 Cost', 'Employer/Union Only Direct Contract PDP', 'PACE', 'National PACE', 'Medicare-Medicaid Plan', 'Medicare-Medicaid Plan HMO/HMOPOS', 'Medicare Prescription Drug Plan'].includes(t) && !t.includes('Medicare-Medicaid')).map((type) => (
+                    {["HMO", "PPO", "PFFS", "MSA"].map((type) => (
                       <button
                         key={type}
                         onClick={() => setSelectedPlanTypes(prev =>
@@ -342,36 +323,63 @@ export default function EnrollmentPage() {
                       </button>
                     ))}
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">PPO includes Local & Regional PPO</p>
                 </div>
 
-                {/* SNP Type (Special Needs Plans) */}
-                {filterOptions?.snp_types && filterOptions.snp_types.length > 0 && (
-                  <div className="mb-5">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Special Needs Plans (SNP)</label>
-                    <div className="flex flex-wrap gap-2">
-                      {filterOptions.snp_types.map((type) => (
-                        <button
-                          key={type}
-                          onClick={() => setSelectedSnpTypes(prev =>
-                            prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-                          )}
-                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                            selectedSnpTypes.includes(type)
-                              ? "bg-orange-600 text-white shadow-md"
-                              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                          }`}
-                        >
-                          {type}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1">D-SNP: Dual Eligible, C-SNP: Chronic Condition, I-SNP: Institutional</p>
+                {/* Group Type - Individual vs Group/Employer - works on both sources */}
+                <div className="mb-5">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Market Segment
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {["Individual", "Group"].map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setSelectedGroupTypes(prev =>
+                          prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                        )}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                          selectedGroupTypes.includes(type)
+                            ? "bg-purple-600 text-white shadow-md"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
                   </div>
-                )}
+                  <p className="text-xs text-gray-500 mt-1">Individual (direct enrollment) vs Group (employer-sponsored)</p>
+                </div>
+
+                {/* SNP Type (Special Needs Plans) - works on both sources */}
+                <div className="mb-5">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Special Needs Plans (SNP)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {(filterOptions?.snp_types || ["Non-SNP", "D-SNP", "C-SNP", "I-SNP"]).map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setSelectedSnpTypes(prev =>
+                          prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+                        )}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                          selectedSnpTypes.includes(type)
+                            ? "bg-orange-600 text-white shadow-md"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">D-SNP: Dual Eligible, C-SNP: Chronic Condition, I-SNP: Institutional</p>
+                </div>
+
 
                 <button
                   onClick={() => setShowFilterPopup(false)}
-                  className="mt-2 w-full py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium transition-colors"
+                  className="w-full py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium transition-colors"
                 >
                   Apply Filters
                 </button>
@@ -379,19 +387,24 @@ export default function EnrollmentPage() {
             )}
           </div>
 
-          {/* Filter by Geography Button */}
+          {/* Filter by Geography Button - disabled when using National data source */}
           <div className="relative">
             <button
-              onClick={() => { setShowGeoPopup(!showGeoPopup); setShowFilterPopup(false); }}
+              onClick={() => { if (dataSource === "geographic") { setShowGeoPopup(!showGeoPopup); setShowFilterPopup(false); }}}
+              disabled={dataSource === "national"}
+              title={dataSource === "national" ? "Switch to Geographic source to enable state/county filters" : "Filter by state and county"}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium transition-all shadow-sm ${
-                hasGeoFilters
-                  ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                dataSource === "national"
+                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  : hasGeoFilters
+                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
               }`}
             >
               <Filter className="w-4 h-4" />
               <span>Filter by Geography</span>
-              {geoFilterCount > 0 && (
+              {dataSource === "national" && <span className="text-xs text-gray-400">(N/A)</span>}
+              {geoFilterCount > 0 && dataSource === "geographic" && (
                 <span className="bg-white text-emerald-600 text-xs px-1.5 py-0.5 rounded-full font-bold">{geoFilterCount}</span>
               )}
               <ChevronDown className={`w-4 h-4 transition-transform ${showGeoPopup ? 'rotate-180' : ''}`} />
@@ -604,6 +617,35 @@ export default function EnrollmentPage() {
             {(hasTypeFilters || hasGeoFilters) && <span className="text-sm font-normal text-gray-500 ml-2">(filtered)</span>}
           </h2>
           <div className="flex items-center gap-4">
+            {/* Data Source Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Source:</span>
+              {[
+                { value: "national" as const, label: "National", tooltip: "Exact totals (no geography)" },
+                { value: "geographic" as const, label: "Geographic", tooltip: "Has state/county (suppressed <10)" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    setDataSource(opt.value);
+                    // Only clear geography filters when switching to national (geography not available)
+                    // Group type and SNP type filters now work on both sources
+                    if (opt.value === "national") {
+                      setSelectedStates([]);
+                      setSelectedCounties([]);
+                    }
+                  }}
+                  title={opt.tooltip}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    dataSource === opt.value
+                      ? "bg-green-600 text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             {/* View Mode Toggle */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">View:</span>

@@ -14,15 +14,15 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { enrollmentAPI, starsAPI, lookupAPI } from "@/lib/api";
+import { enrollmentAPIv3, starsAPIv3 } from "@/lib/api";
 import { Users, Star, TrendingUp, ArrowRight, Building2, Calendar } from "lucide-react";
 
-const STAR_COLORS = {
-  "1": "#dc2626",
-  "2": "#ea580c",
-  "3": "#eab308",
-  "4": "#22c55e",
-  "5": "#16a34a",
+const STAR_COLORS: Record<number, string> = {
+  1: "#dc2626",
+  2: "#ea580c",
+  3: "#eab308",
+  4: "#22c55e",
+  5: "#16a34a",
 };
 
 function formatNumber(num: number): string {
@@ -32,59 +32,63 @@ function formatNumber(num: number): string {
 }
 
 export default function HomePage() {
-  // Fetch summary data
+  // Fetch summary data using v3 APIs (with audit trail)
   const { data: enrollmentData, isLoading: enrollmentLoading } = useQuery({
-    queryKey: ["enrollment-timeseries"],
-    queryFn: () => enrollmentAPI.getTimeSeries(),
+    queryKey: ["enrollment-timeseries-v3"],
+    queryFn: () => enrollmentAPIv3.getTimeseries(),
   });
 
   const { data: marketShareData } = useQuery({
-    queryKey: ["market-share"],
-    queryFn: () => enrollmentAPI.getMarketShare(),
+    queryKey: ["market-share-v3"],
+    queryFn: () => enrollmentAPIv3.getByParent({ limit: 20 }),
   });
 
-  const { data: bandData, isLoading: bandLoading } = useQuery({
-    queryKey: ["stars-band"],
-    queryFn: () => starsAPI.getByBand(),
+  const { data: starsData, isLoading: bandLoading } = useQuery({
+    queryKey: ["stars-distribution-v3"],
+    queryFn: () => starsAPIv3.getDistribution({ starYear: 2026 }),
   });
 
-  const { data: yearsData } = useQuery({
-    queryKey: ["years"],
-    queryFn: lookupAPI.getYears,
+  const { data: filtersData } = useQuery({
+    queryKey: ["stars-filters-v3"],
+    queryFn: () => starsAPIv3.getFilters(),
   });
 
-  const { data: parentsData } = useQuery({
-    queryKey: ["parents"],
-    queryFn: lookupAPI.getParents,
-  });
-
-  // Transform enrollment data
+  // Transform enrollment data (v3 format)
   const enrollmentChartData = enrollmentData
-    ? enrollmentData.years.map((year, i) => ({
+    ? enrollmentData.years.map((year: number, i: number) => ({
         year,
         enrollment: enrollmentData.total_enrollment[i],
       }))
     : [];
 
-  // Transform star band data for pie
-  const starPieData = bandData?.bands
-    ? Object.entries(bandData.bands)
-        .map(([star, count]) => ({
-          name: `${star} Stars`,
-          value: count as number,
-          starNum: parseInt(star),
-        }))
-        .sort((a, b) => a.starNum - b.starNum)
-    : [];
+  // Transform stars distribution data for pie chart
+  // Using enrollment data from starsData to show 4+ star %
+  const fourPlusPct = starsData?.data?.length > 0
+    ? starsData.data.reduce((sum: number, d: any) => sum + (d.fourplus_enrollment || 0), 0) /
+      starsData.data.reduce((sum: number, d: any) => sum + (d.enrollment || 0), 0) * 100
+    : 0;
 
-  const totalContracts = starPieData.reduce((sum, d) => sum + d.value, 0);
-  const fourPlusStars = starPieData.filter(d => d.starNum >= 4).reduce((sum, d) => sum + d.value, 0);
+  // Create pie data showing 4+ star vs <4 star contracts
+  const totalContracts = starsData?.data?.reduce((sum: number, d: any) => sum + (d.contract_count || 0), 0) || 0;
+  const fourPlusContracts = starsData?.data?.reduce((sum: number, d: any) => sum + (d.fourplus_enrollment > 0 ? 1 : 0), 0) || 0;
+  const fourPlusStars = starsData?.data?.reduce((sum: number, d: any) => sum + (d.fourplus_enrollment || 0), 0) || 0;
+  const totalStarsEnrollment = starsData?.data?.reduce((sum: number, d: any) => sum + (d.enrollment || 0), 0) || 0;
+
+  // Build simple pie data for visualization
+  const starPieData = [
+    { name: "4+ Stars", value: fourPlusStars, starNum: 4 },
+    { name: "< 4 Stars", value: totalStarsEnrollment - fourPlusStars, starNum: 3 },
+  ].filter(d => d.value > 0);
 
   const latestEnrollment = enrollmentChartData.length > 0
     ? enrollmentChartData[enrollmentChartData.length - 1].enrollment
     : 0;
 
-  const topPayers = marketShareData?.data?.slice(0, 5) || [];
+  const topPayers = marketShareData?.data?.slice(0, 5).map((p: any) => ({
+    parent_org: p.parent_org,
+    total_enrollment: p.total_enrollment,
+    market_share: p.market_share,
+  })) || [];
 
   return (
     <div className="space-y-6">
@@ -116,7 +120,7 @@ export default function HomePage() {
             </div>
             <div>
               <p className="text-sm text-gray-500">Parent Organizations</p>
-              <p className="text-2xl font-bold text-gray-900">{parentsData?.count || "-"}</p>
+              <p className="text-2xl font-bold text-gray-900">{filtersData?.parent_orgs?.length || "-"}</p>
             </div>
           </div>
         </div>
@@ -126,9 +130,9 @@ export default function HomePage() {
               <Star className="w-6 h-6 text-yellow-600 fill-yellow-600" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">4+ Star Plans</p>
+              <p className="text-sm text-gray-500">4+ Star Enrollment</p>
               <p className="text-2xl font-bold text-gray-900">
-                {fourPlusStars} ({totalContracts > 0 ? ((fourPlusStars / totalContracts) * 100).toFixed(0) : 0}%)
+                {fourPlusPct > 0 ? `${fourPlusPct.toFixed(0)}%` : "-"}
               </p>
             </div>
           </div>
@@ -141,7 +145,7 @@ export default function HomePage() {
             <div>
               <p className="text-sm text-gray-500">Years of Data</p>
               <p className="text-2xl font-bold text-gray-900">
-                {yearsData?.enrollment_years?.length || "-"} years
+                {filtersData?.star_years?.length || "-"} years
               </p>
             </div>
           </div>
@@ -218,7 +222,7 @@ export default function HomePage() {
                     {starPieData.map((entry, index) => (
                       <Cell
                         key={`cell-${index}`}
-                        fill={STAR_COLORS[entry.starNum.toString() as keyof typeof STAR_COLORS] || "#8884d8"}
+                        fill={STAR_COLORS[entry.starNum] || "#8884d8"}
                       />
                     ))}
                   </Pie>

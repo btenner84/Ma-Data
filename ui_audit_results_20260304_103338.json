@@ -1,0 +1,260 @@
+{
+  "timestamp": "2026-03-04T10:33:38.988706",
+  "api_base": "http://localhost:8000",
+  "summary": {
+    "total": 41,
+    "passed": 41,
+    "failed": 0,
+    "pass_rate": "100.0%"
+  },
+  "results": [
+    {
+      "test": "data_source_national",
+      "passed": true,
+      "years": 7,
+      "enrollment": 219585619.0,
+      "error": null
+    },
+    {
+      "test": "data_source_geographic",
+      "passed": true,
+      "years": 7,
+      "enrollment": 219585619.0,
+      "error": null
+    },
+    {
+      "test": "product_MA_national",
+      "passed": true,
+      "enrollment": 219585619.0,
+      "error": null
+    },
+    {
+      "test": "product_MA_geographic",
+      "passed": true,
+      "enrollment": 219585619.0,
+      "error": null
+    },
+    {
+      "test": "product_PDP_national",
+      "passed": true,
+      "enrollment": 164862504.0,
+      "error": null
+    },
+    {
+      "test": "product_PDP_geographic",
+      "passed": true,
+      "enrollment": 164862504.0,
+      "error": null
+    },
+    {
+      "test": "product_MA+PDP_national",
+      "passed": true,
+      "enrollment": 384448123.0,
+      "error": null
+    },
+    {
+      "test": "product_MA+PDP_geographic",
+      "passed": true,
+      "enrollment": 384448123.0,
+      "error": null
+    },
+    {
+      "test": "plan_HMO_national",
+      "passed": true,
+      "enrollment": 127937185.0,
+      "error": null
+    },
+    {
+      "test": "plan_HMO_geographic",
+      "passed": true,
+      "enrollment": 127937185.0,
+      "error": null
+    },
+    {
+      "test": "plan_PPO_national",
+      "passed": true,
+      "enrollment": 89660549.0,
+      "error": null
+    },
+    {
+      "test": "plan_PPO_geographic",
+      "passed": true,
+      "enrollment": 89660549.0,
+      "error": null
+    },
+    {
+      "test": "plan_PFFS_national",
+      "passed": true,
+      "enrollment": 293002.0,
+      "error": null
+    },
+    {
+      "test": "plan_PFFS_geographic",
+      "passed": true,
+      "enrollment": 293002.0,
+      "error": null
+    },
+    {
+      "test": "plan_MSA_national",
+      "passed": true,
+      "enrollment": 28541.0,
+      "error": null
+    },
+    {
+      "test": "plan_MSA_geographic",
+      "passed": true,
+      "enrollment": 28541.0,
+      "error": null
+    },
+    {
+      "test": "plan_PACE_national",
+      "passed": true,
+      "enrollment": 422946.0,
+      "error": null
+    },
+    {
+      "test": "plan_PACE_geographic",
+      "passed": true,
+      "enrollment": 422946.0,
+      "error": null
+    },
+    {
+      "test": "plan_Cost_national",
+      "passed": true,
+      "enrollment": 1243396.0,
+      "error": null
+    },
+    {
+      "test": "plan_Cost_geographic",
+      "passed": true,
+      "enrollment": 1243396.0,
+      "error": null
+    },
+    {
+      "test": "snp_Non-SNP_national",
+      "passed": true,
+      "enrollment": 177548836.0,
+      "error": null
+    },
+    {
+      "test": "snp_Non-SNP_geographic",
+      "passed": true,
+      "enrollment": 177548836.0,
+      "error": null
+    },
+    {
+      "test": "snp_D-SNP_national",
+      "passed": true,
+      "enrollment": 35564286.0,
+      "error": null
+    },
+    {
+      "test": "snp_D-SNP_geographic",
+      "passed": true,
+      "enrollment": 35564286.0,
+      "error": null
+    },
+    {
+      "test": "snp_C-SNP_national",
+      "passed": true,
+      "enrollment": 5701211.0,
+      "error": null
+    },
+    {
+      "test": "snp_C-SNP_geographic",
+      "passed": true,
+      "enrollment": 5701211.0,
+      "error": null
+    },
+    {
+      "test": "snp_I-SNP_national",
+      "passed": true,
+      "enrollment": 771286.0,
+      "error": null
+    },
+    {
+      "test": "snp_I-SNP_geographic",
+      "passed": true,
+      "enrollment": 771286.0,
+      "error": null
+    },
+    {
+      "test": "group_Individual_national",
+      "passed": true,
+      "enrollment": 182328397.0,
+      "error": null
+    },
+    {
+      "test": "group_Individual_geographic",
+      "passed": true,
+      "enrollment": 182328397.0,
+      "error": null
+    },
+    {
+      "test": "group_Group_national",
+      "passed": true,
+      "enrollment": 37257222.0,
+      "error": null
+    },
+    {
+      "test": "group_Group_geographic",
+      "passed": true,
+      "enrollment": 37257222.0,
+      "error": null
+    },
+    {
+      "test": "state_CA",
+      "passed": true,
+      "enrollment": 23584690.0,
+      "error": null
+    },
+    {
+      "test": "state_TX",
+      "passed": true,
+      "enrollment": 16457106.0,
+      "error": null
+    },
+    {
+      "test": "state_FL",
+      "passed": true,
+      "enrollment": 19069233.0,
+      "error": null
+    },
+    {
+      "test": "state_NY",
+      "passed": true,
+      "enrollment": 13447933.0,
+      "error": null
+    },
+    {
+      "test": "state_PA",
+      "passed": true,
+      "enrollment": 10239314.0,
+      "error": null
+    },
+    {
+      "test": "complex_HMO_DSNP_Individual",
+      "passed": true,
+      "enrollment": 29884897.0,
+      "error": null
+    },
+    {
+      "test": "complex_PPO_NonSNP_Group",
+      "passed": true,
+      "enrollment": 30113435.0,
+      "error": null
+    },
+    {
+      "test": "complex_HMO_PPO_AllSNP",
+      "passed": true,
+      "enrollment": 42036783.0,
+      "error": null
+    },
+    {
+      "test": "complex_CA_HMO_DSNP",
+      "passed": true,
+      "enrollment": 2327964.0,
+      "error": null
+    }
+  ]
+}

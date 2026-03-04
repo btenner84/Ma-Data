@@ -56,14 +56,24 @@ def parse_star_rating(value):
     return None
 
 
-def get_enrollment_detail(enrollment_year: int, month: int = 2):
-    """Load enrollment data for a specific year/month."""
-    key = f'processed/fact_enrollment/{enrollment_year}/{month:02d}/data.parquet'
-    df = load_parquet(key)
-    if df.empty:
+def get_enrollment_detail(enrollment_year: int, preferred_months: list = None):
+    """Load enrollment data for a specific year, trying multiple months."""
+    if preferred_months is None:
+        # Try Feb first (common), then Jan, then Dec, then any other month
+        preferred_months = [2, 1, 12, 3, 6, 10]
+
+    for month in preferred_months:
+        key = f'processed/fact_enrollment/{enrollment_year}/{month:02d}/data.parquet'
+        df = load_parquet(key)
+        if not df.empty:
+            return df, f"{month:02d}"
+        # Try without leading zero
         key = f'processed/fact_enrollment/{enrollment_year}/{month}/data.parquet'
         df = load_parquet(key)
-    return df
+        if not df.empty:
+            return df, f"{month:02d}"
+
+    return pd.DataFrame(), None
 
 
 def build_fourplus_cache():
@@ -83,15 +93,29 @@ def build_fourplus_cache():
         print(f"\nProcessing star year {star_year}...")
         payment_year = star_year + 1
 
-        # Find overall rating column
-        rating_col = f"{star_year} Overall"
-        if rating_col not in stars_df.columns:
+        # Find overall rating column - handle various naming conventions
+        rating_col = None
+        # Check for year-specific columns in order of preference
+        possible_cols = [
+            f"{star_year} Overall",
+            f"{star_year} Overall Rating",
+            f"{star_year} Summary Score",
+            f"{star_year} Part C Summary",
+        ]
+        for col in possible_cols:
+            if col in stars_df.columns:
+                rating_col = col
+                break
+
+        # Fallback: search for any column with the year and "overall" or "summary"
+        if rating_col is None:
             for col in stars_df.columns:
-                if 'overall' in col.lower() and str(star_year) in col:
+                col_lower = col.lower()
+                if str(star_year) in col and ('overall' in col_lower or 'summary' in col_lower):
                     rating_col = col
                     break
 
-        if rating_col not in stars_df.columns:
+        if rating_col is None:
             print(f"  No rating column found for {star_year}")
             continue
 
@@ -105,13 +129,13 @@ def build_fourplus_cache():
             print(f"  No valid ratings for {star_year}")
             continue
 
-        # Load enrollment - try payment year Feb, fall back
+        # Load enrollment - try payment year first, then fall back to earlier years
         enrollment_df = pd.DataFrame()
         enrollment_source = None
-        for try_year in [payment_year] + list(range(payment_year - 1, 2013, -1)):
-            enrollment_df = get_enrollment_detail(try_year, month=2)
+        for try_year in [payment_year] + list(range(payment_year - 1, 2012, -1)):
+            enrollment_df, month_used = get_enrollment_detail(try_year)
             if not enrollment_df.empty:
-                enrollment_source = f"{try_year}/02"
+                enrollment_source = f"{try_year}/{month_used}"
                 break
 
         if enrollment_df.empty:

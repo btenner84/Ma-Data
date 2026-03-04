@@ -1,0 +1,467 @@
+{
+  "summary": {
+    "timestamp": "2026-03-04T10:32:12.480410",
+    "tests_run": 38,
+    "tests_passed": 38,
+    "tests_failed": 0,
+    "pass_rate": "100.0%",
+    "warnings": [],
+    "errors": []
+  },
+  "results": [
+    {
+      "test": "enrollment_national_year_coverage",
+      "passed": true,
+      "details": {
+        "years": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "expected": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "missing": [],
+        "extra": []
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:55.909606"
+    },
+    {
+      "test": "enrollment_geographic_year_coverage",
+      "passed": true,
+      "details": {
+        "years": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "expected": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "missing": [],
+        "extra": []
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:56.298470"
+    },
+    {
+      "test": "enrollment_MAPD_basic",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 34024043.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:56.601205"
+    },
+    {
+      "test": "enrollment_PDP_basic",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 22876691.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:56.873898"
+    },
+    {
+      "test": "enrollment_MAPD_PDP_combined",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 56900734.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:57.230965"
+    },
+    {
+      "test": "enrollment_MAPD_HMO",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 18991052.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:57.953073"
+    },
+    {
+      "test": "enrollment_MAPD_PPO",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 14774668.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:58.279862"
+    },
+    {
+      "test": "enrollment_MAPD_HMO_PPO",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 33765720.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:58.602324"
+    },
+    {
+      "test": "enrollment_MAPD_PFFS",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 28121.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:58.945346"
+    },
+    {
+      "test": "enrollment_MAPD_NonSNP",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 27051970.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:59.575246"
+    },
+    {
+      "test": "enrollment_MAPD_DSNP",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 5975193.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:31:59.945336"
+    },
+    {
+      "test": "enrollment_MAPD_CSNP",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 873846.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:00.225978"
+    },
+    {
+      "test": "enrollment_MAPD_ISNP",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 123034.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:00.466837"
+    },
+    {
+      "test": "enrollment_MAPD_AllSNP",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 6972073.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:00.788930"
+    },
+    {
+      "test": "enrollment_MAPD_Individual",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 28336136.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:01.370153"
+    },
+    {
+      "test": "enrollment_MAPD_Group",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 5687907.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:01.623449"
+    },
+    {
+      "test": "enrollment_MAPD_Indiv_Group",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 34024043.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:01.913221"
+    },
+    {
+      "test": "enrollment_MAPD_HMO_NonSNP_Individual",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 12430904.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:02.456483"
+    },
+    {
+      "test": "enrollment_MAPD_HMO_DSNP",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 4910898.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:02.835030"
+    },
+    {
+      "test": "enrollment_MAPD_PPO_Group",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 4690215.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:03.249155"
+    },
+    {
+      "test": "enrollment_MAPD_DSNP_Individual",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "enrollment_2024": 5975193.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:03.517848"
+    },
+    {
+      "test": "enrollment_state_CA",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 23584690.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:04.132550"
+    },
+    {
+      "test": "enrollment_state_TX",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 16457106.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:04.474155"
+    },
+    {
+      "test": "enrollment_state_FL",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 19069233.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:04.853737"
+    },
+    {
+      "test": "enrollment_payer_UnitedHealth Group, ",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 60520918.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:05.171536"
+    },
+    {
+      "test": "enrollment_payer_Humana Inc.",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 39302982.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:05.485008"
+    },
+    {
+      "test": "enrollment_total_2020",
+      "passed": true,
+      "details": {
+        "actual": 25192270.0,
+        "expected_range": [
+          24000000,
+          27000000
+        ]
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:05.782729"
+    },
+    {
+      "test": "enrollment_total_2024",
+      "passed": true,
+      "details": {
+        "actual": 34024043.0,
+        "expected_range": [
+          33000000,
+          36000000
+        ]
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:06.087811"
+    },
+    {
+      "test": "enrollment_total_2026",
+      "passed": true,
+      "details": {
+        "actual": 35346274.0,
+        "expected_range": [
+          34000000,
+          37000000
+        ]
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:06.402826"
+    },
+    {
+      "test": "enrollment_national_geographic_match",
+      "passed": true,
+      "details": {
+        "national_sum": 219585619.0,
+        "geographic_sum": 219585619.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:07.082589"
+    },
+    {
+      "test": "stars_distribution_national_2024",
+      "passed": true,
+      "details": {
+        "data_count": 1,
+        "four_plus_pct": 75.81
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:07.539145"
+    },
+    {
+      "test": "stars_distribution_rated_2024",
+      "passed": true,
+      "details": {
+        "data_count": 1,
+        "four_plus_pct": 81.69
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:08.022298"
+    },
+    {
+      "test": "stars_4plus_national_vs_rated",
+      "passed": true,
+      "details": {
+        "national_pct": 75.81,
+        "rated_pct": 81.69,
+        "difference": 5.8799999999999955
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:08.505244"
+    },
+    {
+      "test": "risk_scores_distribution_2020",
+      "passed": true,
+      "details": {
+        "has_data": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:09.426500"
+    },
+    {
+      "test": "risk_scores_distribution_2024",
+      "passed": true,
+      "details": {
+        "has_data": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:10.001314"
+    },
+    {
+      "test": "risk_scores_timeseries",
+      "passed": true,
+      "details": {
+        "years": 19
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:10.393020"
+    },
+    {
+      "test": "snp_sum_equals_total",
+      "passed": true,
+      "details": {
+        "total": 34024043.0,
+        "snp_sum": 34024043.0,
+        "diff_pct": 0.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:11.807553"
+    },
+    {
+      "test": "group_type_sum_equals_total",
+      "passed": true,
+      "details": {
+        "individual": 28336136.0,
+        "group": 5687907.0,
+        "sum": 34024043.0,
+        "diff_pct": 0.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:32:12.480367"
+    }
+  ]
+}

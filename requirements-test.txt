@@ -1,0 +1,20 @@
+# Test dependencies for MA Data Platform
+
+# Core testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+
+# Mocking
+pytest-mock>=3.10.0
+
+# API testing
+httpx>=0.24.0
+fastapi[all]>=0.100.0
+
+# Data validation
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Async support
+anyio>=3.7.0

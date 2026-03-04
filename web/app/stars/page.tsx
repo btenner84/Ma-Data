@@ -1646,7 +1646,7 @@ export default function StarsPage() {
   const { data: filterOptions } = useQuery<FilterOptions>({
     queryKey: ["enrollment-filters"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v2/enrollment/filters`);
+      const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
       return res.json();
     },
   });

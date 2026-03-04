@@ -100,16 +100,30 @@ def process_year(year: int) -> pd.DataFrame:
                 return pd.DataFrame()
 
             # Standardize column names
+            # Note: CMS uses different column names across years with newlines and variations
             col_map = {
+                # Contract ID variations
                 'Contract Number': 'contract_id',
                 'Contract': 'contract_id',
+                # Plan ID variations (some have newlines)
                 'Plan Benefit Package': 'plan_id',
+                'Plan Benefit\nPackage': 'plan_id',  # 2014-2018 format with newline
                 'Plan ID': 'plan_id',
+                # Contract name
                 'Contract Name': 'contract_name',
                 'Plan Type': 'plan_type',
-                'Average Part C Risk Score': 'avg_risk_score',
-                'Average A/B PM/PM Payment': 'avg_ab_payment',
+                # Risk score variations across years (2006-2024)
+                'Average Risk Score': 'avg_risk_score',  # 2006-2013
+                'Average Part\nRisk Score': 'avg_risk_score',  # 2014
+                'Average Part C\nRisk Score': 'avg_risk_score',  # 2015
+                'Average Part\nC Risk Score': 'avg_risk_score',  # 2016
+                'Average Part C Risk Score': 'avg_risk_score',  # 2017+
+                # Payment variations
+                'Average AB PM/PM Payment': 'avg_ab_payment',  # 2006-2013
+                'Average A/B PM/PM Payment': 'avg_ab_payment',  # 2017+
+                'Average A/B PM/PM\nPayment': 'avg_ab_payment',  # 2014-2016
                 'Average Rebate PM/PM Payment': 'avg_rebate',
+                'Average Rebate PM/PM\nPayment': 'avg_rebate',  # 2014-2016
             }
 
             for old, new in col_map.items():
@@ -194,23 +208,147 @@ def load_contract_to_parent() -> pd.DataFrame:
     return pd.DataFrame(columns=['contract_id', 'parent_org'])
 
 
-def load_enrollment_by_contract() -> pd.DataFrame:
-    """Load enrollment data at contract level for weighting."""
+def load_snp_subtype(year: int) -> pd.DataFrame:
+    """
+    Load SNP subtype data (D-SNP, C-SNP, I-SNP) for a given year.
+    Returns a lookup table of contract_id + plan_id -> snp_subtype.
+    """
     try:
-        df = load_parquet('processed/unified/stars_enrollment_unified.parquet')
-        # Aggregate by contract, year
-        agg = df.groupby(['contract_id', 'star_year']).agg({
+        df = pd.DataFrame()  # Initialize df before the loop
+
+        # Try December first, then January
+        for month in ['12', '01']:
+            try:
+                key = f'processed/snp/{year}/{month}/data.parquet'
+                df = load_parquet(key)
+                if not df.empty:
+                    break
+            except:
+                continue
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # Map SNP types to standard names
+        snp_map = {
+            'Dual-Eligible': 'D-SNP',
+            'Chronic or Disabling Condition': 'C-SNP',
+            'Institutional': 'I-SNP'
+        }
+        df['snp_subtype'] = df['snp_type'].map(snp_map)
+        df = df.dropna(subset=['plan_id'])
+        df['plan_id'] = df['plan_id'].astype(int).astype(str)
+
+        return df[['contract_id', 'plan_id', 'snp_subtype']].drop_duplicates()
+    except Exception as e:
+        print(f"  SNP subtype {year}: Error - {e}")
+        return pd.DataFrame()
+
+
+def load_enrollment_by_plan() -> pd.DataFrame:
+    """
+    Load enrollment data from MONTHLY ENROLLMENT BY PLAN files at PLAN level.
+
+    Uses monthly enrollment (more complete than CPSC or Stars) for each year.
+    Each risk score year uses enrollment from THE SAME year.
+
+    IMPORTANT:
+    - Keep at PLAN level for proper joining with plan-level risk scores
+    - Monthly enrollment by plan is the most complete source
+    - CPSC has geographic detail but missing some contracts
+    - Stars enrollment only has contracts in Stars file (~60% of MA)
+
+    Derives:
+    - group_type: plan_id >= 800 = Group, < 800 = Individual
+    - snp_type: D-SNP, C-SNP, I-SNP, or Non-SNP (from SNP file + is_snp field)
+    """
+    all_years = []
+
+    # Load enrollment for each year (2013-2025 - full range of available data)
+    # Risk scores go back to 2006, but enrollment only available from 2013
+    for year in range(2013, 2026):
+        # Try December first, then January, then any available month
+        df = pd.DataFrame()
+        month_used = None
+        for month in ['12', '01', '11', '10', '06', '03']:  # Prioritize end-of-year
+            key = f'processed/fact_enrollment/{year}/{month}/data.parquet'
+            try:
+                df = load_parquet(key)
+                if not df.empty:
+                    month_used = month
+                    break
+            except:
+                continue
+
+        if df.empty:
+            print(f"  {year}: No enrollment found")
+            continue
+
+        print(f"  {year}: Using month {month_used} enrollment")
+
+        # Filter to MA plans only (exclude Part D)
+        ma_types = ['HMO/HMOPOS', 'Local PPO', 'Regional PPO', 'PFFS', 'MSA',
+                   'National PACE', 'Medicare-Medicaid Plan HMO/HMOPOS', '1876 Cost']
+        df = df[df['plan_type'].isin(ma_types)]
+
+        # Derive group_type from plan_id
+        if 'plan_id' in df.columns:
+            df['group_type'] = df['plan_id'].apply(lambda x: 'Group' if int(x) >= 800 else 'Individual')
+        else:
+            df['group_type'] = 'Unknown'
+
+        # Get SNP subtype (D-SNP, C-SNP, I-SNP) from SNP file
+        snp_lookup = load_snp_subtype(year)
+        df['plan_id_str'] = df['plan_id'].astype(str)
+
+        if not snp_lookup.empty:
+            df = df.merge(snp_lookup, left_on=['contract_id', 'plan_id_str'],
+                         right_on=['contract_id', 'plan_id'], how='left', suffixes=('', '_snp'))
+            # Use snp_subtype if available, otherwise fall back to is_snp
+            df['snp_type'] = df['snp_subtype'].fillna(
+                df['is_snp'].apply(lambda x: 'SNP' if x == 'Yes' else 'Non-SNP')
+            )
+            df = df.drop(columns=['plan_id_snp', 'snp_subtype', 'plan_id_str'], errors='ignore')
+        elif 'is_snp' in df.columns:
+            df['snp_type'] = df['is_snp'].apply(lambda x: 'SNP' if x == 'Yes' else 'Non-SNP')
+            df = df.drop(columns=['plan_id_str'], errors='ignore')
+        else:
+            df['snp_type'] = 'Unknown'
+            df = df.drop(columns=['plan_id_str'], errors='ignore')
+
+        # Normalize plan_type to match our standard naming
+        plan_type_map = {
+            'HMO/HMOPOS': 'HMO/HMOPOS',
+            'Local PPO': 'Local PPO',
+            'Regional PPO': 'Regional PPO',
+            'PFFS': 'PFFS',
+            'MSA': 'MSA',
+            'National PACE': 'National PACE',
+            'Medicare-Medicaid Plan HMO/HMOPOS': 'HMO/HMOPOS',  # MMPs are HMO-based
+            '1876 Cost': '1876 Cost'
+        }
+        df['plan_type'] = df['plan_type'].map(plan_type_map).fillna(df['plan_type'])
+
+        # Aggregate to PLAN level (contract + plan_id) - sum across counties
+        # This gives us enrollment per plan, which matches risk score granularity
+        agg = df.groupby(['contract_id', 'plan_id', 'plan_type', 'group_type', 'snp_type']).agg({
             'enrollment': 'sum',
             'parent_org': 'first',
-            'plan_type': 'first',
-            'group_type': 'first',
-            'snp_type': 'first'
         }).reset_index()
-        agg = agg.rename(columns={'star_year': 'year'})
-        return agg
-    except Exception as e:
-        print(f"Warning: Could not load enrollment data: {e}")
+        agg['year'] = year
+        # Ensure plan_id is string (to match risk scores)
+        agg['plan_id'] = agg['plan_id'].astype(str)
+
+        all_years.append(agg)
+        print(f"  {year}: {len(agg):,} plans, {agg['enrollment'].sum():,.0f} enrollment")
+
+    if not all_years:
+        print("Warning: No enrollment data loaded!")
         return pd.DataFrame()
+
+    result = pd.concat(all_years, ignore_index=True)
+    print(f"  Total: {len(result):,} plan-level rows across {len(all_years)} years")
+    return result
 
 
 def main():
@@ -245,10 +383,10 @@ def main():
     contract_parent = load_contract_to_parent()
     print(f"Contract-parent mappings: {len(contract_parent):,}")
 
-    # Load enrollment data for weighting
+    # Load enrollment data for weighting (at PLAN level for proper joining)
     print("\n=== LOADING ENROLLMENT DATA ===")
-    enrollment = load_enrollment_by_contract()
-    print(f"Enrollment records: {len(enrollment):,}")
+    enrollment = load_enrollment_by_plan()
+    print(f"Enrollment records (plan-level): {len(enrollment):,}")
 
     # Join risk scores with parent org
     print("\n=== JOINING DATA ===")
@@ -261,17 +399,100 @@ def main():
             how='left'
         )
         matched = risk_scores['parent_org'].notna().sum()
-        print(f"Matched to parent org: {matched:,} / {len(risk_scores):,}")
+        print(f"Matched to parent org (from mapping): {matched:,} / {len(risk_scores):,}")
+
+    # Fill in missing parent_org from enrollment data
+    # IMPORTANT: Join on YEAR + contract_id to get the parent_org for THAT specific year
+    # (contracts can change parent orgs over time due to acquisitions)
+    if not enrollment.empty and 'parent_org' in enrollment.columns:
+        # Get unique contract -> parent_org BY YEAR from enrollment
+        enrollment_parents = enrollment[['contract_id', 'year', 'parent_org']].drop_duplicates()
+        # Keep one parent_org per contract per year
+        enrollment_parents = enrollment_parents.groupby(['contract_id', 'year']).first().reset_index()
+        enrollment_parents = enrollment_parents.rename(columns={'parent_org': 'parent_org_enroll'})
+
+        risk_scores = risk_scores.merge(
+            enrollment_parents,
+            on=['contract_id', 'year'],
+            how='left'
+        )
+
+        # Use enrollment parent_org where mapping parent_org is missing
+        if 'parent_org' not in risk_scores.columns:
+            risk_scores['parent_org'] = risk_scores['parent_org_enroll']
+        else:
+            mask = risk_scores['parent_org'].isna()
+            risk_scores.loc[mask, 'parent_org'] = risk_scores.loc[mask, 'parent_org_enroll']
+
+        risk_scores = risk_scores.drop(columns=['parent_org_enroll'], errors='ignore')
+
+        matched_after = risk_scores['parent_org'].notna().sum()
+        print(f"Matched to parent org (after enrollment, year-matched): {matched_after:,} / {len(risk_scores):,}")
 
     # Join with enrollment to get enrollment weights and additional fields
+    # Handle two cases:
+    # 1. Plan-level join for years with plan_id (2019+)
+    # 2. Contract-level join for years without plan_id (2014-2018)
     if not enrollment.empty:
-        # Keep risk scores columns, add enrollment
-        risk_with_enrollment = risk_scores.merge(
-            enrollment[['contract_id', 'year', 'enrollment', 'plan_type', 'group_type', 'snp_type']],
-            on=['contract_id', 'year'],
-            how='left',
-            suffixes=('', '_enroll')
-        )
+        # Split risk scores by whether they have plan_id
+        has_plan_id = risk_scores['plan_id'].notna()
+        risk_with_plan = risk_scores[has_plan_id].copy()
+        risk_without_plan = risk_scores[~has_plan_id].copy()
+
+        print(f"Risk scores with plan_id: {len(risk_with_plan):,}")
+        print(f"Risk scores without plan_id: {len(risk_without_plan):,}")
+
+        # Join plan-level for rows WITH plan_id
+        if len(risk_with_plan) > 0:
+            risk_with_plan = risk_with_plan.merge(
+                enrollment[['contract_id', 'plan_id', 'year', 'enrollment', 'plan_type', 'group_type', 'snp_type']],
+                on=['contract_id', 'plan_id', 'year'],
+                how='left',
+                suffixes=('', '_enroll')
+            )
+
+        # Join contract-level for rows WITHOUT plan_id (aggregate BOTH risk and enrollment to contract level)
+        if len(risk_without_plan) > 0:
+            # First aggregate risk scores to contract level (weighted avg by existing plan counts)
+            # Since we don't have plan-level enrollment, use simple average
+            risk_contract = risk_without_plan.groupby(['contract_id', 'year']).agg({
+                'avg_risk_score': 'mean',  # Simple average across plans
+                'contract_name': 'first',
+                'plan_type': 'first',
+                'parent_org': 'first'
+            }).reset_index()
+            # Set plan_id to '0' to indicate contract-level record
+            risk_contract['plan_id'] = '0'
+
+            # Aggregate enrollment to contract level
+            contract_enrollment = enrollment.groupby(['contract_id', 'year']).agg({
+                'enrollment': 'sum',
+                'plan_type': 'first',
+                'group_type': 'first',
+                'snp_type': 'first',
+                'parent_org': 'first'
+            }).reset_index()
+            contract_enrollment = contract_enrollment.rename(columns={
+                'plan_type': 'plan_type_enroll',
+                'group_type': 'group_type_enroll',
+                'snp_type': 'snp_type_enroll'
+            })
+
+            # Now join (1:1 at contract level)
+            risk_without_plan = risk_contract.merge(
+                contract_enrollment[['contract_id', 'year', 'enrollment', 'plan_type_enroll', 'group_type_enroll', 'snp_type_enroll']],
+                on=['contract_id', 'year'],
+                how='left'
+            )
+            # Copy dimension fields
+            if 'group_type' not in risk_without_plan.columns:
+                risk_without_plan['group_type'] = risk_without_plan.get('group_type_enroll')
+            if 'snp_type' not in risk_without_plan.columns:
+                risk_without_plan['snp_type'] = risk_without_plan.get('snp_type_enroll')
+            risk_without_plan = risk_without_plan.drop(columns=['plan_type_enroll', 'group_type_enroll', 'snp_type_enroll'], errors='ignore')
+
+        # Combine back together
+        risk_with_enrollment = pd.concat([risk_with_plan, risk_without_plan], ignore_index=True)
 
         # Use enrollment plan_type if risk score plan_type is missing
         if 'plan_type_enroll' in risk_with_enrollment.columns:
@@ -282,7 +503,7 @@ def main():
         risk_scores = risk_with_enrollment
 
         with_enrollment = risk_scores['enrollment'].notna().sum()
-        print(f"Matched to enrollment: {with_enrollment:,} / {len(risk_scores):,}")
+        print(f"Matched to enrollment (total): {with_enrollment:,} / {len(risk_scores):,}")
 
     # Create aggregated summary by year
     print("\n=== CREATING SUMMARIES ===")
@@ -300,32 +521,22 @@ def main():
     upload_parquet_to_s3(summary_by_year, 'processed/unified/risk_scores_summary_v2.parquet')
 
     # Summary by year and parent org (for payer comparison)
-    # IMPORTANT: First aggregate to contract level to avoid duplicate enrollment
+    # Now that enrollment is joined at PLAN level, we can aggregate directly
     if 'parent_org' in valid_risk.columns:
-        # Step 1: Aggregate risk scores to contract level (average across plans)
-        by_contract = valid_risk.groupby(['year', 'contract_id', 'parent_org']).agg({
-            'avg_risk_score': 'mean',  # Average risk across plans in contract
-        }).reset_index()
-
-        # Step 2: Join enrollment at contract level WITH filter dimensions (no duplication)
-        enrollment_with_dims = enrollment[['contract_id', 'year', 'enrollment', 'plan_type', 'snp_type', 'group_type']].drop_duplicates()
-        by_contract = by_contract.merge(
-            enrollment_with_dims,
-            on=['contract_id', 'year'],
-            how='left'
-        )
+        # Data is now at plan level with enrollment and dimensions already joined
+        by_plan = valid_risk.copy()
 
         # Fill missing values
-        by_contract['enrollment'] = by_contract['enrollment'].fillna(0)
-        by_contract['plan_type'] = by_contract['plan_type'].fillna('Unknown')
-        by_contract['snp_type'] = by_contract['snp_type'].fillna('Unknown')
-        by_contract['group_type'] = by_contract['group_type'].fillna('Unknown')
+        by_plan['enrollment'] = by_plan['enrollment'].fillna(0)
+        by_plan['plan_type'] = by_plan['plan_type'].fillna('Unknown')
+        by_plan['snp_type'] = by_plan['snp_type'].fillna('Unknown')
+        by_plan['group_type'] = by_plan['group_type'].fillna('Unknown')
 
-        # Step 3: Calculate weighted risk
-        by_contract['weighted_risk'] = by_contract['avg_risk_score'] * by_contract['enrollment']
+        # Calculate weighted risk at plan level
+        by_plan['weighted_risk'] = by_plan['avg_risk_score'] * by_plan['enrollment']
 
         # Create aggregation BY parent_org only (for backward compatibility)
-        by_parent_year = by_contract.groupby(['year', 'parent_org']).agg({
+        by_parent_year = by_plan.groupby(['year', 'parent_org']).agg({
             'avg_risk_score': 'mean',
             'weighted_risk': 'sum',
             'enrollment': 'sum',
@@ -344,7 +555,7 @@ def main():
         upload_parquet_to_s3(by_parent_year, 'processed/unified/risk_scores_by_parent_year.parquet')
 
         # Create aggregation WITH filter dimensions (for filtered queries)
-        by_parent_dims = by_contract.groupby(['year', 'parent_org', 'plan_type', 'snp_type', 'group_type']).agg({
+        by_parent_dims = by_plan.groupby(['year', 'parent_org', 'plan_type', 'snp_type', 'group_type']).agg({
             'avg_risk_score': 'mean',
             'weighted_risk': 'sum',
             'enrollment': 'sum',

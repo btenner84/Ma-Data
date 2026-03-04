@@ -1,0 +1,809 @@
+{
+  "summary": {
+    "timestamp": "2026-03-04T10:30:32.309720",
+    "tests_run": 71,
+    "tests_passed": 60,
+    "tests_failed": 11,
+    "pass_rate": "84.5%",
+    "warnings": [],
+    "errors": [
+      "enrollment_filter_MAPD_PL0_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL0_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL1_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL1_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL1_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL1_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL2_SNP1_GT1: No data returned",
+      "enrollment_filter_MAPD_PL2_SNP1_GT1: No data returned",
+      "enrollment_filter_PDP_PL1: No data returned",
+      "enrollment_filter_PDP_PL1: No data returned",
+      "enrollment_filter_PDP_PL2: No data returned"
+    ]
+  },
+  "results": [
+    {
+      "test": "enrollment_national_year_coverage",
+      "passed": true,
+      "details": {
+        "years": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "expected": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "missing": [],
+        "extra": []
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:08.346742"
+    },
+    {
+      "test": "enrollment_geographic_year_coverage",
+      "passed": true,
+      "details": {
+        "years": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "expected": [
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025,
+          2026
+        ],
+        "missing": [],
+        "extra": []
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:08.709285"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP0_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:08.987255"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:09.521863"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:09.896359"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:10.363254"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:10.810394"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:11.072042"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:11.320208"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:11.641014"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:11.903819"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:12.138162"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:12.392627"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL0_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 1,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:12.713040"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP0_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:13.140601"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:13.452916"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:13.757522"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:14.237840"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:14.604834"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:14.937758"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:15.257601"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:15.620800"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:15.857397"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:16.135385"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:16.430170"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 1,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:16.754780"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP0_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:17.042259"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:17.373617"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:17.659256"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:18.006293"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:18.321066"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:18.663334"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:18.935729"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:19.263587"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:19.560883"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:19.801807"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:20.100097"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL1_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:20.350919"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP0_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:20.661149"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:20.962691"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP0_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:21.241821"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:21.580033"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:21.894407"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:22.186571"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:22.461228"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:22.753532"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:23.005588"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:23.274584"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT1",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:23.581687"
+    },
+    {
+      "test": "enrollment_filter_MAPD_PL2_SNP1_GT1",
+      "passed": false,
+      "details": {
+        "years": 1,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:23.829674"
+    },
+    {
+      "test": "enrollment_filter_PDP_PL0",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "has_enrollment": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:24.091526"
+    },
+    {
+      "test": "enrollment_filter_PDP_PL1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:24.368426"
+    },
+    {
+      "test": "enrollment_filter_PDP_PL1",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:24.622903"
+    },
+    {
+      "test": "enrollment_filter_PDP_PL2",
+      "passed": false,
+      "details": {
+        "years": 0,
+        "has_enrollment": false
+      },
+      "error": "No data returned",
+      "timestamp": "2026-03-04T10:30:24.829049"
+    },
+    {
+      "test": "enrollment_state_CA",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 23584690.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:25.345814"
+    },
+    {
+      "test": "enrollment_state_TX",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 16457106.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:25.624460"
+    },
+    {
+      "test": "enrollment_state_FL",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 19069233.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:25.862333"
+    },
+    {
+      "test": "enrollment_payer_UnitedHealth Group, ",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 60520918.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:26.118330"
+    },
+    {
+      "test": "enrollment_payer_Humana Inc.",
+      "passed": true,
+      "details": {
+        "years": 7,
+        "total_enrollment": 39302982.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:26.375483"
+    },
+    {
+      "test": "enrollment_total_2020",
+      "passed": true,
+      "details": {
+        "actual": 25192270.0,
+        "expected_range": [
+          24000000,
+          27000000
+        ]
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:26.603548"
+    },
+    {
+      "test": "enrollment_total_2024",
+      "passed": true,
+      "details": {
+        "actual": 34024043.0,
+        "expected_range": [
+          33000000,
+          36000000
+        ]
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:26.839033"
+    },
+    {
+      "test": "enrollment_total_2026",
+      "passed": true,
+      "details": {
+        "actual": 35346274.0,
+        "expected_range": [
+          34000000,
+          37000000
+        ]
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:27.114536"
+    },
+    {
+      "test": "enrollment_national_geographic_match",
+      "passed": true,
+      "details": {
+        "national_sum": 219585619.0,
+        "geographic_sum": 219585619.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:27.620487"
+    },
+    {
+      "test": "stars_distribution_national_2024",
+      "passed": true,
+      "details": {
+        "data_count": 1,
+        "four_plus_pct": 75.81
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:28.023771"
+    },
+    {
+      "test": "stars_distribution_rated_2024",
+      "passed": true,
+      "details": {
+        "data_count": 1,
+        "four_plus_pct": 81.69
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:28.463783"
+    },
+    {
+      "test": "stars_4plus_national_vs_rated",
+      "passed": true,
+      "details": {
+        "national_pct": 75.81,
+        "rated_pct": 81.69,
+        "difference": 5.8799999999999955
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:28.898402"
+    },
+    {
+      "test": "risk_scores_distribution_2020",
+      "passed": true,
+      "details": {
+        "has_data": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:29.738396"
+    },
+    {
+      "test": "risk_scores_distribution_2024",
+      "passed": true,
+      "details": {
+        "has_data": true
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:30.184246"
+    },
+    {
+      "test": "risk_scores_timeseries",
+      "passed": true,
+      "details": {
+        "years": 19
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:30.557046"
+    },
+    {
+      "test": "snp_sum_equals_total",
+      "passed": true,
+      "details": {
+        "total": 34024043.0,
+        "snp_sum": 34024043.0,
+        "diff_pct": 0.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:31.813021"
+    },
+    {
+      "test": "group_type_sum_equals_total",
+      "passed": true,
+      "details": {
+        "individual": 28336136.0,
+        "group": 5687907.0,
+        "sum": 34024043.0,
+        "diff_pct": 0.0
+      },
+      "error": null,
+      "timestamp": "2026-03-04T10:30:32.309666"
+    }
+  ]
+}

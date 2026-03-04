@@ -23,7 +23,7 @@ const COLORS = [
 
 function formatRiskScore(num: number | undefined | null): string {
   if (num === undefined || num === null || isNaN(num)) return "-";
-  return num.toFixed(3);
+  return num.toFixed(2);
 }
 
 function formatEnrollment(num: number | undefined | null): string {
@@ -51,6 +51,33 @@ interface RiskScoreTimeSeriesV2 {
   error?: string;
 }
 
+interface ContractDetail {
+  contract_id: string;
+  plan_id: string;
+  contract_name: string;
+  parent_org: string;
+  plan_type: string;
+  group_type: string;
+  snp_type: string;
+  risk_score: number;
+  enrollment: number;
+  weighted_score: number;
+}
+
+interface ContractDetailsResponse {
+  year: number;
+  parent_org: string;
+  contracts: ContractDetail[];
+  summary: {
+    contract_count: number;
+    total_enrollment: number;
+    weighted_avg: number;
+    simple_avg: number;
+    total_weighted_score: number;
+  };
+  audit_id: string;
+}
+
 export default function RiskScoresPage() {
   const [selectedPlanTypes, setSelectedPlanTypes] = useState<string[]>([]);
   const [selectedGroupTypes, setSelectedGroupTypes] = useState<string[]>([]);
@@ -65,11 +92,17 @@ export default function RiskScoresPage() {
   const [showPayerPopup, setShowPayerPopup] = useState(false);
   const [payerSearch, setPayerSearch] = useState("");
 
-  // Fetch filter options
+  // Detail modal state for auditing
+  const [detailSelection, setDetailSelection] = useState<{
+    parentOrg: string;
+    year: number;
+  } | null>(null);
+
+  // Fetch filter options (v3 API with audit trail)
   const { data: filterOptions } = useQuery<RiskScoreFilters>({
-    queryKey: ["risk-filters-v2"],
+    queryKey: ["risk-filters-v3"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v2/risk-scores/filters`);
+      const res = await fetch(`${API_BASE}/api/v3/risk/filters`);
       return res.json();
     },
   });
@@ -86,14 +119,33 @@ export default function RiskScoresPage() {
     return params.toString();
   };
 
-  // Fetch timeseries data
+  // Fetch timeseries data (v3 API with audit trail)
   const { data: rawTimeseriesData, isLoading } = useQuery<RiskScoreTimeSeriesV2>({
-    queryKey: ["risk-timeseries-v2", selectedPlanTypes, selectedGroupTypes, selectedSnpTypes, selectedParentOrgs, metric],
+    queryKey: ["risk-timeseries-v3", selectedPlanTypes, selectedGroupTypes, selectedSnpTypes, selectedParentOrgs, metric],
     queryFn: async () => {
       const params = buildQueryParams();
-      const res = await fetch(`${API_BASE}/api/v2/risk-scores/timeseries?${params}`);
+      const res = await fetch(`${API_BASE}/api/v3/risk/timeseries?${params}`);
       return res.json();
     },
+  });
+
+  // Fetch contract details when a cell is clicked
+  const { data: contractDetails, isLoading: isLoadingDetails } = useQuery<ContractDetailsResponse>({
+    queryKey: ["risk-contracts", detailSelection?.year, detailSelection?.parentOrg, selectedPlanTypes, selectedGroupTypes, selectedSnpTypes],
+    queryFn: async () => {
+      if (!detailSelection) return null;
+      const params = new URLSearchParams();
+      params.set("year", String(detailSelection.year));
+      if (detailSelection.parentOrg !== "Industry Total") {
+        params.set("parent_org", detailSelection.parentOrg);
+      }
+      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
+      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
+      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
+      const res = await fetch(`${API_BASE}/api/v3/risk/contracts?${params}`);
+      return res.json();
+    },
+    enabled: !!detailSelection,
   });
 
   // Filter out Industry Total if not showing it
@@ -261,7 +313,7 @@ export default function RiskScoresPage() {
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Special Needs Plans (SNP)</label>
                   <div className="flex flex-wrap gap-2">
-                    {(filterOptions?.snp_types?.filter(t => t !== 'Unknown') || ["Non-SNP", "SNP"]).map((type) => (
+                    {["Non-SNP", "D-SNP", "C-SNP", "I-SNP"].map((type) => (
                       <button
                         key={type}
                         onClick={() => setSelectedSnpTypes(prev =>
@@ -277,7 +329,7 @@ export default function RiskScoresPage() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">Non-SNP: Regular MA plans, SNP: Special Needs Plans (includes D-SNP, C-SNP, I-SNP)</p>
+                  <p className="text-xs text-gray-500 mt-1">D-SNP: Dual-Eligible, C-SNP: Chronic Condition, I-SNP: Institutional</p>
                 </div>
 
                 <button
@@ -524,7 +576,12 @@ export default function RiskScoresPage() {
                         </div>
                       </td>
                       {chartData.map((row) => (
-                        <td key={row.year} className="px-4 py-3 text-sm text-gray-700 text-right font-mono whitespace-nowrap">
+                        <td
+                          key={row.year}
+                          className="px-4 py-3 text-sm text-gray-700 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-blue-50 transition-colors"
+                          onClick={() => setDetailSelection({ parentOrg: key, year: row.year })}
+                          title="Click to see contract breakdown"
+                        >
                           {formatRiskScore(row[key])}
                         </td>
                       ))}
@@ -546,9 +603,9 @@ export default function RiskScoresPage() {
                         const change = ((curr - prev) / prev) * 100;
                         const isPositive = change > 0;
                         const isNegative = change < 0;
-                        // For risk scores: increase is typically negative (red), decrease is positive (green)
+                        // Standard convention: increase = green, decrease = red
                         return (
-                          <td key={`${row.year}-yoy`} className={`px-4 py-1 text-xs text-right font-mono ${isPositive ? 'text-red-600' : isNegative ? 'text-green-600' : 'text-gray-400'}`}>
+                          <td key={`${row.year}-yoy`} className={`px-4 py-1 text-xs text-right font-mono ${isPositive ? 'text-green-600' : isNegative ? 'text-red-600' : 'text-gray-400'}`}>
                             {change !== 0 ? `${isPositive ? '+' : ''}${change.toFixed(1)}%` : '—'}
                           </td>
                         );
@@ -613,6 +670,127 @@ export default function RiskScoresPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Contract Details Modal */}
+      {detailSelection && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  Contract Breakdown: {detailSelection.parentOrg}
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Year {detailSelection.year} • Click to audit weighted average calculation
+                </p>
+              </div>
+              <button
+                onClick={() => setDetailSelection(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-auto p-6">
+              {isLoadingDetails ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : contractDetails?.contracts ? (
+                <>
+                  {/* Summary Stats */}
+                  <div className="grid grid-cols-4 gap-4 mb-6">
+                    <div className="bg-blue-50 rounded-lg p-4">
+                      <div className="text-sm text-blue-600 font-medium">Contracts</div>
+                      <div className="text-2xl font-bold text-blue-900">{contractDetails.summary.contract_count}</div>
+                    </div>
+                    <div className="bg-green-50 rounded-lg p-4">
+                      <div className="text-sm text-green-600 font-medium">Total Enrollment</div>
+                      <div className="text-2xl font-bold text-green-900">{formatEnrollment(contractDetails.summary.total_enrollment)}</div>
+                    </div>
+                    <div className="bg-purple-50 rounded-lg p-4">
+                      <div className="text-sm text-purple-600 font-medium">Weighted Avg</div>
+                      <div className="text-2xl font-bold text-purple-900">{contractDetails.summary.weighted_avg?.toFixed(4) || '-'}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <div className="text-sm text-gray-600 font-medium">Simple Avg</div>
+                      <div className="text-2xl font-bold text-gray-900">{contractDetails.summary.simple_avg?.toFixed(4) || '-'}</div>
+                    </div>
+                  </div>
+
+                  {/* Formula Explanation */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
+                    <div className="text-sm text-amber-800">
+                      <strong>Weighted Average Formula:</strong> SUM(Risk Score × % Weight)
+                      <br />
+                      Where % Weight = Contract Enrollment / Total Enrollment
+                      <br />
+                      <span className="text-amber-600">Sum of all Contributions = <strong>{contractDetails.summary.weighted_avg?.toFixed(4)}</strong></span>
+                    </div>
+                  </div>
+
+                  {/* Contracts Table */}
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="max-h-[400px] overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-3 text-left font-semibold text-gray-600">Contract</th>
+                            <th className="px-4 py-3 text-left font-semibold text-gray-600">Plan Type</th>
+                            <th className="px-4 py-3 text-left font-semibold text-gray-600">Group</th>
+                            <th className="px-4 py-3 text-left font-semibold text-gray-600">SNP</th>
+                            <th className="px-4 py-3 text-right font-semibold text-gray-600">Risk Score</th>
+                            <th className="px-4 py-3 text-right font-semibold text-gray-600">Enrollment</th>
+                            <th className="px-4 py-3 text-right font-semibold text-gray-600">% Weight</th>
+                            <th className="px-4 py-3 text-right font-semibold text-gray-600">Contribution</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {contractDetails.contracts.map((contract, idx) => {
+                            const pctWeight = contractDetails.summary.total_enrollment > 0
+                              ? (contract.enrollment / contractDetails.summary.total_enrollment) * 100
+                              : 0;
+                            const contribution = contract.risk_score * (pctWeight / 100);
+                            return (
+                              <tr key={`${contract.contract_id}-${contract.plan_id}-${idx}`} className="hover:bg-gray-50">
+                                <td className="px-4 py-2">
+                                  <div className="font-medium text-gray-900">{contract.contract_id}-{contract.plan_id}</div>
+                                  <div className="text-xs text-gray-500 truncate max-w-[200px]" title={contract.contract_name}>
+                                    {contract.contract_name}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2 text-gray-600">{contract.plan_type}</td>
+                                <td className="px-4 py-2 text-gray-600">{contract.group_type}</td>
+                                <td className="px-4 py-2 text-gray-600">{contract.snp_type}</td>
+                                <td className="px-4 py-2 text-right font-mono text-gray-900">{contract.risk_score?.toFixed(4)}</td>
+                                <td className="px-4 py-2 text-right font-mono text-gray-600">{contract.enrollment?.toLocaleString()}</td>
+                                <td className="px-4 py-2 text-right font-mono text-gray-600">{pctWeight.toFixed(2)}%</td>
+                                <td className="px-4 py-2 text-right font-mono text-gray-600">{contribution.toFixed(4)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Audit Info */}
+                  <div className="mt-4 text-xs text-gray-400">
+                    Audit ID: {contractDetails.audit_id}
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  No contract data available
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

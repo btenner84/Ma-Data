@@ -102,6 +102,16 @@ def process_cpsc_to_s3(year: int, month: int) -> dict:
     return {'status': 'success', 'rows': len(fact), 's3_key': s3_output}
 
 
+def find_header_row(filepath: str, encoding: str = 'latin-1') -> int:
+    """Find the row containing column headers by looking for 'Contract Number' or 'Contract'."""
+    df_raw = pd.read_csv(filepath, encoding=encoding, header=None, nrows=10)
+    for idx, row in df_raw.iterrows():
+        row_str = ' '.join(str(v).lower() for v in row.values if pd.notna(v))
+        if 'contract number' in row_str or ('contract' in row_str and 'organization' in row_str):
+            return idx
+    return 1  # Default to row 1 if not found
+
+
 def process_stars_to_s3(year: int) -> dict:
     """Process Stars data and upload to S3."""
     # Handle different naming conventions
@@ -113,6 +123,8 @@ def process_stars_to_s3(year: int) -> dict:
         s3_keys = [f"raw/stars/{year}_ratings.zip"]
 
     all_results = {}
+    summary_files = {}  # Track Part C and Part D separately
+
     for s3_key in s3_keys:
         try:
             files, temp_dir = download_and_extract_zip(s3_key)
@@ -122,17 +134,42 @@ def process_stars_to_s3(year: int) -> dict:
         for filename, filepath in files.items():
             if filepath.endswith('.csv'):
                 try:
-                    # Try different read strategies
+                    fname_lower = filename.lower()
+
+                    # Skip non-Fall releases if Fall exists (use most recent/complete)
+                    # unless it's the only file
+
+                    # Detect encoding
+                    encoding = 'latin-1'
                     try:
-                        df = pd.read_csv(filepath, encoding='utf-8-sig', skiprows=1)
+                        pd.read_csv(filepath, encoding='utf-8-sig', nrows=1)
+                        encoding = 'utf-8-sig'
                     except:
-                        df = pd.read_csv(filepath, encoding='latin-1', skiprows=1)
+                        pass
+
+                    # Find header row dynamically
+                    header_row = find_header_row(filepath, encoding)
+
+                    df = pd.read_csv(filepath, encoding=encoding, skiprows=header_row)
+
+                    # Skip if we got garbage columns (Unnamed:)
+                    unnamed_cols = [c for c in df.columns if 'unnamed' in str(c).lower()]
+                    if len(unnamed_cols) > len(df.columns) // 2:
+                        # Try skiprows=1 as fallback
+                        df = pd.read_csv(filepath, encoding=encoding, skiprows=1)
 
                     df['rating_year'] = year
 
-                    fname_lower = filename.lower()
+                    # Determine table name
                     if 'summary' in fname_lower:
-                        table_name = 'summary'
+                        # Track Part C vs Part D summary separately
+                        if 'part_c' in fname_lower or 'part c' in fname_lower:
+                            summary_files['part_c'] = df
+                        elif 'partd' in fname_lower or 'part_d' in fname_lower or 'part d' in fname_lower:
+                            summary_files['part_d'] = df
+                        else:
+                            summary_files['generic'] = df
+                        continue  # Process summary at the end
                     elif 'measure' in fname_lower and 'star' in fname_lower:
                         table_name = 'measure_stars'
                     elif 'measure' in fname_lower and 'data' in fname_lower:
@@ -159,6 +196,29 @@ def process_stars_to_s3(year: int) -> dict:
 
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # Process summary files - prefer Part C (has Overall Rating) over Part D
+    if summary_files:
+        # Priority: Part C > generic > Part D (Part C has Overall Rating)
+        if 'part_c' in summary_files:
+            summary_df = summary_files['part_c']
+        elif 'generic' in summary_files:
+            summary_df = summary_files['generic']
+        elif 'part_d' in summary_files:
+            summary_df = summary_files['part_d']
+        else:
+            summary_df = None
+
+        if summary_df is not None:
+            s3_output = f"processed/stars/{year}/summary.parquet"
+            upload_parquet_to_s3(summary_df, s3_output)
+            all_results['summary'] = len(summary_df)
+
+        # Also save Part D separately if it exists
+        if 'part_d' in summary_files:
+            s3_output = f"processed/stars/{year}/summary_part_d.parquet"
+            upload_parquet_to_s3(summary_files['part_d'], s3_output)
+            all_results['summary_part_d'] = len(summary_files['part_d'])
 
     return {'status': 'success', 'tables': all_results}
 

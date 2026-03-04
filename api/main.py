@@ -28,6 +28,22 @@ except ImportError as e:
     print(f"Warning: Unified data layer not available: {e}")
     UNIFIED_DATA_AVAILABLE = False
 
+# Import chat router
+try:
+    from api.chat import router as chat_router
+    CHAT_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Chat module not available: {e}")
+    CHAT_AVAILABLE = False
+
+# Import audit router
+try:
+    from api.audit_api import router as audit_router
+    AUDIT_API_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Audit API not available: {e}")
+    AUDIT_API_AVAILABLE = False
+
 app = FastAPI(
     title="MA Intelligence Platform API",
     description="API for Medicare Advantage data intelligence",
@@ -43,6 +59,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register chat router
+if CHAT_AVAILABLE:
+    app.include_router(chat_router)
+
+# Register audit API router
+if AUDIT_API_AVAILABLE:
+    app.include_router(audit_router)
 
 S3_BUCKET = os.environ.get("S3_BUCKET", "ma-data123")
 s3 = boto3.client('s3')
@@ -448,8 +472,7 @@ class ContractDetail(BaseModel):
 # Mapping for simplified plan types
 PLAN_TYPE_MAP = {
     'HMO': ['HMO', 'HMOPOS', 'HMO-POS', 'HMO/HMOPOS'],
-    'PPO': ['Local PPO', 'PPO'],
-    'RPPO': ['Regional PPO'],
+    'PPO': ['Local PPO', 'PPO', 'Regional PPO'],  # Combined - includes Regional PPO
 }
 
 # Parent org name consolidation mapping (historical name -> current name)
@@ -709,18 +732,15 @@ async def get_enrollment_filters():
     # Simplified plan types (group similar types)
     plan_types = sorted(df['plan_type'].dropna().unique().tolist())
 
-    # Create simplified version
+    # Create simplified version (PPO includes both Local and Regional PPO)
     simplified_plan_types = []
     for pt in plan_types:
         if pt in ['HMO', 'HMOPOS', 'HMO-POS', 'HMO/HMOPOS']:
             if 'HMO' not in simplified_plan_types:
                 simplified_plan_types.append('HMO')
-        elif pt == 'Local PPO':
+        elif pt in ['Local PPO', 'Regional PPO', 'PPO']:
             if 'PPO' not in simplified_plan_types:
                 simplified_plan_types.append('PPO')
-        elif pt == 'Regional PPO':
-            if 'RPPO' not in simplified_plan_types:
-                simplified_plan_types.append('RPPO')
         elif pt not in simplified_plan_types:
             simplified_plan_types.append(pt)
 
@@ -1933,7 +1953,7 @@ async def get_risk_score_filters_v2():
     if 'plan_type' in df.columns:
         plan_types = sorted(df['plan_type'].dropna().unique().tolist())
 
-    plan_types_simplified = ['HMO', 'PPO', 'RPPO', 'PFFS', 'MSA']
+    plan_types_simplified = ['HMO', 'PPO', 'PFFS', 'MSA']  # PPO includes Regional PPO
 
     snp_types = []
     if 'snp_type' in df.columns:
@@ -3124,11 +3144,19 @@ async def get_contract_measure_performance(contract_id: str):
 @app.get("/api/v3/enrollment/timeseries")
 async def get_enrollment_timeseries_v3(
     parent_org: Optional[str] = None,
+    parent_orgs: Optional[str] = None,  # Pipe-separated: UnitedHealth|Humana
     state: Optional[str] = None,
+    states: Optional[str] = None,  # Comma-separated state codes
     plan_type: Optional[str] = None,
+    plan_types: Optional[str] = None,  # Comma-separated: HMO/HMOPOS,Local PPO
     product_type: Optional[str] = None,
-    group_type: Optional[str] = None,
+    product_types: Optional[str] = None,  # Comma-separated: MAPD,MA-only,PDP
     snp_type: Optional[str] = None,
+    snp_types: Optional[str] = None,  # Comma-separated: Non-SNP,D-SNP,C-SNP,I-SNP
+    group_type: Optional[str] = None,
+    group_types: Optional[str] = None,  # Comma-separated: Individual,Group
+    data_source: str = "national",  # "national" (exact, no geo) or "geographic" (has state/county, suppressed)
+    include_total: bool = True,  # Include Industry Total when filtering by payers
     start_year: int = 2015,
     end_year: int = 2026,
     month: int = 1,
@@ -3137,6 +3165,31 @@ async def get_enrollment_timeseries_v3(
     """
     Get enrollment timeseries using unified data layer (DuckDB + Audit).
 
+    Data Source:
+    - 'national': Exact totals from by-contract files (no geography, no suppression)
+    - 'geographic': CPSC data with state/county detail (suppressed <10 enrollees per county)
+
+    Payer Filtering:
+    - parent_orgs: Pipe-separated for multiple payers
+    - include_total: Whether to include Industry Total line (default True)
+
+    Plan Type Filtering:
+    - Use comma-separated for multiple: plan_types=HMO/HMOPOS,Local PPO
+
+    Product Type Filtering:
+    - 'MAPD': MA + Part D plans
+    - 'MA-only': MA without Part D
+    - 'PDP': Standalone Part D
+    - Use comma-separated for multiple: product_types=MAPD,MA-only
+
+    SNP Filtering:
+    - 'Non-SNP': Total enrollment minus all SNP enrollment
+    - 'D-SNP', 'C-SNP', 'I-SNP': Specific SNP type enrollment
+
+    Group Type Filtering:
+    - 'Individual': Direct enrollment plans
+    - 'Group': Employer-sponsored plans
+
     Returns audit_id for lineage tracing.
     """
     if not UNIFIED_DATA_AVAILABLE:
@@ -3144,13 +3197,121 @@ async def get_enrollment_timeseries_v3(
 
     try:
         service = get_enrollment_service()
+
+        # Support both plan_type (single) and plan_types (comma-separated)
+        effective_plan_types = None
+        if plan_types:
+            effective_plan_types = [p.strip() for p in plan_types.split(',')]
+        elif plan_type:
+            effective_plan_types = [plan_type]
+
+        # Support both product_type (single) and product_types (comma-separated)
+        effective_product_types = None
+        if product_types:
+            effective_product_types = [p.strip() for p in product_types.split(',')]
+        elif product_type:
+            effective_product_types = [product_type]
+
+        # Support both snp_type (single) and snp_types (comma-separated)
+        effective_snp_types = None
+        if snp_types:
+            effective_snp_types = [s.strip() for s in snp_types.split(',')]
+        elif snp_type:
+            effective_snp_types = [snp_type]
+
+        # Support both group_type (single) and group_types (comma-separated)
+        effective_group_types = None
+        if group_types:
+            effective_group_types = [g.strip() for g in group_types.split(',')]
+        elif group_type:
+            effective_group_types = [group_type]
+
+        # Support both state (single) and states (comma-separated)
+        # FIX: Pass full list of states instead of just the first one
+        effective_state = state
+        effective_states = None
+        if states and not state:
+            effective_states = [s.strip() for s in states.split(',')]
+
+        # Handle multiple parent_orgs - return series with each payer + Industry Total
+        parent_list = []
+        if parent_orgs:
+            parent_list = [p.strip() for p in parent_orgs.split('|')]
+        elif parent_org:
+            parent_list = [parent_org]
+
+        if len(parent_list) > 0:
+            # Get data for each payer separately and combine into series
+            # FIX: Collect all years and align series to consistent year range
+            payer_data = {}  # {payer: {year: enrollment}}
+            all_years = set()
+
+            for payer in parent_list:
+                result = service.get_timeseries(
+                    parent_org=payer,
+                    state=effective_state,
+                    states=effective_states,
+                    plan_types=effective_plan_types,
+                    product_types=effective_product_types,
+                    snp_types=effective_snp_types,
+                    group_types=effective_group_types,
+                    data_source=data_source,
+                    start_year=start_year,
+                    end_year=end_year,
+                    month=month,
+                    user_id=user_id
+                )
+                if result.get('years') and result.get('total_enrollment'):
+                    # Store as {year: enrollment} for easy lookup
+                    payer_data[payer] = dict(zip(result['years'], result['total_enrollment']))
+                    all_years.update(result['years'])
+
+            # Add Industry Total if requested
+            if include_total:
+                total_result = service.get_timeseries(
+                    parent_org=None,  # No parent filter = industry total
+                    state=effective_state,
+                    states=effective_states,
+                    plan_types=effective_plan_types,
+                    product_types=effective_product_types,
+                    snp_types=effective_snp_types,
+                    group_types=effective_group_types,
+                    data_source=data_source,
+                    start_year=start_year,
+                    end_year=end_year,
+                    month=month,
+                    user_id=user_id
+                )
+                if total_result.get('years') and total_result.get('total_enrollment'):
+                    payer_data['Industry Total'] = dict(zip(total_result['years'], total_result['total_enrollment']))
+                    all_years.update(total_result['years'])
+
+            if all_years and payer_data:
+                # Create consistent year array (sorted)
+                years = sorted(all_years)
+                
+                # Build series with consistent length, using None for missing years
+                series = {}
+                for payer, year_data in payer_data.items():
+                    series[payer] = [year_data.get(y) for y in years]
+
+                return {
+                    "years": years,
+                    "series": series,
+                    "group_by": "parent_org",
+                    "data_source": data_source
+                }
+
+        # Single or no payer - use standard service
         result = service.get_timeseries(
-            parent_org=parent_org,
-            state=state,
-            plan_type=plan_type,
-            product_type=product_type,
-            group_type=group_type,
-            snp_type=snp_type,
+            parent_org=parent_list[0] if parent_list else None,
+            state=effective_state,
+            states=effective_states,
+            plan_types=effective_plan_types,
+            product_types=effective_product_types,
+            snp_types=effective_snp_types,
+            group_types=effective_group_types,
+            data_source=data_source,
             start_year=start_year,
             end_year=end_year,
             month=month,
@@ -3180,7 +3341,6 @@ async def get_enrollment_by_parent_v3(
         service = get_enrollment_service()
         result = service.get_by_parent_org(
             year=year,
-            month=month,
             limit=limit,
             user_id=user_id
         )
@@ -3208,7 +3368,6 @@ async def get_enrollment_by_state_v3(
         service = get_enrollment_service()
         result = service.get_by_state(
             year=year,
-            month=month,
             user_id=user_id
         )
         return result
@@ -3222,14 +3381,14 @@ async def get_enrollment_by_dimensions_v3(
     month: int = 1,
     plan_type: Optional[str] = None,
     product_type: Optional[str] = None,
-    group_type: Optional[str] = None,
     snp_type: Optional[str] = None,
     user_id: str = "api"
 ):
     """
-    Get enrollment by dimension combinations (plan_type, product_type, group_type, snp_type).
+    Get enrollment by dimension combinations (plan_type, product_type, snp_type).
 
     Supports any filter combination. Returns audit_id for lineage tracing.
+    Note: group_type not available in fact_enrollment_all_years
     """
     if not UNIFIED_DATA_AVAILABLE:
         return {"error": "Unified data layer not available"}
@@ -3238,10 +3397,8 @@ async def get_enrollment_by_dimensions_v3(
         service = get_enrollment_service()
         result = service.get_by_dimensions(
             year=year,
-            month=month,
             plan_type=plan_type,
             product_type=product_type,
-            group_type=group_type,
             snp_type=snp_type,
             user_id=user_id
         )
@@ -3275,6 +3432,71 @@ async def get_plan_details_v3(
             user_id=user_id
         )
         return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/enrollment/filters")
+async def get_enrollment_filters_v3(user_id: str = "api"):
+    """
+    Get available filter options for enrollment data.
+
+    Returns all available values for filtering enrollment queries.
+    Returns audit_id for lineage tracing.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_enrollment_service()
+        result = service.get_filters(user_id=user_id)
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "error"}
+
+
+@app.get("/api/v3/enrollment/counties")
+async def get_enrollment_counties_v3(
+    states: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get available counties for given states.
+
+    Args:
+        states: Comma-separated list of state codes (e.g., "CA,TX,FL")
+
+    Returns counties with enrollment data.
+    """
+    if not UNIFIED_DATA_AVAILABLE:
+        return {"error": "Unified data layer not available"}
+
+    try:
+        service = get_enrollment_service()
+        state_list = states.split(",") if states else []
+
+        # Query counties from geographic table
+        if state_list:
+            state_filter = "WHERE state IN ({})".format(",".join([f"'{s}'" for s in state_list]))
+        else:
+            state_filter = ""
+
+        sql = f"""
+            SELECT DISTINCT state, county
+            FROM fact_enrollment_by_geography
+            {state_filter}
+            ORDER BY state, county
+        """
+        df, audit_id = service.engine.query_with_audit(
+            sql,
+            user_id=user_id,
+            context="get_counties"
+        )
+
+        return {
+            "counties": df.to_dict(orient="records"),
+            "audit_id": audit_id
+        }
     except Exception as e:
         return {"error": str(e), "status": "error"}
 
@@ -3458,6 +3680,681 @@ async def unified_layer_status():
         status["fallback"] = "Using v2 endpoints with direct S3 reads"
 
     return status
+
+
+# ================================================================
+# V3 STARS ENDPOINTS - Full filter support with audit/lineage
+# ================================================================
+
+# Import stars service
+try:
+    from api.services.stars_service import get_stars_service
+    STARS_SERVICE_AVAILABLE = True
+except ImportError:
+    STARS_SERVICE_AVAILABLE = False
+
+# Import stars service V2 (NEW unified tables)
+try:
+    from api.services.stars_service_v2 import get_stars_service_v2, STARS_SERVICE_V2_AVAILABLE
+except ImportError:
+    STARS_SERVICE_V2_AVAILABLE = False
+
+# Import risk scores service
+try:
+    from api.services.risk_scores_service import get_risk_scores_service
+    RISK_SERVICE_AVAILABLE = True
+except ImportError:
+    RISK_SERVICE_AVAILABLE = False
+
+
+@app.get("/api/v3/stars/filters")
+async def get_stars_filters_v3():
+    """Get all available filter options for stars data."""
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_filters()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/stars/distribution")
+async def get_stars_distribution_v3(
+    parent_orgs: Optional[str] = None,  # Pipe-separated: "Humana|UnitedHealth"
+    plan_types: Optional[str] = None,   # Comma-separated: "HMO/HMOPOS,Local PPO"
+    group_types: Optional[str] = None,  # Comma-separated: "Individual,Group"
+    snp_types: Optional[str] = None,    # Comma-separated: "Non-SNP,SNP"
+    states: Optional[str] = None,       # Comma-separated: "FL,TX,CA"
+    star_year: Optional[int] = None,
+    include_industry_total: bool = True,
+    data_source: str = "national",      # "national" = ALL MA enrollment, "rated" = only rated contracts
+    user_id: str = "api"
+):
+    """
+    Get 4+ star enrollment distribution with full filter support.
+
+    Filters:
+    - parent_orgs: Pipe-separated parent org names
+    - plan_types: Comma-separated (HMO/HMOPOS, Local PPO, Regional PPO, PFFS)
+    - group_types: Comma-separated (Individual, Group)
+    - snp_types: Comma-separated (Non-SNP, SNP)
+    - states: Comma-separated state abbreviations
+    - star_year: Specific year or all years
+    - data_source: "national" uses ALL MA enrollment (correct 4+ %), "rated" uses only rated contracts
+
+    Returns audit_id for lineage tracing.
+    """
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_distribution(
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            plan_types=plan_types.split(",") if plan_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            states=states.split(",") if states else None,
+            star_year=star_year,
+            include_industry_total=include_industry_total,
+            data_source=data_source,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/stars/by-parent")
+async def get_stars_by_parent_v3(
+    star_year: int = 2026,
+    plan_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    states: Optional[str] = None,
+    limit: int = 50,
+    user_id: str = "api"
+):
+    """Get star ratings by parent organization with full filter support."""
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_by_parent(
+            star_year=star_year,
+            plan_types=plan_types.split(",") if plan_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            states=states.split(",") if states else None,
+            limit=limit,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/stars/by-state")
+async def get_stars_by_state_v3(
+    star_year: int = 2026,
+    plan_types: Optional[str] = None,
+    parent_orgs: Optional[str] = None,
+    user_id: str = "api"
+):
+    """Get star ratings by state."""
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_by_state(
+            star_year=star_year,
+            plan_types=plan_types.split(",") if plan_types else None,
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/stars/measures")
+async def get_stars_measures_v3(
+    year: int = 2026,
+    parent_orgs: Optional[str] = None,
+    measure_ids: Optional[str] = None,
+    domains: Optional[str] = None,      # HD1-HD5, DD1-DD4
+    parts: Optional[str] = None,        # C, D
+    data_sources: Optional[str] = None, # HEDIS, CAHPS, HOS, Admin
+    user_id: str = "api"
+):
+    """Get measure-level performance with full filter support."""
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_measure_performance(
+            year=year,
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            measure_ids=measure_ids.split(",") if measure_ids else None,
+            domains=domains.split(",") if domains else None,
+            parts=parts.split(",") if parts else None,
+            data_sources=data_sources.split(",") if data_sources else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/stars/cutpoints")
+async def get_stars_cutpoints_v3(
+    years: Optional[str] = None,
+    measure_ids: Optional[str] = None,
+    parts: Optional[str] = None,
+    user_id: str = "api"
+):
+    """Get star cutpoint thresholds by measure and year."""
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_cutpoints(
+            years=[int(y) for y in years.split(",")] if years else None,
+            measure_ids=measure_ids.split(",") if measure_ids else None,
+            parts=parts.split(",") if parts else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/stars/contract/{contract_id}")
+async def get_stars_contract_v3(
+    contract_id: str,
+    year: int = 2026,
+    user_id: str = "api"
+):
+    """Get detailed star rating info for a specific contract."""
+    if not STARS_SERVICE_AVAILABLE:
+        return {"error": "Stars service not available"}
+    try:
+        service = get_stars_service()
+        return service.get_contract_detail(
+            contract_id=contract_id,
+            year=year,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ================================================================
+# V4 STARS ENDPOINTS - NEW Unified Tables (2008-2026)
+# Uses: measures_all_years, summary_all_years, cutpoints_all_years, domain_all_years
+# ================================================================
+
+@app.get("/api/v4/stars/filters")
+async def get_stars_filters_v4():
+    """Get all available filter options from NEW unified tables."""
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_filters()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/measures")
+async def get_stars_measures_v4(
+    year: int = 2026,
+    measure_ids: Optional[str] = None,
+    parts: Optional[str] = None,
+    contract_ids: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get measure performance from measures_all_years (2008-2026).
+
+    NEW columns available: measure_key, numeric_value, raw_value
+    """
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_measure_performance(
+            year=year,
+            measure_ids=measure_ids.split(",") if measure_ids else None,
+            parts=parts.split(",") if parts else None,
+            contract_ids=contract_ids.split(",") if contract_ids else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/measures/timeseries")
+async def get_stars_measure_timeseries_v4(
+    measure_id: str,
+    start_year: int = 2008,
+    end_year: int = 2026,
+    user_id: str = "api"
+):
+    """Get timeseries for a specific measure across years."""
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_measure_timeseries(
+            measure_id=measure_id,
+            start_year=start_year,
+            end_year=end_year,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/cutpoints")
+async def get_stars_cutpoints_v4(
+    years: Optional[str] = None,
+    measure_ids: Optional[str] = None,
+    parts: Optional[str] = None,
+    star_levels: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get cutpoint thresholds from cutpoints_all_years (2011-2026).
+
+    NOTE: Uses star_level column (not star_rating from v3).
+    """
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_cutpoints(
+            years=[int(y) for y in years.split(",")] if years else None,
+            measure_ids=measure_ids.split(",") if measure_ids else None,
+            parts=parts.split(",") if parts else None,
+            star_levels=[int(l) for l in star_levels.split(",")] if star_levels else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/cutpoints/timeseries")
+async def get_stars_cutpoints_timeseries_v4(
+    measure_id: str,
+    star_level: int = 4,
+    start_year: int = 2011,
+    end_year: int = 2026,
+    user_id: str = "api"
+):
+    """Get cutpoint threshold timeseries for a measure."""
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_cutpoints_timeseries(
+            measure_id=measure_id,
+            star_level=star_level,
+            start_year=start_year,
+            end_year=end_year,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/summary")
+async def get_stars_summary_v4(
+    years: Optional[str] = None,
+    contract_ids: Optional[str] = None,
+    parts: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get summary ratings from summary_all_years (2009-2026).
+
+    NOTE: Uses year column (not rating_year) and LONG format.
+    """
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_summary_ratings(
+            years=[int(y) for y in years.split(",")] if years else None,
+            contract_ids=contract_ids.split(",") if contract_ids else None,
+            parts=parts.split(",") if parts else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/summary/distribution")
+async def get_stars_summary_distribution_v4(
+    year: int = 2026,
+    part: str = "C",
+    user_id: str = "api"
+):
+    """Get distribution of summary ratings for a year."""
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_summary_distribution(
+            year=year,
+            part=part,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/domains")
+async def get_stars_domains_v4(
+    years: Optional[str] = None,
+    contract_ids: Optional[str] = None,
+    parts: Optional[str] = None,
+    domain_names: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get domain scores from domain_all_years (2008-2026).
+
+    NEW endpoint - 15 more years of data than v1!
+    """
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_domain_scores(
+            years=[int(y) for y in years.split(",")] if years else None,
+            contract_ids=contract_ids.split(",") if contract_ids else None,
+            parts=parts.split(",") if parts else None,
+            domain_names=domain_names.split(",") if domain_names else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/domains/averages")
+async def get_stars_domain_averages_v4(
+    year: int = 2026,
+    part: Optional[str] = None,
+    user_id: str = "api"
+):
+    """Get average domain scores across all contracts for a year."""
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_domain_averages(
+            year=year,
+            part=part,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v4/stars/contract/{contract_id}")
+async def get_stars_contract_v4(
+    contract_id: str,
+    year: int = 2026,
+    user_id: str = "api"
+):
+    """
+    Get detailed star rating info for a contract.
+
+    Includes: summary, measures, and domain scores from NEW unified tables.
+    """
+    if not STARS_SERVICE_V2_AVAILABLE:
+        return {"error": "Stars service V2 not available"}
+    try:
+        service = get_stars_service_v2()
+        return service.get_contract_detail(
+            contract_id=contract_id,
+            year=year,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ================================================================
+# V3 RISK SCORES ENDPOINTS - Full filter support with audit/lineage
+# ================================================================
+
+@app.get("/api/v3/risk/filters")
+async def get_risk_filters_v3():
+    """Get all available filter options for risk score data."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_filters()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/summary")
+async def get_risk_summary_v3(
+    year: Optional[int] = None,
+    parent_orgs: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    states: Optional[str] = None,
+    user_id: str = "api"
+):
+    """Get risk score summary statistics with full filter support."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_summary(
+            year=year,
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            plan_types=plan_types.split(",") if plan_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            states=states.split(",") if states else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/timeseries")
+async def get_risk_timeseries_v3(
+    parent_orgs: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    states: Optional[str] = None,
+    metric: str = "wavg",  # "wavg" or "avg"
+    include_industry_total: bool = True,
+    group_by: Optional[str] = None,  # "plan_type", "snp_type", "group_type"
+    user_id: str = "api"
+):
+    """
+    Get risk score timeseries with full filter support.
+
+    Metrics:
+    - wavg: Enrollment-weighted average (recommended)
+    - avg: Simple average
+
+    group_by:
+    - plan_type: Break down by HMO, PPO, etc.
+    - snp_type: Break down by SNP status
+    - group_type: Break down by Individual vs Group
+
+    Returns audit_id for lineage tracing.
+    """
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_timeseries(
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            plan_types=plan_types.split(",") if plan_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            states=states.split(",") if states else None,
+            metric=metric,
+            include_industry_total=include_industry_total,
+            group_by=group_by,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/by-parent")
+async def get_risk_by_parent_v3(
+    year: int = 2024,
+    plan_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    states: Optional[str] = None,
+    limit: int = 50,
+    user_id: str = "api"
+):
+    """Get risk scores by parent organization with full filter support."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_by_parent(
+            year=year,
+            plan_types=plan_types.split(",") if plan_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            states=states.split(",") if states else None,
+            limit=limit,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/by-state")
+async def get_risk_by_state_v3(
+    year: int = 2024,
+    plan_types: Optional[str] = None,
+    parent_orgs: Optional[str] = None,
+    user_id: str = "api"
+):
+    """Get risk scores by state."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_by_state(
+            year=year,
+            plan_types=plan_types.split(",") if plan_types else None,
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/by-dimensions")
+async def get_risk_by_dimensions_v3(
+    year: int = 2024,
+    parent_orgs: Optional[str] = None,
+    states: Optional[str] = None,
+    user_id: str = "api"
+):
+    """Get risk scores broken down by all dimensions (plan_type x snp_type x group_type)."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_by_dimensions(
+            year=year,
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            states=states.split(",") if states else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/distribution")
+async def get_risk_distribution_v3(
+    year: int = 2024,
+    parent_orgs: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    bins: int = 20,
+    user_id: str = "api"
+):
+    """Get risk score distribution (histogram data)."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_distribution(
+            year=year,
+            parent_orgs=parent_orgs.split("|") if parent_orgs else None,
+            plan_types=plan_types.split(",") if plan_types else None,
+            bins=bins,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/plan/{contract_id}/{plan_id}")
+async def get_risk_plan_v3(
+    contract_id: str,
+    plan_id: str,
+    user_id: str = "api"
+):
+    """Get risk score history for a specific plan."""
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_plan_detail(
+            contract_id=contract_id,
+            plan_id=plan_id,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v3/risk/contracts")
+async def get_risk_contracts_v3(
+    year: int,
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    user_id: str = "api"
+):
+    """
+    Get contract-level risk score details for auditing.
+
+    Returns all contracts with their risk scores and enrollment,
+    allowing users to verify weighted average calculations.
+    """
+    if not RISK_SERVICE_AVAILABLE:
+        return {"error": "Risk scores service not available"}
+    try:
+        service = get_risk_scores_service()
+        return service.get_contract_details(
+            year=year,
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/health")

@@ -56,7 +56,7 @@ def build_unified_stars():
 
     # Find all stars summary files
     stars_files = list_s3_parquet_files('processed/stars/')
-    summary_files = [f for f in stars_files if 'summary' in f.lower()]
+    summary_files = [f for f in stars_files if 'summary' in f.lower() and 'part_d' not in f.lower()]
 
     all_stars = []
 
@@ -79,6 +79,18 @@ def build_unified_stars():
 
             for old, new in col_map.items():
                 if old in df.columns:
+                    df = df.rename(columns={old: new})
+
+            # Standardize rating column names to year-specific format
+            # Legacy columns (2009-2011) didn't have year prefix
+            legacy_rating_map = {
+                'Overall Rating': f'{year} Overall',
+                'Summary Rating': f'{year} Part C Summary',
+                'Summary Score for Health Plan Quality': f'{year} Summary Score',
+                'Summary Score': f'{year} Summary Score',
+            }
+            for old, new in legacy_rating_map.items():
+                if old in df.columns and new not in df.columns:
                     df = df.rename(columns={old: new})
 
             # Find overall/summary rating columns
