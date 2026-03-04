@@ -537,7 +537,13 @@ export default function RiskScoresPage() {
                     strokeWidth={key === "Industry Total" ? 2 : 2.5}
                     strokeDasharray={key === "Industry Total" ? "5 5" : undefined}
                     dot={{ fill: key === "Industry Total" ? "#9ca3af" : COLORS[i % COLORS.length], r: 4 }}
-                    activeDot={{ r: 6 }}
+                    activeDot={{ 
+                      r: 8, 
+                      cursor: 'pointer',
+                      onClick: (props: any) => {
+                        setDetailSelection({ parentOrg: key, year: props.payload.year });
+                      }
+                    }}
                     name={key}
                     connectNulls
                   />
@@ -806,9 +812,45 @@ export default function RiskScoresPage() {
                     </div>
                   </div>
 
-                  {/* Audit Info */}
-                  <div className="mt-4 text-xs text-gray-400">
-                    Audit ID: {contractDetails.audit_id}
+                  {/* Audit Info - Expandable */}
+                  <div className="mt-6 border-t border-gray-200 pt-4">
+                    <details className="group">
+                      <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center gap-2">
+                        <Info className="w-4 h-4" />
+                        View Data Source & Query Details
+                        <span className="text-gray-400 font-normal">({contractDetails.audit_id})</span>
+                      </summary>
+                      <div className="mt-4 space-y-4">
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <div className="text-xs font-medium text-gray-500 mb-2">Data Source</div>
+                          <div className="text-sm text-gray-700">
+                            <p><strong>Table:</strong> <code className="bg-gray-200 px-1 rounded">fact_risk_scores</code></p>
+                            <p className="mt-1"><strong>Source:</strong> CMS Plan Payment Data (Risk Adjustment)</p>
+                            <p className="mt-1"><strong>Coverage:</strong> ~57% of MA enrollment (contracts with published risk scores)</p>
+                          </div>
+                        </div>
+                        <div className="bg-gray-900 rounded-lg p-4">
+                          <div className="text-xs font-medium text-gray-400 mb-2">SQL Query</div>
+                          <pre className="text-xs text-green-400 overflow-x-auto whitespace-pre-wrap">
+{`SELECT contract_id, plan_id, risk_score, enrollment
+FROM fact_risk_scores
+WHERE year = ${detailSelection?.year}
+  AND parent_org = '${detailSelection?.parentOrg}'
+ORDER BY enrollment DESC`}
+                          </pre>
+                        </div>
+                        <div className="flex gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500">Rows:</span>{' '}
+                            <span className="font-mono">{contractDetails.contracts.length}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Audit ID:</span>{' '}
+                            <span className="font-mono text-gray-600">{contractDetails.audit_id}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </details>
                   </div>
                 </>
               ) : (

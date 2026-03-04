@@ -90,6 +90,13 @@ export default function EnrollmentPage() {
   const [showPayerPopup, setShowPayerPopup] = useState(false);
   const [payerSearch, setPayerSearch] = useState("");
   const [stateSearch, setStateSearch] = useState("");
+  
+  // Cell detail modal
+  const [cellDetail, setCellDetail] = useState<{
+    payer: string;
+    year: number;
+    value: number;
+  } | null>(null);
 
   // Fetch filter options
   const { data: filterOptions } = useQuery<FilterOptions>({
@@ -733,7 +740,13 @@ export default function EnrollmentPage() {
                     stroke={COLORS[i % COLORS.length]}
                     strokeWidth={2.5}
                     dot={{ fill: COLORS[i % COLORS.length], r: 4 }}
-                    activeDot={{ r: 6 }}
+                    activeDot={{ 
+                      r: 8, 
+                      cursor: 'pointer',
+                      onClick: (props: any) => {
+                        setCellDetail({ payer: key, year: props.payload.year, value: props.payload[key] });
+                      }
+                    }}
                     name={key}
                   />
                 ))}
@@ -797,7 +810,12 @@ export default function EnrollmentPage() {
                         </div>
                       </td>
                       {chartData.map((row) => (
-                        <td key={row.year} className="px-4 py-3 text-sm text-gray-700 text-right font-mono whitespace-nowrap">
+                        <td 
+                          key={row.year} 
+                          className="px-4 py-3 text-sm text-gray-700 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-blue-50 transition-colors"
+                          onClick={() => setCellDetail({ payer: key, year: row.year, value: row[key] })}
+                          title="Click to view data source"
+                        >
                           {viewMode === "market_share"
                             ? formatPercent(row[key])
                             : formatFullNumber(row[key])}
@@ -829,6 +847,97 @@ export default function EnrollmentPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Cell Detail Modal */}
+      {cellDetail && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-auto">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  Enrollment Data Point
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {cellDetail.payer} • {cellDetail.year}
+                </p>
+              </div>
+              <button
+                onClick={() => setCellDetail(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-6">
+              {/* Value Display */}
+              <div className="bg-blue-50 rounded-lg p-6 text-center">
+                <div className="text-sm text-blue-600 font-medium mb-1">
+                  {viewMode === "market_share" ? "Market Share" : "Enrollment"}
+                </div>
+                <div className="text-4xl font-bold text-blue-900">
+                  {viewMode === "market_share" 
+                    ? formatPercent(cellDetail.value)
+                    : formatFullNumber(cellDetail.value)}
+                </div>
+              </div>
+
+              {/* Data Source */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="text-xs font-medium text-gray-500 mb-3">Data Source</div>
+                <div className="text-sm text-gray-700 space-y-2">
+                  <p><strong>Table:</strong> <code className="bg-gray-200 px-1 rounded">fact_enrollment_unified</code></p>
+                  <p><strong>Source:</strong> CMS Monthly Enrollment by CPSC</p>
+                  <p><strong>Granularity:</strong> {dataSource === "geographic" ? "State/County level" : "National aggregated"}</p>
+                  <p><strong>Snapshot:</strong> December {cellDetail.year} (year-end)</p>
+                </div>
+              </div>
+
+              {/* Filters Applied */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="text-xs font-medium text-gray-500 mb-3">Filters Applied</div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-gray-500">Payer:</span> <span className="font-medium">{cellDetail.payer}</span></div>
+                  <div><span className="text-gray-500">Year:</span> <span className="font-medium">{cellDetail.year}</span></div>
+                  {selectedPlanTypes.length > 0 && (
+                    <div><span className="text-gray-500">Plan Types:</span> <span className="font-medium">{selectedPlanTypes.join(", ")}</span></div>
+                  )}
+                  {selectedSnpTypes.length > 0 && (
+                    <div><span className="text-gray-500">SNP Types:</span> <span className="font-medium">{selectedSnpTypes.join(", ")}</span></div>
+                  )}
+                  {selectedStates.length > 0 && (
+                    <div><span className="text-gray-500">States:</span> <span className="font-medium">{selectedStates.join(", ")}</span></div>
+                  )}
+                </div>
+              </div>
+
+              {/* SQL Query */}
+              <div className="bg-gray-900 rounded-lg p-4">
+                <div className="text-xs font-medium text-gray-400 mb-2">SQL Query</div>
+                <pre className="text-xs text-green-400 overflow-x-auto whitespace-pre-wrap">
+{`SELECT year, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE year = ${cellDetail.year}
+  AND parent_org = '${cellDetail.payer}'${selectedPlanTypes.length > 0 ? `
+  AND plan_type IN ('${selectedPlanTypes.join("', '")}')` : ''}${selectedStates.length > 0 ? `
+  AND state IN ('${selectedStates.join("', '")}')` : ''}
+GROUP BY year`}
+                </pre>
+              </div>
+
+              {/* Audit Info */}
+              {rawTimeseriesData?.audit_id && (
+                <div className="text-xs text-gray-400 flex items-center gap-2">
+                  <Info className="w-3 h-3" />
+                  Audit ID: {rawTimeseriesData.audit_id}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

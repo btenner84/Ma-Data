@@ -135,6 +135,7 @@ interface ContractAuditResponse {
     fourplus_enrollment: number;
     fourplus_pct: number;
   };
+  audit_id?: string;
   error?: string;
 }
 
@@ -560,6 +561,40 @@ function MeasureRowChart({
                       ))}
                     </tbody>
                   </table>
+                  
+                  {/* Data Source & Query Details */}
+                  <details className="mt-6 border-t border-gray-200 pt-4">
+                    <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center gap-2">
+                      <Info className="w-4 h-4" />
+                      View Data Source & Query Details
+                    </summary>
+                    <div className="mt-4 space-y-4">
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <div className="text-xs font-medium text-gray-500 mb-2">Data Source</div>
+                        <div className="text-sm text-gray-700">
+                          <p><strong>Table:</strong> <code className="bg-gray-200 px-1 rounded">stars_enrollment_unified</code></p>
+                          <p className="mt-1"><strong>Source:</strong> CMS Star Ratings + Enrollment (joined)</p>
+                          <p className="mt-1"><strong>Formula:</strong> 4★+ % = (Σ enrollment where rating ≥ 4) / (Σ total enrollment) × 100</p>
+                        </div>
+                      </div>
+                      <div className="bg-gray-900 rounded-lg p-4">
+                        <div className="text-xs font-medium text-gray-400 mb-2">SQL Query</div>
+                        <pre className="text-xs text-green-400 overflow-x-auto whitespace-pre-wrap">
+{`SELECT contract_id, parent_org, overall_rating, enrollment
+FROM stars_enrollment_unified
+WHERE year = ${auditYear}${selectedPayer !== "Industry" ? `
+  AND parent_org = '${selectedPayer}'` : ''}
+ORDER BY enrollment DESC`}
+                        </pre>
+                      </div>
+                      <div className="flex gap-4 text-sm text-gray-500">
+                        <span>Rows: <span className="font-mono">{auditData.contracts.length}</span></span>
+                        {auditData.audit_id && (
+                          <span>Audit ID: <span className="font-mono">{auditData.audit_id}</span></span>
+                        )}
+                      </div>
+                    </div>
+                  </details>
                 </>
               ) : null}
             </div>
@@ -1649,6 +1684,13 @@ export default function StarsPage() {
   const [selectedSnpTypes, setSelectedSnpTypes] = useState<string[]>([]);
   const [showFilterPopup, setShowFilterPopup] = useState(false);
 
+  // Chart point detail modal
+  const [chartPointDetail, setChartPointDetail] = useState<{
+    payer: string;
+    year: number;
+    value: number;
+  } | null>(null);
+
   // Distribution over time state
   const [distTimeParentOrg, setDistTimeParentOrg] = useState<string>("Industry");
   const [distTimePlanTypes, setDistTimePlanTypes] = useState<string[]>([]);
@@ -2094,7 +2136,13 @@ export default function StarsPage() {
                     stroke={COLORS[i % COLORS.length]}
                     strokeWidth={2.5}
                     dot={{ fill: COLORS[i % COLORS.length], r: 4 }}
-                    activeDot={{ r: 6 }}
+                    activeDot={{ 
+                      r: 8, 
+                      cursor: 'pointer',
+                      onClick: (props: any) => {
+                        setChartPointDetail({ payer: key, year: props.payload.year, value: props.payload[key] });
+                      }
+                    }}
                     name={key}
                     connectNulls
                   />
@@ -2108,6 +2156,84 @@ export default function StarsPage() {
           )}
         </div>
       </div>
+
+      {/* Chart Point Detail Modal */}
+      {chartPointDetail && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-auto">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  4★+ Enrollment Data Point
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {chartPointDetail.payer} • {chartPointDetail.year}
+                </p>
+              </div>
+              <button
+                onClick={() => setChartPointDetail(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div className="bg-green-50 rounded-lg p-6 text-center">
+                <div className="text-sm text-green-600 font-medium mb-1">4★+ Enrollment %</div>
+                <div className="text-4xl font-bold text-green-900">
+                  {chartPointDetail.value?.toFixed(1) ?? '-'}%
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="text-xs font-medium text-gray-500 mb-3">Data Source</div>
+                <div className="text-sm text-gray-700 space-y-2">
+                  <p><strong>Table:</strong> <code className="bg-gray-200 px-1 rounded">stars_enrollment_unified</code></p>
+                  <p><strong>Source:</strong> CMS Star Ratings + Enrollment Data (joined)</p>
+                  <p><strong>Formula:</strong> (Enrollment where rating ≥ 4) / (Total Enrollment) × 100</p>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="text-xs font-medium text-gray-500 mb-3">Filters Applied</div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-gray-500">Payer:</span> <span className="font-medium">{chartPointDetail.payer}</span></div>
+                  <div><span className="text-gray-500">Year:</span> <span className="font-medium">{chartPointDetail.year}</span></div>
+                  {selectedPlanTypes.length > 0 && (
+                    <div><span className="text-gray-500">Plan Types:</span> <span className="font-medium">{selectedPlanTypes.join(", ")}</span></div>
+                  )}
+                  {selectedSnpTypes.length > 0 && (
+                    <div><span className="text-gray-500">SNP Types:</span> <span className="font-medium">{selectedSnpTypes.join(", ")}</span></div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-gray-900 rounded-lg p-4">
+                <div className="text-xs font-medium text-gray-400 mb-2">SQL Query</div>
+                <pre className="text-xs text-green-400 overflow-x-auto whitespace-pre-wrap">
+{`SELECT 
+  SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) as fourplus,
+  SUM(enrollment) as total,
+  ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / 
+        NULLIF(SUM(enrollment), 0), 2) as pct
+FROM stars_enrollment_unified
+WHERE year = ${chartPointDetail.year}${chartPointDetail.payer !== "Industry" ? `
+  AND parent_org = '${chartPointDetail.payer}'` : ''}${selectedPlanTypes.length > 0 ? `
+  AND plan_type IN ('${selectedPlanTypes.join("', '")}')` : ''}`}
+                </pre>
+              </div>
+
+              {rawTimeseriesData?.audit_id && (
+                <div className="text-xs text-gray-400 flex items-center gap-2">
+                  <Info className="w-3 h-3" />
+                  Audit ID: {rawTimeseriesData.audit_id}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Click outside to close graph popups */}
       {(showFilterPopup || showGraphPayerPopup) && (
