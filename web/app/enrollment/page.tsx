@@ -743,8 +743,10 @@ export default function EnrollmentPage() {
                     activeDot={{ 
                       r: 8, 
                       cursor: 'pointer',
-                      onClick: (props: any) => {
-                        setCellDetail({ payer: key, year: props.payload.year, value: props.payload[key] });
+                      onClick: (data: any) => {
+                        if (data?.payload) {
+                          setCellDetail({ payer: key, year: data.payload.year, value: data.payload[key] });
+                        }
                       }
                     }}
                     name={key}

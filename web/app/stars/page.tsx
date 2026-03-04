@@ -2139,8 +2139,10 @@ export default function StarsPage() {
                     activeDot={{ 
                       r: 8, 
                       cursor: 'pointer',
-                      onClick: (props: any) => {
-                        setChartPointDetail({ payer: key, year: props.payload.year, value: props.payload[key] });
+                      onClick: (data: any) => {
+                        if (data?.payload) {
+                          setChartPointDetail({ payer: key, year: data.payload.year, value: data.payload[key] });
+                        }
                       }
                     }}
                     name={key}

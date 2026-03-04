@@ -540,8 +540,10 @@ export default function RiskScoresPage() {
                     activeDot={{ 
                       r: 8, 
                       cursor: 'pointer',
-                      onClick: (props: any) => {
-                        setDetailSelection({ parentOrg: key, year: props.payload.year });
+                      onClick: (data: any) => {
+                        if (data?.payload) {
+                          setDetailSelection({ parentOrg: key, year: data.payload.year });
+                        }
                       }
                     }}
                     name={key}
