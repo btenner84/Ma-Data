@@ -12,7 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Filter, Plus, X, ChevronDown, Info } from "lucide-react";
+import { Filter, Plus, X, ChevronDown, Info, Download } from "lucide-react";
 import { AuditButton, type AuditMetadata } from "@/components/audit";
 
 // Hook to check if component is mounted (fixes SSR hydration issues with charts)
@@ -814,42 +814,36 @@ export default function RiskScoresPage() {
                     </div>
                   </div>
 
-                  {/* Audit Info - Expandable */}
-                  <div className="mt-6 border-t border-gray-200 pt-4">
+                  {/* Download & Audit Row */}
+                  <div className="mt-4 flex items-center justify-between">
+                    <button
+                      onClick={() => {
+                        window.open(`${API_BASE}/api/v4/risk-scores/export?year=${detailSelection?.year}&parent_org=${encodeURIComponent(detailSelection?.parentOrg || '')}&format=xlsx`, '_blank');
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-sm"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download Excel
+                    </button>
                     <details className="group">
-                      <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center gap-2">
+                      <summary className="cursor-pointer text-sm text-blue-600 hover:text-blue-800 flex items-center gap-2">
                         <Info className="w-4 h-4" />
-                        View Data Source & Query Details
-                        <span className="text-gray-400 font-normal">({contractDetails.audit_id})</span>
+                        Query Details
                       </summary>
-                      <div className="mt-4 space-y-4">
-                        <div className="bg-gray-50 rounded-lg p-4">
-                          <div className="text-xs font-medium text-gray-500 mb-2">Data Source</div>
-                          <div className="text-sm text-gray-700">
-                            <p><strong>Table:</strong> <code className="bg-gray-200 px-1 rounded">fact_risk_scores</code></p>
-                            <p className="mt-1"><strong>Source:</strong> CMS Plan Payment Data (Risk Adjustment)</p>
-                            <p className="mt-1"><strong>Coverage:</strong> ~57% of MA enrollment (contracts with published risk scores)</p>
-                          </div>
+                      <div className="absolute right-6 mt-2 w-96 bg-white rounded-lg shadow-xl border border-gray-200 p-4 z-10">
+                        <div className="text-xs text-gray-500 mb-2">
+                          <strong>Source:</strong> CMS Risk Adjustment Data | <strong>Table:</strong> fact_risk_scores
                         </div>
-                        <div className="bg-gray-900 rounded-lg p-4">
-                          <div className="text-xs font-medium text-gray-400 mb-2">SQL Query</div>
-                          <pre className="text-xs text-green-400 overflow-x-auto whitespace-pre-wrap">
+                        <div className="bg-gray-900 rounded p-2">
+                          <pre className="text-xs text-green-400 whitespace-pre-wrap">
 {`SELECT contract_id, plan_id, risk_score, enrollment
 FROM fact_risk_scores
 WHERE year = ${detailSelection?.year}
-  AND parent_org = '${detailSelection?.parentOrg}'
-ORDER BY enrollment DESC`}
+  AND parent_org = '${detailSelection?.parentOrg}'`}
                           </pre>
                         </div>
-                        <div className="flex gap-4 text-sm">
-                          <div>
-                            <span className="text-gray-500">Rows:</span>{' '}
-                            <span className="font-mono">{contractDetails.contracts.length}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-500">Audit ID:</span>{' '}
-                            <span className="font-mono text-gray-600">{contractDetails.audit_id}</span>
-                          </div>
+                        <div className="text-xs text-gray-400 mt-2">
+                          Audit ID: {contractDetails.audit_id}
                         </div>
                       </div>
                     </details>
