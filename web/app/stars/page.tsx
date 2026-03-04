@@ -934,8 +934,35 @@ function MeasurePerformanceTab({ parentOrgs }: { parentOrgs: string[] }) {
                 </div>
               ) : detailData?.contracts ? (
                 <div>
-                  <div className="mb-4 text-sm text-gray-600">
-                    {detailData.contract_count} contracts
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-sm text-gray-600">{detailData.contract_count} contracts</span>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          window.open(`${API_BASE}/api/stars/measure-export?measure_key=${detailSelection?.measureKey}&year=${detailSelection?.year}${selectedPayer !== "Industry" ? `&parent_org=${encodeURIComponent(selectedPayer)}` : ''}&format=xlsx`, '_blank');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                      >
+                        <Download className="w-4 h-4" />
+                        Excel
+                      </button>
+                      <details className="relative">
+                        <summary className="cursor-pointer text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                          <Info className="w-4 h-4" />
+                          Query
+                        </summary>
+                        <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-20">
+                          <div className="bg-gray-900 rounded p-2">
+                            <pre className="text-xs text-green-400 whitespace-pre-wrap">
+{`SELECT contract_id, performance
+FROM measure_performance
+WHERE measure = '${detailSelection?.measureKey}'
+  AND year = ${detailSelection?.year}`}
+                            </pre>
+                          </div>
+                        </div>
+                      </details>
+                    </div>
                   </div>
                   <table className="w-full text-sm">
                     <thead>
@@ -1422,7 +1449,40 @@ function ContractTab() {
 
       {/* Contract Performance Table */}
       {selectedContract && contractData && !contractData.error && contractData.measures.length > 0 && (
-        <div className="overflow-x-auto">
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-gray-600">{contractData.measures.length} measures</span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  window.open(`${API_BASE}/api/stars/contract-export?contract_id=${selectedContract}&format=xlsx`, '_blank');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+              >
+                <Download className="w-4 h-4" />
+                Export Excel
+              </button>
+              <details className="relative">
+                <summary className="cursor-pointer text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                  <Info className="w-4 h-4" />
+                  Data Source
+                </summary>
+                <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-20">
+                  <div className="text-xs text-gray-600 mb-2">
+                    <strong>Source:</strong> CMS Star Ratings + Measure Performance
+                  </div>
+                  <div className="bg-gray-900 rounded p-2">
+                    <pre className="text-xs text-green-400 whitespace-pre-wrap">
+{`SELECT measure_id, performance, star_rating
+FROM contract_measure_performance
+WHERE contract_id = '${selectedContract}'`}
+                    </pre>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200">
@@ -1648,6 +1708,7 @@ function ContractTab() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -2348,6 +2409,34 @@ WHERE year = ${chartPointDetail.year}${chartPointDetail.payer !== "Industry" ? `
         ) : distributionData?.error ? (
           <div className="p-8 text-center text-gray-500">{distributionData.error}</div>
         ) : (
+          <div>
+          <div className="flex items-center justify-end gap-3 px-4 py-2 bg-gray-50 border-b border-gray-200">
+            <button
+              onClick={() => {
+                window.open(`${API_BASE}/api/stars/distribution-export?year=${starYear}&payers=${encodeURIComponent(selectedPayers.join("|"))}&format=xlsx`, '_blank');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+            <details className="relative">
+              <summary className="cursor-pointer text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                <Info className="w-4 h-4" />
+                Query
+              </summary>
+              <div className="absolute right-0 top-full mt-1 w-64 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-20">
+                <div className="bg-gray-900 rounded p-2">
+                  <pre className="text-xs text-green-400 whitespace-pre-wrap">
+{`SELECT overall_rating, SUM(enrollment)
+FROM stars_enrollment_unified
+WHERE year = ${starYear}
+GROUP BY overall_rating`}
+                  </pre>
+                </div>
+              </div>
+            </details>
+          </div>
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-gray-50">
@@ -2431,6 +2520,7 @@ WHERE year = ${chartPointDetail.year}${chartPointDetail.payer !== "Industry" ? `
               </tr>
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

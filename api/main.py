@@ -3483,6 +3483,126 @@ async def export_stars_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/stars/measure-export")
+async def export_measure_performance(
+    measure_key: str,
+    year: int,
+    parent_org: Optional[str] = None,
+    format: str = "xlsx"
+):
+    """Export measure performance data as Excel file."""
+    try:
+        engine = get_engine()
+        
+        conditions = [f"measure_key = '{measure_key}'", f"year = {year}"]
+        if parent_org:
+            conditions.append(f"parent_org = '{parent_org}'")
+        
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT contract_id, parent_org, performance_pct, enrollment
+            FROM gold_measure_performance
+            WHERE {where_clause}
+            ORDER BY enrollment DESC
+            LIMIT 50000
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="measure_export")
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Measure Performance', index=False)
+        output.seek(0)
+        
+        filename = f"measure_{measure_key}_{year}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stars/contract-export")
+async def export_contract_performance(
+    contract_id: str,
+    format: str = "xlsx"
+):
+    """Export contract measure performance as Excel file."""
+    try:
+        engine = get_engine()
+        
+        sql = f"""
+            SELECT contract_id, measure_id, measure_name, year, 
+                   performance_pct, star_rating, weight
+            FROM gold_contract_measure_performance
+            WHERE contract_id = '{contract_id}'
+            ORDER BY year DESC, measure_id
+            LIMIT 50000
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="contract_export")
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Contract Performance', index=False)
+        output.seek(0)
+        
+        filename = f"contract_{contract_id}_performance.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stars/distribution-export")
+async def export_distribution(
+    year: int,
+    payers: Optional[str] = None,
+    format: str = "xlsx"
+):
+    """Export star distribution data as Excel file."""
+    try:
+        engine = get_engine()
+        
+        conditions = [f"year = {year}"]
+        if payers:
+            payer_list = [f"'{p.strip()}'" for p in payers.split("|") if p.strip()]
+            if payer_list:
+                conditions.append(f"parent_org IN ({', '.join(payer_list)})")
+        
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT year, contract_id, parent_org, overall_rating, enrollment
+            FROM gold_stars_enrollment_unified
+            WHERE {where_clause}
+            ORDER BY overall_rating DESC, enrollment DESC
+            LIMIT 50000
+        """
+        
+        df, _ = engine.query_with_audit(sql, user_id="export", context="distribution_export")
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Distribution', index=False)
+        output.seek(0)
+        
+        filename = f"star_distribution_{year}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v3/enrollment/by-parent")
 async def get_enrollment_by_parent_v3(
     year: int = 2026,
