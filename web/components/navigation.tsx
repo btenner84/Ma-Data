@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Users, Star, TrendingUp, MessageSquare } from "lucide-react";
+import { Home, Users, Star, TrendingUp, MessageSquare, Database } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
   { href: "/enrollment", label: "Enrollment", icon: Users },
   { href: "/stars", label: "Stars", icon: Star },
   { href: "/risk-scores", label: "Risk Scores", icon: TrendingUp },
+  { href: "/data-sources", label: "Data Sources", icon: Database },
   { href: "/chat", label: "Ask AI", icon: MessageSquare },
 ];
 

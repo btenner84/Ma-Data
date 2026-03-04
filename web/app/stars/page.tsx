@@ -1747,6 +1747,13 @@ export default function StarsPage() {
   const [payerSearch, setPayerSearch] = useState("");
   const [starYear, setStarYear] = useState(2025);
   const [showYearPopup, setShowYearPopup] = useState(false);
+  const [distCellDetail, setDistCellDetail] = useState<{
+    payer: string;
+    starRating: number;
+    pct: number;
+    enrollment: number;
+    year: number;
+  } | null>(null);
 
   // Graph state
   const [graphPayers, setGraphPayers] = useState<string[]>([]);
@@ -2477,12 +2484,22 @@ GROUP BY overall_rating`}
                   </td>
                   {columns.map((col) => {
                     const colData = distributionData?.columns?.[col];
-                    // JSON keys are strings like "5.0", "4.5", etc.
                     const bandKey = band % 1 === 0 ? `${band}.0` : band.toString();
                     const distribution = colData?.distribution as Record<string, { pct: number; enrollment: number }> | undefined;
                     const bandData = distribution?.[bandKey];
                     return (
-                      <td key={col} className="py-3 px-6 text-center whitespace-nowrap border-l border-b border-gray-100">
+                      <td
+                        key={col}
+                        className={`py-3 px-6 text-center whitespace-nowrap border-l border-b border-gray-100 ${bandData ? 'cursor-pointer hover:bg-blue-50 transition-colors' : ''}`}
+                        onClick={() => bandData && setDistCellDetail({
+                          payer: col,
+                          starRating: band,
+                          pct: bandData.pct,
+                          enrollment: bandData.enrollment,
+                          year: starYear,
+                        })}
+                        title={bandData ? "Click to view details" : undefined}
+                      >
                         {bandData ? (
                           <>
                             <span className="font-semibold text-gray-900">{bandData.pct.toFixed(1)}%</span>
@@ -2504,13 +2521,23 @@ GROUP BY overall_rating`}
                 {columns.map((col) => {
                   const colData = distributionData?.columns?.[col];
                   if (!colData) return <td key={col} className="py-3 px-6 text-center border-l border-b border-gray-200 text-gray-300">-</td>;
-                  // Sum all ratings >= 4 (4, 4.5, 5)
                   const fourPlus = Object.entries(colData.distribution)
                     .filter(([band]) => parseFloat(band) >= 4)
                     .reduce((sum, [, data]) => sum + (data?.enrollment || 0), 0);
                   const pct = colData.total_enrollment > 0 ? (fourPlus / colData.total_enrollment * 100) : 0;
                   return (
-                    <td key={col} className="py-3 px-6 text-center whitespace-nowrap border-l border-b border-gray-200">
+                    <td
+                      key={col}
+                      className="py-3 px-6 text-center whitespace-nowrap border-l border-b border-gray-200 cursor-pointer hover:bg-green-100 transition-colors"
+                      onClick={() => setDistCellDetail({
+                        payer: col,
+                        starRating: 4,
+                        pct: pct,
+                        enrollment: fourPlus,
+                        year: starYear,
+                      })}
+                      title="Click to view 4+ stars details"
+                    >
                       <span className="font-bold text-green-700">{pct.toFixed(1)}%</span>
                       <span className="text-green-600 text-sm ml-2">({formatNumber(fourPlus)})</span>
                     </td>
@@ -2799,6 +2826,68 @@ GROUP BY overall_rating`}
 
       {/* CONTRACT TAB */}
       {activeTab === "contract" && <ContractTab />}
+
+      {/* Distribution Cell Detail Modal */}
+      {distCellDetail && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDistCellDetail(null)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="bg-yellow-100 rounded-lg px-4 py-2">
+                  <div className="text-2xl font-bold text-yellow-900">{distCellDetail.pct.toFixed(1)}%</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-gray-900">{distCellDetail.payer}</div>
+                  <div className="text-sm text-gray-500">
+                    {distCellDetail.starRating === 4 ? '4+ Stars' : `${distCellDetail.starRating} Stars`} • {distCellDetail.year}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setDistCellDetail(null)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="text-xs font-medium text-gray-500 mb-1">Enrollment</div>
+                  <div className="text-lg font-bold text-gray-900">{distCellDetail.enrollment.toLocaleString()}</div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="text-xs font-medium text-gray-500 mb-1">Source</div>
+                  <div className="text-sm font-medium text-gray-900">CMS Stars + Enrollment</div>
+                </div>
+              </div>
+
+              <details className="bg-gray-900 rounded-lg">
+                <summary className="px-3 py-2 text-xs font-medium text-gray-400 cursor-pointer hover:text-gray-300">
+                  View SQL Query
+                </summary>
+                <pre className="px-3 pb-3 text-xs text-green-400 overflow-x-auto whitespace-pre-wrap">
+{`SELECT overall_rating, SUM(enrollment) as enrollment
+FROM stars_enrollment_unified
+WHERE year = ${distCellDetail.year}${distCellDetail.payer !== 'Industry' ? `
+  AND parent_org = '${distCellDetail.payer}'` : ''}${distCellDetail.starRating === 4 ? `
+  AND overall_rating >= 4` : `
+  AND overall_rating = ${distCellDetail.starRating}`}
+GROUP BY overall_rating`}
+                </pre>
+              </details>
+
+              <button
+                onClick={() => {
+                  window.open(`${API_BASE}/api/stars/distribution-export?year=${distCellDetail.year}&payers=${encodeURIComponent(distCellDetail.payer)}&format=xlsx`, '_blank');
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
+              >
+                <Download className="w-4 h-4" />
+                Download Raw Data (Excel)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

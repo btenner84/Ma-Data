@@ -3371,7 +3371,7 @@ async def export_enrollment_data(
         sql = f"""
             SELECT year, month, contract_id, parent_org, state, plan_type, 
                    snp_type, group_type, enrollment
-            FROM gold_fact_enrollment_unified
+            FROM fact_enrollment_unified
             WHERE {where_clause}
             ORDER BY year DESC, enrollment DESC
             LIMIT 50000
@@ -3459,7 +3459,7 @@ async def export_stars_data(
         sql = f"""
             SELECT year, contract_id, parent_org, overall_rating, 
                    part_c_rating, part_d_rating, enrollment
-            FROM gold_stars_enrollment_unified
+            FROM stars_enrollment_unified
             WHERE {where_clause}
             ORDER BY enrollment DESC
             LIMIT 50000
@@ -3580,7 +3580,7 @@ async def export_distribution(
         
         sql = f"""
             SELECT year, contract_id, parent_org, overall_rating, enrollment
-            FROM gold_stars_enrollment_unified
+            FROM stars_enrollment_unified
             WHERE {where_clause}
             ORDER BY overall_rating DESC, enrollment DESC
             LIMIT 50000
@@ -3614,7 +3614,7 @@ async def export_cutpoints(
         sql = """
             SELECT year, measure_id, measure_key, measure_name, domain, 
                    cut_2, cut_3, cut_4, cut_5, lower_is_better
-            FROM gold_cutpoints
+            FROM cutpoints_all_years
             ORDER BY year DESC, measure_id
         """
         

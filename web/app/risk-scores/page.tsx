@@ -694,7 +694,12 @@ export default function RiskScoresPage() {
                         const yearIndex = timeseriesData.years?.indexOf(row.year as number) ?? -1;
                         const enrollment = yearIndex >= 0 ? enrollmentValues[yearIndex] : null;
                         return (
-                          <td key={row.year} className="px-4 py-3 text-sm text-gray-700 text-right font-mono whitespace-nowrap">
+                          <td
+                            key={row.year}
+                            className="px-4 py-3 text-sm text-gray-700 text-right font-mono whitespace-nowrap cursor-pointer hover:bg-blue-50 transition-colors"
+                            onClick={() => setDetailSelection({ parentOrg: key, year: row.year })}
+                            title="Click to see contract breakdown"
+                          >
                             {formatEnrollment(enrollment)}
                           </td>
                         );
