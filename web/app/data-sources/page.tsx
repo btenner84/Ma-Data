@@ -1,35 +1,35 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { Home, Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, ChevronRight, ExternalLink } from "lucide-react";
+import { Home, Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, ChevronRight, ChevronDown, X } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface DataSourceCard {
+interface DataSourceConfig {
   id: string;
   name: string;
   description: string;
   icon: React.ReactNode;
   color: string;
-  files: {
-    name: string;
-    description: string;
-    years: string;
-    downloadUrl?: string;
-    cmsUrl?: string;
-  }[];
+  table: string;
+  years: number[];
+  columns?: string[];
 }
 
-const dataSources: DataSourceCard[] = [
+const currentYear = 2026;
+const generateYears = (start: number, end: number = currentYear) => 
+  Array.from({ length: end - start + 1 }, (_, i) => end - i);
+
+const dataSources: DataSourceConfig[] = [
   {
     id: "cpsc",
     name: "CPSC Enrollment",
     description: "Monthly Enrollment by Contract-Plan-State-County. The most granular enrollment data with geographic detail. Some values suppressed for HIPAA (<10 enrollees).",
     icon: <Users className="w-6 h-6" />,
     color: "blue",
-    files: [
-      { name: "CPSC Monthly Files", description: "Contract/Plan/State/County enrollment counts", years: "2007-2026", cmsUrl: "https://www.cms.gov/data-research/statistics-trends-and-reports/medicare-advantagepart-d-contract-and-enrollment-data/monthly-enrollment-contract-plan-state-county" },
-    ]
+    table: "cpsc_enrollment",
+    years: generateYears(2007),
   },
   {
     id: "enrollment-by-plan",
@@ -37,19 +37,17 @@ const dataSources: DataSourceCard[] = [
     description: "Monthly enrollment at contract-plan level with parent organization. No geographic detail but includes all enrollment (no suppression).",
     icon: <FileText className="w-6 h-6" />,
     color: "green",
-    files: [
-      { name: "Monthly Enrollment by Plan", description: "Contract/Plan/Parent Org enrollment", years: "2013-2026", cmsUrl: "https://www.cms.gov/data-research/statistics-trends-and-reports/medicare-advantagepart-d-contract-and-enrollment-data/monthly-enrollment-plan" },
-    ]
+    table: "enrollment_by_plan",
+    years: generateYears(2013),
   },
   {
-    id: "special-needs",
+    id: "snp",
     name: "Special Needs Plans (SNP)",
     description: "Enrollment data for D-SNP (Dual), C-SNP (Chronic), and I-SNP (Institutional) plans with state-level detail.",
     icon: <AlertTriangle className="w-6 h-6" />,
     color: "purple",
-    files: [
-      { name: "SNP Comprehensive Report", description: "D-SNP, C-SNP, I-SNP enrollment by state", years: "2010-2026", cmsUrl: "https://www.cms.gov/data-research/statistics-trends-and-reports/medicare-advantagepart-d-contract-and-enrollment-data/special-needs-plan-snp-data" },
-    ]
+    table: "snp_enrollment",
+    years: generateYears(2010),
   },
   {
     id: "stars-overall",
@@ -57,10 +55,8 @@ const dataSources: DataSourceCard[] = [
     description: "Overall star ratings (1-5 stars) for each MA contract. Used for quality bonus payments and enrollment decisions.",
     icon: <Star className="w-6 h-6" />,
     color: "yellow",
-    files: [
-      { name: "Star Ratings Data", description: "Overall, Part C, Part D ratings by contract", years: "2009-2026", cmsUrl: "https://www.cms.gov/medicare/health-drug-plans/part-c-d-performance-data" },
-      { name: "Display Measures", description: "Contract-level performance on display measures", years: "2015-2026", downloadUrl: `${API_BASE}/api/stars/export?year=2026&format=xlsx` },
-    ]
+    table: "stars_overall",
+    years: generateYears(2009),
   },
   {
     id: "stars-measures",
@@ -68,9 +64,8 @@ const dataSources: DataSourceCard[] = [
     description: "Performance on individual quality measures (HEDIS, CAHPS, HOS). ~40 measures for Part C, ~15 for Part D.",
     icon: <Star className="w-6 h-6" />,
     color: "orange",
-    files: [
-      { name: "Part C & D Measure Data", description: "Performance % on each quality measure", years: "2019-2026", cmsUrl: "https://www.cms.gov/medicare/health-drug-plans/part-c-d-performance-data" },
-    ]
+    table: "stars_measures",
+    years: generateYears(2015),
   },
   {
     id: "cutpoints",
@@ -78,10 +73,8 @@ const dataSources: DataSourceCard[] = [
     description: "Performance thresholds that determine star ratings. Updated annually by CMS. Critical for predicting future ratings.",
     icon: <TrendingUp className="w-6 h-6" />,
     color: "teal",
-    files: [
-      { name: "Technical Notes (PDFs)", description: "Contains cutpoint tables for each year", years: "2019-2026", cmsUrl: "https://www.cms.gov/medicare/health-drug-plans/part-c-d-performance-data" },
-      { name: "Cutpoints Export", description: "All cutpoints in structured format", years: "2019-2026", downloadUrl: `${API_BASE}/api/stars/cutpoints-export?format=xlsx` },
-    ]
+    table: "cutpoints",
+    years: generateYears(2014),
   },
   {
     id: "risk-scores",
@@ -89,9 +82,8 @@ const dataSources: DataSourceCard[] = [
     description: "CMS risk scores by contract/plan. Higher scores = sicker population = higher payments. Critical for understanding plan economics.",
     icon: <TrendingUp className="w-6 h-6" />,
     color: "red",
-    files: [
-      { name: "Plan Payment Data", description: "Risk scores, benchmarks, rebates by contract", years: "2007-2026", cmsUrl: "https://www.cms.gov/medicare/payment/medicare-advantage-rates-statistics/plan-payment-data" },
-    ]
+    table: "risk_scores",
+    years: generateYears(2007),
   },
   {
     id: "crosswalk",
@@ -99,9 +91,8 @@ const dataSources: DataSourceCard[] = [
     description: "Tracks contract ID changes over time (mergers, acquisitions, rebranding). Essential for longitudinal analysis.",
     icon: <Database className="w-6 h-6" />,
     color: "gray",
-    files: [
-      { name: "Contract Crosswalk", description: "Old contract → New contract mappings", years: "2007-2026", cmsUrl: "https://www.cms.gov/medicare/enrollment-renewal/contract-crosswalk" },
-    ]
+    table: "crosswalk",
+    years: generateYears(2007),
   },
 ];
 
@@ -116,7 +107,45 @@ const colorClasses: Record<string, { bg: string; border: string; text: string; l
   gray: { bg: "bg-gray-500", border: "border-gray-200", text: "text-gray-700", light: "bg-gray-50" },
 };
 
+function getDownloadUrl(table: string, year: number): string {
+  switch (table) {
+    case "cpsc_enrollment":
+      return `${API_BASE}/api/data-sources/cpsc?year=${year}&format=xlsx`;
+    case "enrollment_by_plan":
+      return `${API_BASE}/api/data-sources/enrollment?year=${year}&format=xlsx`;
+    case "snp_enrollment":
+      return `${API_BASE}/api/data-sources/snp?year=${year}&format=xlsx`;
+    case "stars_overall":
+      return `${API_BASE}/api/stars/export?year=${year}&format=xlsx`;
+    case "stars_measures":
+      return `${API_BASE}/api/stars/measure-export?year=${year}&format=xlsx`;
+    case "cutpoints":
+      return `${API_BASE}/api/stars/cutpoints-export?year=${year}&format=xlsx`;
+    case "risk_scores":
+      return `${API_BASE}/api/v4/risk-scores/export?year=${year}&format=xlsx`;
+    case "crosswalk":
+      return `${API_BASE}/api/data-sources/crosswalk?year=${year}&format=xlsx`;
+    default:
+      return "#";
+  }
+}
+
 export default function DataSourcesPage() {
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  const handleDownload = async (source: DataSourceConfig, year: number) => {
+    const key = `${source.id}-${year}`;
+    setDownloading(key);
+    
+    try {
+      const url = getDownloadUrl(source.table, year);
+      window.open(url, '_blank');
+    } finally {
+      setTimeout(() => setDownloading(null), 1000);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -147,76 +176,92 @@ export default function DataSourcesPage() {
         {/* Intro */}
         <div className="mb-8">
           <p className="text-gray-600 max-w-3xl">
-            All data in this platform comes from publicly available CMS (Centers for Medicare & Medicaid Services) files. 
-            Below are the source files we use, with links to download raw data directly from CMS or from our processed exports.
+            Download processed CMS data directly. Click a data source to see available years, then click a year to download as Excel.
           </p>
         </div>
 
         {/* Data Source Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-4">
           {dataSources.map((source) => {
             const colors = colorClasses[source.color];
+            const isExpanded = expandedSource === source.id;
+
             return (
               <div
                 key={source.id}
-                className={`bg-white rounded-xl border ${colors.border} shadow-sm overflow-hidden`}
+                className={`bg-white rounded-xl border ${colors.border} shadow-sm overflow-hidden transition-all`}
               >
-                {/* Card Header */}
-                <div className={`${colors.light} px-5 py-4 border-b ${colors.border}`}>
+                {/* Card Header - Clickable */}
+                <button
+                  onClick={() => setExpandedSource(isExpanded ? null : source.id)}
+                  className={`w-full ${colors.light} px-5 py-4 flex items-center justify-between hover:opacity-90 transition-opacity`}
+                >
                   <div className="flex items-center gap-3">
                     <div className={`${colors.bg} text-white p-2 rounded-lg`}>
                       {source.icon}
                     </div>
-                    <div>
+                    <div className="text-left">
                       <h2 className="font-semibold text-gray-900">{source.name}</h2>
+                      <p className="text-sm text-gray-500">
+                        {source.years[source.years.length - 1]} - {source.years[0]} • {source.years.length} years
+                      </p>
                     </div>
                   </div>
-                </div>
+                  <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                </button>
 
-                {/* Card Body */}
-                <div className="p-5">
-                  <p className="text-sm text-gray-600 mb-4">{source.description}</p>
-
-                  {/* Files */}
-                  <div className="space-y-3">
-                    {source.files.map((file, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-gray-900 text-sm">{file.name}</div>
-                          <div className="text-xs text-gray-500 truncate">{file.description}</div>
-                          <div className="text-xs text-gray-400 mt-0.5">{file.years}</div>
-                        </div>
-                        <div className="flex items-center gap-2 ml-3">
-                          {file.downloadUrl && (
-                            <a
-                              href={file.downloadUrl}
-                              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-xs font-medium"
-                              title="Download processed data"
-                            >
+                {/* Expanded Content */}
+                {isExpanded && (
+                  <div className="p-5 border-t border-gray-100">
+                    <p className="text-sm text-gray-600 mb-4">{source.description}</p>
+                    
+                    {/* Year Grid */}
+                    <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2">
+                      {source.years.map((year) => {
+                        const isDownloading = downloading === `${source.id}-${year}`;
+                        return (
+                          <button
+                            key={year}
+                            onClick={() => handleDownload(source, year)}
+                            disabled={isDownloading}
+                            className={`
+                              flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium
+                              transition-all border
+                              ${isDownloading
+                                ? 'bg-green-100 border-green-300 text-green-700'
+                                : `${colors.light} ${colors.border} ${colors.text} hover:opacity-80`
+                              }
+                            `}
+                          >
+                            {isDownloading ? (
+                              <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                            ) : (
                               <Download className="w-3.5 h-3.5" />
-                              Export
-                            </a>
-                          )}
-                          {file.cmsUrl && (
-                            <a
-                              href={file.cmsUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
-                              title="View on CMS.gov"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              CMS
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                            )}
+                            {year}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Download All Button */}
+                    <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between">
+                      <span className="text-xs text-gray-400">
+                        Click a year to download that year&apos;s data as Excel
+                      </span>
+                      <button
+                        onClick={() => {
+                          const url = getDownloadUrl(source.table, 0).replace('year=0', 'all=true');
+                          window.open(url, '_blank');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
+                      >
+                        <Download className="w-4 h-4" />
+                        Download All Years
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             );
           })}

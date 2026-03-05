@@ -3485,27 +3485,30 @@ async def export_stars_data(
 
 @app.get("/api/stars/measure-export")
 async def export_measure_performance(
-    measure_key: str,
     year: int,
+    measure_key: Optional[str] = None,
     parent_org: Optional[str] = None,
     format: str = "xlsx"
 ):
-    """Export measure performance data as Excel file."""
+    """Export measure performance data as Excel file. If no measure_key, exports all measures."""
     try:
         engine = get_engine()
         
-        conditions = [f"measure_key = '{measure_key}'", f"year = {year}"]
+        conditions = [f"year = {year}"]
+        if measure_key:
+            conditions.append(f"measure_key = '{measure_key}'")
         if parent_org:
             conditions.append(f"parent_org = '{parent_org}'")
         
         where_clause = " AND ".join(conditions)
         
         sql = f"""
-            SELECT contract_id, parent_org, performance_pct, enrollment
+            SELECT contract_id, parent_org, measure_key, measure_name, 
+                   performance_pct, enrollment
             FROM gold_measure_performance
             WHERE {where_clause}
-            ORDER BY enrollment DESC
-            LIMIT 50000
+            ORDER BY measure_key, enrollment DESC
+            LIMIT 100000
         """
         
         df, _ = engine.query_with_audit(sql, user_id="export", context="measure_export")
@@ -3605,18 +3608,30 @@ async def export_distribution(
 
 @app.get("/api/stars/cutpoints-export")
 async def export_cutpoints(
+    year: Optional[int] = None,
     format: str = "xlsx"
 ):
-    """Export all cutpoints data as Excel file."""
+    """Export cutpoints data as Excel file. If year is provided, filters to that year."""
     try:
         engine = get_engine()
         
-        sql = """
-            SELECT year, measure_id, measure_key, measure_name, domain, 
-                   cut_2, cut_3, cut_4, cut_5, lower_is_better
-            FROM cutpoints_all_years
-            ORDER BY year DESC, measure_id
-        """
+        if year:
+            sql = f"""
+                SELECT year, measure_id, measure_key, measure_name, domain, 
+                       cut_2, cut_3, cut_4, cut_5, lower_is_better
+                FROM cutpoints_all_years
+                WHERE year = {year}
+                ORDER BY measure_id
+            """
+            filename = f"cutpoints_{year}.xlsx"
+        else:
+            sql = """
+                SELECT year, measure_id, measure_key, measure_name, domain, 
+                       cut_2, cut_3, cut_4, cut_5, lower_is_better
+                FROM cutpoints_all_years
+                ORDER BY year DESC, measure_id
+            """
+            filename = "cutpoints_all_years.xlsx"
         
         df, _ = engine.query_with_audit(sql, user_id="export", context="cutpoints_export")
         
@@ -3625,7 +3640,6 @@ async def export_cutpoints(
             df.to_excel(writer, sheet_name='Cutpoints', index=False)
         output.seek(0)
         
-        filename = "cutpoints_all_years.xlsx"
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -4665,6 +4679,182 @@ async def get_risk_contracts_v3(
             group_types=group_types.split(",") if group_types else None,
             snp_types=snp_types.split(",") if snp_types else None,
             user_id=user_id
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =====================================================
+# DATA SOURCES DOWNLOAD ENDPOINTS
+# =====================================================
+
+@app.get("/api/data-sources/cpsc")
+async def download_cpsc_data(
+    year: int = 2024,
+    format: str = "xlsx",
+    all: bool = False
+):
+    """Download CPSC enrollment data by year."""
+    try:
+        if all:
+            sql = """
+                SELECT year, month, contract_id, plan_id, state, county, 
+                       fips_state, fips_county, enrollment
+                FROM gold_fact_enrollment_geographic
+                ORDER BY year DESC, state, county
+                LIMIT 100000
+            """
+        else:
+            sql = f"""
+                SELECT year, month, contract_id, plan_id, state, county, 
+                       fips_state, fips_county, enrollment
+                FROM gold_fact_enrollment_geographic
+                WHERE year = {year}
+                ORDER BY state, county
+                LIMIT 100000
+            """
+        
+        df = engine.query(sql)
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=f'CPSC_{year if not all else "All"}')
+        output.seek(0)
+        
+        filename = f"cpsc_enrollment_{year if not all else 'all_years'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/data-sources/enrollment")
+async def download_enrollment_by_plan(
+    year: int = 2024,
+    format: str = "xlsx",
+    all: bool = False
+):
+    """Download enrollment by plan data by year."""
+    try:
+        if all:
+            sql = """
+                SELECT year, month, contract_id, plan_id, parent_org, 
+                       plan_type, snp_type, group_type, enrollment
+                FROM fact_enrollment_unified
+                ORDER BY year DESC, parent_org, enrollment DESC
+                LIMIT 100000
+            """
+        else:
+            sql = f"""
+                SELECT year, month, contract_id, plan_id, parent_org, 
+                       plan_type, snp_type, group_type, enrollment
+                FROM fact_enrollment_unified
+                WHERE year = {year}
+                ORDER BY parent_org, enrollment DESC
+                LIMIT 100000
+            """
+        
+        df = engine.query(sql)
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=f'Enrollment_{year if not all else "All"}')
+        output.seek(0)
+        
+        filename = f"enrollment_by_plan_{year if not all else 'all_years'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/data-sources/snp")
+async def download_snp_data(
+    year: int = 2024,
+    format: str = "xlsx",
+    all: bool = False
+):
+    """Download SNP enrollment data by year."""
+    try:
+        if all:
+            sql = """
+                SELECT year, month, contract_id, plan_id, parent_org, 
+                       state, snp_type, enrollment
+                FROM fact_enrollment_unified
+                WHERE snp_type IS NOT NULL AND snp_type != 'Non-SNP'
+                ORDER BY year DESC, snp_type, state
+                LIMIT 100000
+            """
+        else:
+            sql = f"""
+                SELECT year, month, contract_id, plan_id, parent_org, 
+                       state, snp_type, enrollment
+                FROM fact_enrollment_unified
+                WHERE year = {year} AND snp_type IS NOT NULL AND snp_type != 'Non-SNP'
+                ORDER BY snp_type, state
+                LIMIT 100000
+            """
+        
+        df = engine.query(sql)
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=f'SNP_{year if not all else "All"}')
+        output.seek(0)
+        
+        filename = f"snp_enrollment_{year if not all else 'all_years'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/data-sources/crosswalk")
+async def download_crosswalk_data(
+    year: int = 2024,
+    format: str = "xlsx",
+    all: bool = False
+):
+    """Download contract crosswalk data by year."""
+    try:
+        if all:
+            sql = """
+                SELECT *
+                FROM gold_dim_entity
+                ORDER BY effective_from DESC
+                LIMIT 100000
+            """
+        else:
+            sql = f"""
+                SELECT *
+                FROM gold_dim_entity
+                WHERE EXTRACT(YEAR FROM effective_from) = {year}
+                   OR EXTRACT(YEAR FROM effective_to) = {year}
+                ORDER BY effective_from DESC
+                LIMIT 100000
+            """
+        
+        df = engine.query(sql)
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name=f'Crosswalk_{year if not all else "All"}')
+        output.seek(0)
+        
+        filename = f"contract_crosswalk_{year if not all else 'all_years'}.xlsx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
         return {"error": str(e)}
