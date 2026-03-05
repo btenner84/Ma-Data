@@ -3403,11 +3403,10 @@ async def export_risk_scores_data(
 ):
     """Export risk scores data as Excel file."""
     try:
-        engine = get_engine()
+        db = get_engine()
         
-        # Build query
         conditions = [f"year = {year}"]
-        if parent_org:
+        if parent_org and parent_org != "Industry Total":
             conditions.append(f"parent_org = '{parent_org}'")
         
         where_clause = " AND ".join(conditions)
@@ -3415,13 +3414,13 @@ async def export_risk_scores_data(
         sql = f"""
             SELECT year, contract_id, plan_id, parent_org, plan_type, 
                    group_type, snp_type, risk_score, enrollment
-            FROM gold_fact_risk_scores
+            FROM fact_risk_scores_unified
             WHERE {where_clause}
             ORDER BY enrollment DESC
             LIMIT 50000
         """
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="risk_scores_export")
+        df, _ = db.query_with_audit(sql, user_id="export", context="risk_scores_export")
         
         # Convert to Excel
         output = BytesIO()
@@ -3492,26 +3491,24 @@ async def export_measure_performance(
 ):
     """Export measure performance data as Excel file. If no measure_key, exports all measures."""
     try:
-        engine = get_engine()
+        db = get_engine()
         
         conditions = [f"year = {year}"]
         if measure_key:
-            conditions.append(f"measure_key = '{measure_key}'")
-        if parent_org:
-            conditions.append(f"parent_org = '{parent_org}'")
+            conditions.append(f"measure_id = '{measure_key}'")
         
         where_clause = " AND ".join(conditions)
         
         sql = f"""
-            SELECT contract_id, parent_org, measure_key, measure_name, 
-                   performance_pct, enrollment
-            FROM gold_measure_performance
+            SELECT contract_id, measure_id, measure_name, year,
+                   value as performance_value, star_rating
+            FROM measures_all_years
             WHERE {where_clause}
-            ORDER BY measure_key, enrollment DESC
+            ORDER BY measure_id, contract_id
             LIMIT 100000
         """
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="measure_export")
+        df, _ = db.query_with_audit(sql, user_id="export", context="measure_export")
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -4696,11 +4693,12 @@ async def download_cpsc_data(
 ):
     """Download CPSC enrollment data by year."""
     try:
+        db = get_engine()
         if all:
             sql = """
                 SELECT year, month, contract_id, plan_id, state, county, 
                        fips_state, fips_county, enrollment
-                FROM gold_fact_enrollment_geographic
+                FROM fact_enrollment_by_geography
                 ORDER BY year DESC, state, county
                 LIMIT 100000
             """
@@ -4708,13 +4706,13 @@ async def download_cpsc_data(
             sql = f"""
                 SELECT year, month, contract_id, plan_id, state, county, 
                        fips_state, fips_county, enrollment
-                FROM gold_fact_enrollment_geographic
+                FROM fact_enrollment_by_geography
                 WHERE year = {year}
                 ORDER BY state, county
                 LIMIT 100000
             """
         
-        df = engine.query(sql)
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -4728,7 +4726,7 @@ async def download_cpsc_data(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/data-sources/enrollment")
@@ -4739,6 +4737,7 @@ async def download_enrollment_by_plan(
 ):
     """Download enrollment by plan data by year."""
     try:
+        db = get_engine()
         if all:
             sql = """
                 SELECT year, month, contract_id, plan_id, parent_org, 
@@ -4757,7 +4756,7 @@ async def download_enrollment_by_plan(
                 LIMIT 100000
             """
         
-        df = engine.query(sql)
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -4771,7 +4770,7 @@ async def download_enrollment_by_plan(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/data-sources/snp")
@@ -4782,26 +4781,26 @@ async def download_snp_data(
 ):
     """Download SNP enrollment data by year."""
     try:
+        db = get_engine()
         if all:
             sql = """
-                SELECT year, month, contract_id, plan_id, parent_org, 
+                SELECT year, contract_id, plan_id, parent_org, 
                        state, snp_type, enrollment
-                FROM fact_enrollment_unified
-                WHERE snp_type IS NOT NULL AND snp_type != 'Non-SNP'
+                FROM fact_snp_historical
                 ORDER BY year DESC, snp_type, state
                 LIMIT 100000
             """
         else:
             sql = f"""
-                SELECT year, month, contract_id, plan_id, parent_org, 
+                SELECT year, contract_id, plan_id, parent_org, 
                        state, snp_type, enrollment
-                FROM fact_enrollment_unified
-                WHERE year = {year} AND snp_type IS NOT NULL AND snp_type != 'Non-SNP'
+                FROM fact_snp_historical
+                WHERE year = {year}
                 ORDER BY snp_type, state
                 LIMIT 100000
             """
         
-        df = engine.query(sql)
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -4815,7 +4814,7 @@ async def download_snp_data(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/data-sources/crosswalk")
@@ -4826,24 +4825,28 @@ async def download_crosswalk_data(
 ):
     """Download contract crosswalk data by year."""
     try:
+        db = get_engine()
         if all:
             sql = """
-                SELECT *
+                SELECT entity_id, contract_id, parent_org, organization_type,
+                       effective_from, effective_to, is_current
                 FROM gold_dim_entity
                 ORDER BY effective_from DESC
                 LIMIT 100000
             """
         else:
             sql = f"""
-                SELECT *
+                SELECT entity_id, contract_id, parent_org, organization_type,
+                       effective_from, effective_to, is_current
                 FROM gold_dim_entity
                 WHERE EXTRACT(YEAR FROM effective_from) = {year}
                    OR EXTRACT(YEAR FROM effective_to) = {year}
+                   OR (effective_from <= '{year}-12-31' AND (effective_to IS NULL OR effective_to >= '{year}-01-01'))
                 ORDER BY effective_from DESC
                 LIMIT 100000
             """
         
-        df = engine.query(sql)
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -4857,7 +4860,7 @@ async def download_crosswalk_data(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/health")
