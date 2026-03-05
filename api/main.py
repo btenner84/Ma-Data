@@ -3351,9 +3351,10 @@ async def export_enrollment_data(
 ):
     """Export enrollment data as Excel file."""
     try:
-        engine = get_engine()
+        db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
-        # Build query
         conditions = []
         if year:
             conditions.append(f"year = {year}")
@@ -3369,30 +3370,29 @@ async def export_enrollment_data(
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         
         sql = f"""
-            SELECT year, month, contract_id, parent_org, state, plan_type, 
-                   snp_type, group_type, enrollment
-            FROM fact_enrollment_unified
+            SELECT * FROM fact_enrollment_unified
             WHERE {where_clause}
             ORDER BY year DESC, enrollment DESC
             LIMIT 50000
         """
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="enrollment_export")
+        df = db.query(sql)
         
-        # Convert to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Enrollment', index=False)
         output.seek(0)
         
-        filename = f"enrollment_export_{year or 'all'}_{parent_org or 'all'}.xlsx"
+        filename = f"enrollment_export_{year or 'all'}.xlsx"
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/v4/risk-scores/export")
@@ -3404,6 +3404,8 @@ async def export_risk_scores_data(
     """Export risk scores data as Excel file."""
     try:
         db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
         conditions = [f"year = {year}"]
         if parent_org and parent_org != "Industry Total":
@@ -3412,30 +3414,29 @@ async def export_risk_scores_data(
         where_clause = " AND ".join(conditions)
         
         sql = f"""
-            SELECT year, contract_id, plan_id, parent_org, plan_type, 
-                   group_type, snp_type, risk_score, enrollment
-            FROM fact_risk_scores_unified
+            SELECT * FROM fact_risk_scores_unified
             WHERE {where_clause}
             ORDER BY enrollment DESC
             LIMIT 50000
         """
         
-        df, _ = db.query_with_audit(sql, user_id="export", context="risk_scores_export")
+        df = db.query(sql)
         
-        # Convert to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Risk Scores', index=False)
         output.seek(0)
         
-        filename = f"risk_scores_{year}_{parent_org or 'all'}.xlsx"
+        filename = f"risk_scores_{year}.xlsx"
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/stars/export")
@@ -3446,9 +3447,10 @@ async def export_stars_data(
 ):
     """Export stars + enrollment data as Excel file."""
     try:
-        engine = get_engine()
+        db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
-        # Build query
         conditions = [f"year = {year}"]
         if parent_org:
             conditions.append(f"parent_org = '{parent_org}'")
@@ -3456,30 +3458,29 @@ async def export_stars_data(
         where_clause = " AND ".join(conditions)
         
         sql = f"""
-            SELECT year, contract_id, parent_org, overall_rating, 
-                   part_c_rating, part_d_rating, enrollment
-            FROM stars_enrollment_unified
+            SELECT * FROM stars_enrollment_unified
             WHERE {where_clause}
             ORDER BY enrollment DESC
             LIMIT 50000
         """
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="stars_export")
+        df = db.query(sql)
         
-        # Convert to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Stars', index=False)
         output.seek(0)
         
-        filename = f"stars_{year}_{parent_org or 'all'}.xlsx"
+        filename = f"stars_{year}.xlsx"
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/stars/measure-export")
@@ -3489,9 +3490,11 @@ async def export_measure_performance(
     parent_org: Optional[str] = None,
     format: str = "xlsx"
 ):
-    """Export measure performance data as Excel file. If no measure_key, exports all measures."""
+    """Export measure performance data as Excel file."""
     try:
         db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
         conditions = [f"year = {year}"]
         if measure_key:
@@ -3500,29 +3503,29 @@ async def export_measure_performance(
         where_clause = " AND ".join(conditions)
         
         sql = f"""
-            SELECT contract_id, measure_id, measure_name, year,
-                   value as performance_value, star_rating
-            FROM measures_all_years
+            SELECT * FROM measures_all_years
             WHERE {where_clause}
             ORDER BY measure_id, contract_id
             LIMIT 100000
         """
         
-        df, _ = db.query_with_audit(sql, user_id="export", context="measure_export")
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Measure Performance', index=False)
+            df.to_excel(writer, sheet_name='Measures', index=False)
         output.seek(0)
         
-        filename = f"measure_{measure_key}_{year}.xlsx"
+        filename = f"measures_{year}.xlsx"
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/stars/contract-export")
@@ -3532,32 +3535,34 @@ async def export_contract_performance(
 ):
     """Export contract measure performance as Excel file."""
     try:
-        engine = get_engine()
+        db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
         sql = f"""
-            SELECT contract_id, measure_id, measure_name, year, 
-                   performance_pct, star_rating, weight
-            FROM gold_contract_measure_performance
+            SELECT * FROM measures_all_years
             WHERE contract_id = '{contract_id}'
             ORDER BY year DESC, measure_id
             LIMIT 50000
         """
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="contract_export")
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Contract Performance', index=False)
         output.seek(0)
         
-        filename = f"contract_{contract_id}_performance.xlsx"
+        filename = f"contract_{contract_id}.xlsx"
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/stars/distribution-export")
@@ -3568,7 +3573,9 @@ async def export_distribution(
 ):
     """Export star distribution data as Excel file."""
     try:
-        engine = get_engine()
+        db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
         conditions = [f"year = {year}"]
         if payers:
@@ -3579,14 +3586,13 @@ async def export_distribution(
         where_clause = " AND ".join(conditions)
         
         sql = f"""
-            SELECT year, contract_id, parent_org, overall_rating, enrollment
-            FROM stars_enrollment_unified
+            SELECT * FROM stars_enrollment_unified
             WHERE {where_clause}
             ORDER BY overall_rating DESC, enrollment DESC
             LIMIT 50000
         """
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="distribution_export")
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -3599,8 +3605,10 @@ async def export_distribution(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/stars/cutpoints-export")
@@ -3608,29 +3616,27 @@ async def export_cutpoints(
     year: Optional[int] = None,
     format: str = "xlsx"
 ):
-    """Export cutpoints data as Excel file. If year is provided, filters to that year."""
+    """Export cutpoints data as Excel file."""
     try:
-        engine = get_engine()
+        db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
         
         if year:
             sql = f"""
-                SELECT year, measure_id, measure_key, measure_name, domain, 
-                       cut_2, cut_3, cut_4, cut_5, lower_is_better
-                FROM cutpoints_all_years
+                SELECT * FROM cutpoints_all_years
                 WHERE year = {year}
                 ORDER BY measure_id
             """
             filename = f"cutpoints_{year}.xlsx"
         else:
             sql = """
-                SELECT year, measure_id, measure_key, measure_name, domain, 
-                       cut_2, cut_3, cut_4, cut_5, lower_is_better
-                FROM cutpoints_all_years
+                SELECT * FROM cutpoints_all_years
                 ORDER BY year DESC, measure_id
             """
             filename = "cutpoints_all_years.xlsx"
         
-        df, _ = engine.query_with_audit(sql, user_id="export", context="cutpoints_export")
+        df = db.query(sql)
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -3642,8 +3648,10 @@ async def export_cutpoints(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/v3/enrollment/by-parent")
@@ -4694,19 +4702,18 @@ async def download_cpsc_data(
     """Download CPSC enrollment data by year."""
     try:
         db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
         if all:
             sql = """
-                SELECT year, month, contract_id, plan_id, state, county, 
-                       fips_state, fips_county, enrollment
-                FROM fact_enrollment_by_geography
+                SELECT * FROM fact_enrollment_by_geography
                 ORDER BY year DESC, state, county
                 LIMIT 100000
             """
         else:
             sql = f"""
-                SELECT year, month, contract_id, plan_id, state, county, 
-                       fips_state, fips_county, enrollment
-                FROM fact_enrollment_by_geography
+                SELECT * FROM fact_enrollment_by_geography
                 WHERE year = {year}
                 ORDER BY state, county
                 LIMIT 100000
@@ -4725,8 +4732,10 @@ async def download_cpsc_data(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/data-sources/enrollment")
@@ -4738,19 +4747,18 @@ async def download_enrollment_by_plan(
     """Download enrollment by plan data by year."""
     try:
         db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
         if all:
             sql = """
-                SELECT year, month, contract_id, plan_id, parent_org, 
-                       plan_type, snp_type, group_type, enrollment
-                FROM fact_enrollment_unified
+                SELECT * FROM fact_enrollment_unified
                 ORDER BY year DESC, parent_org, enrollment DESC
                 LIMIT 100000
             """
         else:
             sql = f"""
-                SELECT year, month, contract_id, plan_id, parent_org, 
-                       plan_type, snp_type, group_type, enrollment
-                FROM fact_enrollment_unified
+                SELECT * FROM fact_enrollment_unified
                 WHERE year = {year}
                 ORDER BY parent_org, enrollment DESC
                 LIMIT 100000
@@ -4769,8 +4777,10 @@ async def download_enrollment_by_plan(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/data-sources/snp")
@@ -4782,21 +4792,20 @@ async def download_snp_data(
     """Download SNP enrollment data by year."""
     try:
         db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
         if all:
             sql = """
-                SELECT year, contract_id, plan_id, parent_org, 
-                       state, snp_type, enrollment
-                FROM fact_snp_historical
-                ORDER BY year DESC, snp_type, state
+                SELECT * FROM fact_snp_historical
+                ORDER BY year DESC, snp_type
                 LIMIT 100000
             """
         else:
             sql = f"""
-                SELECT year, contract_id, plan_id, parent_org, 
-                       state, snp_type, enrollment
-                FROM fact_snp_historical
+                SELECT * FROM fact_snp_historical
                 WHERE year = {year}
-                ORDER BY snp_type, state
+                ORDER BY snp_type
                 LIMIT 100000
             """
         
@@ -4813,8 +4822,10 @@ async def download_snp_data(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/data-sources/crosswalk")
@@ -4826,22 +4837,20 @@ async def download_crosswalk_data(
     """Download contract crosswalk data by year."""
     try:
         db = get_engine()
+        if not db:
+            raise HTTPException(status_code=503, detail="Database not available")
+        
         if all:
             sql = """
-                SELECT entity_id, contract_id, parent_org, organization_type,
-                       effective_from, effective_to, is_current
-                FROM gold_dim_entity
+                SELECT * FROM gold_dim_entity
                 ORDER BY effective_from DESC
                 LIMIT 100000
             """
         else:
             sql = f"""
-                SELECT entity_id, contract_id, parent_org, organization_type,
-                       effective_from, effective_to, is_current
-                FROM gold_dim_entity
-                WHERE EXTRACT(YEAR FROM effective_from) = {year}
-                   OR EXTRACT(YEAR FROM effective_to) = {year}
-                   OR (effective_from <= '{year}-12-31' AND (effective_to IS NULL OR effective_to >= '{year}-01-01'))
+                SELECT * FROM gold_dim_entity
+                WHERE CAST(effective_from AS VARCHAR) LIKE '{year}%'
+                   OR CAST(effective_to AS VARCHAR) LIKE '{year}%'
                 ORDER BY effective_from DESC
                 LIMIT 100000
             """
@@ -4859,8 +4868,10 @@ async def download_crosswalk_data(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @app.get("/api/health")
