@@ -241,11 +241,35 @@ class ChartSpec:
 
 PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS to comprehensive MA data.
 
-YOU HAVE DATA FOR:
-- Enrollment: 2013-2026 by contract, plan, parent organization
-- Star Ratings: 2013-2026 overall ratings + individual measures
-- Risk Scores: Historical risk score data by contract
-- Rate Notices: USPCC rates, growth factors, HCC coefficients 2015-2027
+=== YOU HAVE ACCESS TO ===
+
+**STRUCTURED DATA (SQL Queryable - 2013-2026):**
+- Enrollment by contract, plan, parent organization, state
+- Star Ratings: overall ratings + 40+ individual measures
+- Risk Scores by contract
+- USPCC rates, growth factors, HCC coefficients
+
+**CMS DOCUMENTS (Searchable Full Text):**
+- Rate Notices (Advance & Final) - 2016-2027
+- Star Ratings Technical Notes - 2016-2027
+- Call Letters - 2020-2027
+- Risk Adjustment Fact Sheets - 2022-2027
+- Payment Methodology documentation
+
+**KNOWLEDGE BASE (Definitions & Context):**
+- MA Glossary (HCC, RAF, QBP, CAI, etc.)
+- CMS-HCC Model Versions (V12, V21, V22, V24, V28) with phase-in schedules
+- Star measure definitions
+- Policy timeline and key changes
+- Top payer information
+
+=== AVAILABLE TOOLS ===
+- query_database: SQL queries against data tables
+- search_documents: Search CMS document text
+- get_rate_notice_metrics: Structured rate notice data (growth rates, V28 phase-in, Part D params)
+- get_hcc_model_info: HCC model details (coefficients, segments, normalization)
+- get_ma_policy_changes: Policy changes by year/category
+- lookup_knowledge: Glossary and definitions
 
 === DATABASE SCHEMA ===
 
@@ -330,6 +354,44 @@ WHERE parent_org IN ('Humana', 'UnitedHealth Group', 'CVS Health')
 GROUP BY star_year, parent_org ORDER BY parent_org, star_year
 ```
 
+=== TOOL-BASED QUERIES (for documents/knowledge) ===
+
+**For Technical Notes questions (star rating methodology):**
+{
+  "description": "Star rating technical methodology for 2026",
+  "data_type": "policy",
+  "query_approach": "tool",
+  "specific_query": "search_documents: tech_notes 2026",
+  "priority": 1
+}
+
+**For Rate Notice questions (USPCC, growth, V28):**
+{
+  "description": "2027 advance notice rate parameters",
+  "data_type": "policy",
+  "query_approach": "tool",
+  "specific_query": "get_rate_notice_metrics: 2027 advance",
+  "priority": 1
+}
+
+**For HCC Model questions:**
+{
+  "description": "V28 model coefficients and changes",
+  "data_type": "risk",
+  "query_approach": "tool",
+  "specific_query": "get_hcc_model_info: V28",
+  "priority": 1
+}
+
+**For definitions:**
+{
+  "description": "What is CAI adjustment",
+  "data_type": "policy",
+  "query_approach": "knowledge",
+  "specific_query": "CAI contract adjustment",
+  "priority": 2
+}
+
 === OUTPUT FORMAT ===
 ```json
 {
@@ -338,8 +400,8 @@ GROUP BY star_year, parent_org ORDER BY parent_org, star_year
     {
       "description": "What data is needed",
       "data_type": "enrollment|stars|risk|policy|benchmark",
-      "query_approach": "sql",
-      "specific_query": "FULL SQL QUERY HERE - must be executable",
+      "query_approach": "sql|tool|knowledge",
+      "specific_query": "SQL query OR tool name with params",
       "priority": 1
     }
   ],
@@ -349,10 +411,10 @@ GROUP BY star_year, parent_org ORDER BY parent_org, star_year
 ```
 
 IMPORTANT: 
-- ALWAYS write complete, executable SQL queries
-- Use the example queries as templates
-- Join enrollment + stars for weighted 4+ star analysis
-- Filter to month=12 for year-end snapshots"""
+- For DATA questions: Use SQL queries against tables
+- For DOCUMENT/POLICY questions: Use tools (search_documents, get_rate_notice_metrics, get_hcc_model_info)
+- For DEFINITIONS: Use knowledge lookup
+- ALWAYS write complete, executable SQL queries when using sql approach"""
 
 ANALYZER_PROMPT = """You are a Medicare Advantage analyst examining ACTUAL DATA to extract insights.
 
