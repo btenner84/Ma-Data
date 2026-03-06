@@ -24,3 +24,12 @@ httpx==0.26.0
 # Build Pipeline (for running data builds)
 openpyxl==3.1.2
 xlrd==2.0.1
+
+# AI/LLM dependencies
+anthropic>=0.18.0
+openai>=1.12.0
+
+# Document processing
+PyPDF2>=3.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
