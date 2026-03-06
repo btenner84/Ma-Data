@@ -8,4 +8,4 @@ cmds = ["npm install --legacy-peer-deps"]
 cmds = ["npm run build"]
 
 [start]
-cmd = "npm run start"
+cmd = "PORT=${PORT:-3000} HOSTNAME=0.0.0.0 node .next/standalone/server.js"

@@ -5,8 +5,8 @@
     "buildCommand": "npm install --legacy-peer-deps && npm run build"
   },
   "deploy": {
-    "startCommand": "node .next/standalone/server.js",
+    "startCommand": "PORT=${PORT:-3000} HOSTNAME=0.0.0.0 node .next/standalone/server.js",
     "healthcheckPath": "/",
-    "healthcheckTimeout": 60
+    "healthcheckTimeout": 120
   }
 }
