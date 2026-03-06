@@ -931,13 +931,13 @@ class MAAgentV2:
                 else:
                     # Default: try knowledge lookup
                     tool_name = "lookup_knowledge"
-                    tool_result = self.tools.lookup_knowledge(topic=req.description)
+                    tool_result = self.tools.lookup_knowledge(query=req.description)
                     result = tool_result.data if tool_result.success else None
                     error = tool_result.error if not tool_result.success else None
                     
             elif req.query_approach == "knowledge":
                 tool_name = "lookup_knowledge"
-                tool_result = self.tools.lookup_knowledge(topic=req.description)
+                tool_result = self.tools.lookup_knowledge(query=req.description)
                 result = tool_result.data if tool_result.success else None
                 error = tool_result.error if not tool_result.success else None
                 
@@ -1259,12 +1259,35 @@ Reference the charts/tables naturally but don't repeat all the numbers they cont
         requirements = []
         
         try:
-            # Find JSON in response
-            json_match = llm_response.find("{")
-            if json_match >= 0:
-                json_str = llm_response[json_match:]
-                json_end = json_str.rfind("}") + 1
-                parsed = json.loads(json_str[:json_end])
+            # Handle JSON in markdown code blocks
+            import re
+            
+            # Try to extract JSON from ```json ... ``` blocks first
+            json_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', llm_response)
+            if json_block_match:
+                json_str = json_block_match.group(1)
+            else:
+                # Fallback: find first { and match to its closing }
+                json_match = llm_response.find("{")
+                if json_match >= 0:
+                    json_str = llm_response[json_match:]
+                    # Find matching closing brace
+                    depth = 0
+                    end_idx = 0
+                    for i, c in enumerate(json_str):
+                        if c == '{':
+                            depth += 1
+                        elif c == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end_idx = i + 1
+                                break
+                    json_str = json_str[:end_idx]
+                else:
+                    json_str = None
+            
+            if json_str:
+                parsed = json.loads(json_str)
                 
                 for i, req in enumerate(parsed.get("requirements", [])):
                     requirements.append(DataRequirement(
@@ -1275,13 +1298,27 @@ Reference the charts/tables naturally but don't repeat all the numbers they cont
                         specific_query=req.get("specific_query"),
                         priority=req.get("priority", 2),
                     ))
+                    
+            if not requirements:
+                raise ValueError("No requirements parsed")
+                
         except Exception as e:
-            # Fallback: create a generic requirement
+            print(f"Warning: Failed to parse requirements: {e}")
+            # Fallback: create a SQL-based requirement for the question
             requirements.append(DataRequirement(
                 requirement_id=str(uuid.uuid4()),
-                description="General lookup",
-                data_type="unknown",
-                query_approach="knowledge",
+                description="Query star ratings enrollment data",
+                data_type="stars",
+                query_approach="sql",
+                specific_query="""
+                    SELECT star_year as year, parent_org,
+                           SUM(enrollment) as enrollment,
+                           ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+                    FROM stars_enrollment_unified
+                    GROUP BY star_year, parent_org
+                    HAVING SUM(enrollment) > 100000
+                    ORDER BY parent_org, star_year
+                """,
                 priority=1,
             ))
         
