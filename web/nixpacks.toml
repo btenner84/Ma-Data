@@ -5,7 +5,11 @@ nixPkgs = ["nodejs_20", "npm-10_x"]
 cmds = ["npm install --legacy-peer-deps"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = [
+  "npm run build",
+  "cp -r .next/static .next/standalone/.next/static",
+  "cp -r public .next/standalone/public || true"
+]
 
 [start]
-cmd = "PORT=${PORT:-3000} HOSTNAME=0.0.0.0 node .next/standalone/server.js"
+cmd = "cd .next/standalone && PORT=${PORT:-3000} HOSTNAME=0.0.0.0 node server.js"
