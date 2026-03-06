@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 interface LLMCall {
   call_id: string;

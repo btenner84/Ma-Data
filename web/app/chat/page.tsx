@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { ChatMessage, type Message } from '@/components/chat/ChatMessage';
 import { Send, Sparkles } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 const EXAMPLE_PROMPTS = [
   "What is total MA enrollment in 2026?",

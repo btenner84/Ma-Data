@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight } from "lucide-react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 interface DataSourceConfig {
   id: string;

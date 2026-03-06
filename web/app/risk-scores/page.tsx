@@ -24,7 +24,7 @@ function useIsMounted() {
   return mounted;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const COLORS = [
   "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c",
