@@ -803,7 +803,7 @@ function MeasurePerformanceTab({ parentOrgs }: { parentOrgs: string[] }) {
               <tbody>
                 {measures.map((measure, idx) => (
                   <tr
-                    key={measure.measure_key_part || measure.measure_key}
+                    key={measure.measure_key}
                     className={`hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50 opacity-70' : ''} ${idx > 0 && measures[idx - 1].in_2026 && !measure.in_2026 ? 'border-t-2 border-gray-300' : ''}`}
                   >
                     <td className="py-2.5 px-4 border-b border-gray-100 sticky left-0 bg-white z-10">
@@ -1195,7 +1195,7 @@ function MeasureStarsTab({ parentOrgs }: { parentOrgs: string[] }) {
               <tbody>
                 {measures.map((measure, idx) => (
                   <tr
-                    key={measure.measure_key_part || measure.measure_key}
+                    key={measure.measure_key}
                     className={`hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50 opacity-70' : ''} ${idx > 0 && measures[idx - 1].in_2026 && !measure.in_2026 ? 'border-t-2 border-gray-300' : ''}`}
                   >
                     <td className="py-2.5 px-4 border-b border-gray-100 sticky left-0 bg-white z-10">
@@ -1490,7 +1490,7 @@ function FourPlusTab({ parentOrgs }: { parentOrgs: string[] }) {
               <tbody>
                 {measures.map((measure, idx) => (
                   <tr
-                    key={measure.measure_key_part || measure.measure_key}
+                    key={measure.measure_key}
                     className={`hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50 opacity-70' : ''} ${idx > 0 && measures[idx - 1].in_2026 && !measure.in_2026 ? 'border-t-2 border-gray-300' : ''}`}
                   >
                     <td className="py-2.5 px-4 border-b border-gray-100 sticky left-0 bg-white z-10">
@@ -1780,7 +1780,7 @@ function CutpointsTab({ parentOrgs, isMounted }: { parentOrgs: string[]; isMount
         <div className="space-y-0">
           {sortedMeasures.map((measure) => (
             <MeasureRowChart
-              key={measure.measure_key_part || measure.measure_key}
+              key={measure.measure_key}
               measure={measure}
               years={years}
               selectedPayer={selectedPayer}
@@ -2160,7 +2160,7 @@ WHERE contract_id = '${selectedContract}'`}
 
                 return (
                   <tr
-                    key={measure.measure_key_part || measure.measure_key}
+                    key={measure.measure_key}
                     className={`border-b border-gray-100 hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50' : ''}`}
                   >
                     {/* Measure Name */}
