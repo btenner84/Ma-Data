@@ -103,7 +103,7 @@ export default function HomePage() {
   })) || [];
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
       {/* Welcome Header */}
       <div className="bg-gradient-to-r from-blue-900 to-blue-700 rounded-lg shadow-lg p-8 text-white">
         <h1 className="text-3xl font-bold mb-2">Welcome to MA Intelligence Platform</h1>

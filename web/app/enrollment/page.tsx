@@ -264,7 +264,7 @@ export default function EnrollmentPage() {
   ).slice(0, payerSearch ? 30 : 15) || [];
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
       {/* Control Bar */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
         <div className="flex items-center gap-3 flex-wrap">
@@ -909,17 +909,26 @@ GROUP BY year`}
                 </pre>
               </details>
 
-              {/* Download Button */}
+              {/* Download Button - Downloads ZIP with raw CMS files + README */}
               <button
                 onClick={() => {
-                  const params = buildQueryParams();
-                  window.open(`${API_BASE}/api/v3/enrollment/export?${params}&format=xlsx&year=${cellDetail.year}&parent_org=${encodeURIComponent(cellDetail.payer)}`, '_blank');
+                  const params = new URLSearchParams();
+                  params.set('year', cellDetail.year.toString());
+                  params.set('parent_org', cellDetail.payer);
+                  params.set('data_source', dataSource === 'geographic' ? 'geographic' : 'national');
+                  if (selectedPlanTypes.length > 0) {
+                    params.set('plan_types', selectedPlanTypes.join(','));
+                  }
+                  window.open(`${API_BASE}/api/v3/enrollment/audit-download?${params.toString()}`, '_blank');
                 }}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
               >
                 <Download className="w-4 h-4" />
-                Download Raw Data (Excel)
+                Download Audit Package (ZIP)
               </button>
+              <p className="text-xs text-gray-400 text-center mt-1">
+                Includes raw CMS files + README to replicate calculation
+              </p>
 
               {/* Audit ID */}
               {rawTimeseriesData?.audit_id && (

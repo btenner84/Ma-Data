@@ -1,282 +1,344 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { Home, Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, ChevronRight, ChevronDown, X } from "lucide-react";
+import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface DataSourceConfig {
   id: string;
   name: string;
+  shortName: string;
   description: string;
+  details: string[];
   icon: React.ReactNode;
   color: string;
   table: string;
   years: number[];
-  columns?: string[];
+  fileType: string;
 }
 
-const currentYear = 2026;
-const generateYears = (start: number, end: number = currentYear) => 
+const generateYears = (start: number, end: number) => 
   Array.from({ length: end - start + 1 }, (_, i) => end - i);
 
 const dataSources: DataSourceConfig[] = [
   {
     id: "cpsc",
     name: "CPSC Enrollment",
-    description: "Monthly Enrollment by Contract-Plan-State-County. The most granular enrollment data with geographic detail. Some values suppressed for HIPAA (<10 enrollees).",
-    icon: <Users className="w-6 h-6" />,
+    shortName: "CPSC",
+    description: "County-level enrollment with geographic detail",
+    details: [
+      "Contract-Plan-State-County level",
+      "Monthly snapshots",
+      "Some values suppressed (<10 enrollees)",
+      "Includes plan type & organization"
+    ],
+    icon: <MapPin className="w-7 h-7" />,
     color: "blue",
     table: "cpsc_enrollment",
-    years: generateYears(2007),
+    years: generateYears(2013, 2025),
+    fileType: "ZIP (CSV)",
   },
   {
     id: "enrollment-by-plan",
-    name: "Enrollment by Plan",
-    description: "Monthly enrollment at contract-plan level with parent organization. No geographic detail but includes all enrollment (no suppression).",
-    icon: <FileText className="w-6 h-6" />,
+    name: "Monthly Enrollment",
+    shortName: "Enrollment",
+    description: "Complete enrollment at contract-plan level",
+    details: [
+      "Contract + Plan level detail",
+      "No geographic suppression",
+      "Parent organization included",
+      "Most complete enrollment source"
+    ],
+    icon: <Users className="w-7 h-7" />,
     color: "green",
     table: "enrollment_by_plan",
-    years: generateYears(2013),
+    years: generateYears(2007, 2025),
+    fileType: "ZIP (CSV + Excel)",
   },
   {
     id: "snp",
-    name: "Special Needs Plans (SNP)",
-    description: "Enrollment data for D-SNP (Dual), C-SNP (Chronic), and I-SNP (Institutional) plans with state-level detail.",
-    icon: <AlertTriangle className="w-6 h-6" />,
+    name: "SNP Classification",
+    shortName: "SNP",
+    description: "Special Needs Plan type identification",
+    details: [
+      "D-SNP (Dual Eligible)",
+      "C-SNP (Chronic Condition)",
+      "I-SNP (Institutional)",
+      "State-level enrollment"
+    ],
+    icon: <AlertTriangle className="w-7 h-7" />,
     color: "purple",
     table: "snp_enrollment",
-    years: generateYears(2010),
+    years: generateYears(2007, 2024),
+    fileType: "ZIP (Excel + PDF)",
   },
   {
-    id: "stars-overall",
-    name: "Star Ratings - Overall",
-    description: "Overall star ratings (1-5 stars) for each MA contract. Used for quality bonus payments and enrollment decisions.",
-    icon: <Star className="w-6 h-6" />,
+    id: "stars",
+    name: "Star Ratings",
+    shortName: "Stars",
+    description: "Quality ratings and measure performance",
+    details: [
+      "Overall star ratings (1-5)",
+      "Individual measure scores",
+      "HEDIS & CAHPS measures",
+      "Technical specifications"
+    ],
+    icon: <Star className="w-7 h-7" />,
     color: "yellow",
     table: "stars_overall",
-    years: generateYears(2009),
-  },
-  {
-    id: "stars-measures",
-    name: "Star Ratings - Measures",
-    description: "Performance on individual quality measures (HEDIS, CAHPS, HOS). ~40 measures for Part C, ~15 for Part D.",
-    icon: <Star className="w-6 h-6" />,
-    color: "orange",
-    table: "stars_measures",
-    years: generateYears(2015),
-  },
-  {
-    id: "cutpoints",
-    name: "Star Cutpoints",
-    description: "Performance thresholds that determine star ratings. Updated annually by CMS. Critical for predicting future ratings.",
-    icon: <TrendingUp className="w-6 h-6" />,
-    color: "teal",
-    table: "cutpoints",
-    years: generateYears(2014),
+    years: generateYears(2007, 2026),
+    fileType: "ZIP (CSV + Excel)",
   },
   {
     id: "risk-scores",
-    name: "Risk Adjustment Scores",
-    description: "CMS risk scores by contract/plan. Higher scores = sicker population = higher payments. Critical for understanding plan economics.",
-    icon: <TrendingUp className="w-6 h-6" />,
+    name: "Risk Scores",
+    shortName: "Risk",
+    description: "Plan payment and risk adjustment data",
+    details: [
+      "Part C & D risk scores",
+      "Contract and plan level",
+      "County-level breakdowns",
+      "Payment reconciliation"
+    ],
+    icon: <TrendingUp className="w-7 h-7" />,
     color: "red",
     table: "risk_scores",
-    years: generateYears(2007),
+    years: generateYears(2006, 2024),
+    fileType: "ZIP (Excel + PDF)",
   },
   {
     id: "crosswalk",
     name: "Contract Crosswalk",
-    description: "Tracks contract ID changes over time (mergers, acquisitions, rebranding). Essential for longitudinal analysis.",
-    icon: <Database className="w-6 h-6" />,
-    color: "gray",
+    shortName: "Crosswalk",
+    description: "Track contract changes over time",
+    details: [
+      "Contract ID changes",
+      "Mergers & acquisitions",
+      "Plan consolidations",
+      "Historical mapping"
+    ],
+    icon: <Database className="w-7 h-7" />,
+    color: "slate",
     table: "crosswalk",
-    years: generateYears(2007),
+    years: generateYears(2006, 2025),
+    fileType: "ZIP (Excel + TXT)",
   },
 ];
 
-const colorClasses: Record<string, { bg: string; border: string; text: string; light: string }> = {
-  blue: { bg: "bg-blue-500", border: "border-blue-200", text: "text-blue-700", light: "bg-blue-50" },
-  green: { bg: "bg-green-500", border: "border-green-200", text: "text-green-700", light: "bg-green-50" },
-  purple: { bg: "bg-purple-500", border: "border-purple-200", text: "text-purple-700", light: "bg-purple-50" },
-  yellow: { bg: "bg-yellow-500", border: "border-yellow-200", text: "text-yellow-700", light: "bg-yellow-50" },
-  orange: { bg: "bg-orange-500", border: "border-orange-200", text: "text-orange-700", light: "bg-orange-50" },
-  teal: { bg: "bg-teal-500", border: "border-teal-200", text: "text-teal-700", light: "bg-teal-50" },
-  red: { bg: "bg-red-500", border: "border-red-200", text: "text-red-700", light: "bg-red-50" },
-  gray: { bg: "bg-gray-500", border: "border-gray-200", text: "text-gray-700", light: "bg-gray-50" },
+const colorConfig: Record<string, { 
+  bg: string; 
+  bgHover: string;
+  border: string; 
+  text: string; 
+  light: string;
+  icon: string;
+  ring: string;
+}> = {
+  blue: { bg: "bg-blue-500", bgHover: "hover:bg-blue-600", border: "border-blue-200", text: "text-blue-600", light: "bg-blue-50", icon: "bg-blue-100", ring: "ring-blue-500" },
+  green: { bg: "bg-green-500", bgHover: "hover:bg-green-600", border: "border-green-200", text: "text-green-600", light: "bg-green-50", icon: "bg-green-100", ring: "ring-green-500" },
+  purple: { bg: "bg-purple-500", bgHover: "hover:bg-purple-600", border: "border-purple-200", text: "text-purple-600", light: "bg-purple-50", icon: "bg-purple-100", ring: "ring-purple-500" },
+  yellow: { bg: "bg-amber-500", bgHover: "hover:bg-amber-600", border: "border-amber-200", text: "text-amber-600", light: "bg-amber-50", icon: "bg-amber-100", ring: "ring-amber-500" },
+  red: { bg: "bg-red-500", bgHover: "hover:bg-red-600", border: "border-red-200", text: "text-red-600", light: "bg-red-50", icon: "bg-red-100", ring: "ring-red-500" },
+  slate: { bg: "bg-slate-500", bgHover: "hover:bg-slate-600", border: "border-slate-200", text: "text-slate-600", light: "bg-slate-50", icon: "bg-slate-100", ring: "ring-slate-500" },
 };
 
 function getDownloadUrl(table: string, year: number): string {
   switch (table) {
     case "cpsc_enrollment":
-      return `${API_BASE}/api/data-sources/cpsc?year=${year}&format=xlsx`;
+      return `${API_BASE}/api/data-sources/cpsc?year=${year}&month=12&format=raw`;
     case "enrollment_by_plan":
-      return `${API_BASE}/api/data-sources/enrollment?year=${year}&format=xlsx`;
+      return `${API_BASE}/api/data-sources/enrollment?year=${year}&month=12&format=raw`;
     case "snp_enrollment":
-      return `${API_BASE}/api/data-sources/snp?year=${year}&format=xlsx`;
+      return `${API_BASE}/api/data-sources/snp?year=${year}&month=12&format=raw`;
     case "stars_overall":
-      return `${API_BASE}/api/stars/export?year=${year}&format=xlsx`;
-    case "stars_measures":
-      return `${API_BASE}/api/stars/measure-export?year=${year}&format=xlsx`;
-    case "cutpoints":
-      return `${API_BASE}/api/stars/cutpoints-export?year=${year}&format=xlsx`;
+      return `${API_BASE}/api/data-sources/stars?year=${year}&format=raw`;
     case "risk_scores":
-      return `${API_BASE}/api/v4/risk-scores/export?year=${year}&format=xlsx`;
+      return `${API_BASE}/api/data-sources/risk-scores?year=${year}&format=raw`;
     case "crosswalk":
-      return `${API_BASE}/api/data-sources/crosswalk?year=${year}&format=xlsx`;
+      return `${API_BASE}/api/data-sources/crosswalk?year=${year}&format=raw`;
     default:
       return "#";
   }
 }
 
 export default function DataSourcesPage() {
-  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [selectedSource, setSelectedSource] = useState<DataSourceConfig | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
 
-  const handleDownload = async (source: DataSourceConfig, year: number) => {
+  const handleDownload = (source: DataSourceConfig, year: number) => {
     const key = `${source.id}-${year}`;
     setDownloading(key);
     
-    try {
-      const url = getDownloadUrl(source.table, year);
-      window.open(url, '_blank');
-    } finally {
-      setTimeout(() => setDownloading(null), 1000);
-    }
+    const url = getDownloadUrl(source.table, year);
+    window.open(url, '_blank');
+    
+    setTimeout(() => setDownloading(null), 2000);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link href="/" className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
-                <Home className="w-5 h-5" />
-              </Link>
-              <ChevronRight className="w-4 h-4 text-gray-400" />
-              <div className="flex items-center gap-2">
-                <Database className="w-5 h-5 text-blue-600" />
-                <h1 className="text-xl font-bold text-gray-900">Data Sources</h1>
-              </div>
-            </div>
-            <nav className="flex items-center gap-6 text-sm font-medium">
-              <Link href="/enrollment" className="text-gray-600 hover:text-gray-900">Enrollment</Link>
-              <Link href="/stars" className="text-gray-600 hover:text-gray-900">Stars</Link>
-              <Link href="/risk-scores" className="text-gray-600 hover:text-gray-900">Risk Scores</Link>
-            </nav>
-          </div>
-        </div>
-      </header>
+    <div className="max-w-7xl mx-auto px-4 py-6 min-h-screen bg-slate-50">
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Intro */}
-        <div className="mb-8">
-          <p className="text-gray-600 max-w-3xl">
-            Download processed CMS data directly. Click a data source to see available years, then click a year to download as Excel.
+      <main className="max-w-6xl mx-auto px-6 py-10">
+        {/* Page Title */}
+        <div className="mb-10">
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Download Raw CMS Data</h2>
+          <p className="text-slate-500">
+            Original CMS data files. Click any card to see available years and download.
           </p>
         </div>
 
-        {/* Data Source Cards */}
-        <div className="space-y-4">
+        {/* Cards Grid - 3 per row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {dataSources.map((source) => {
-            const colors = colorClasses[source.color];
-            const isExpanded = expandedSource === source.id;
-
+            const colors = colorConfig[source.color];
+            
             return (
-              <div
+              <button
                 key={source.id}
-                className={`bg-white rounded-xl border ${colors.border} shadow-sm overflow-hidden transition-all`}
+                onClick={() => setSelectedSource(source)}
+                className={`
+                  bg-white rounded-2xl border border-slate-200 p-6 text-left
+                  hover:shadow-lg hover:border-slate-300 hover:scale-[1.02]
+                  transition-all duration-200 ease-out
+                  focus:outline-none focus:ring-2 ${colors.ring} focus:ring-offset-2
+                `}
               >
-                {/* Card Header - Clickable */}
-                <button
-                  onClick={() => setExpandedSource(isExpanded ? null : source.id)}
-                  className={`w-full ${colors.light} px-5 py-4 flex items-center justify-between hover:opacity-90 transition-opacity`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`${colors.bg} text-white p-2 rounded-lg`}>
-                      {source.icon}
-                    </div>
-                    <div className="text-left">
-                      <h2 className="font-semibold text-gray-900">{source.name}</h2>
-                      <p className="text-sm text-gray-500">
-                        {source.years[source.years.length - 1]} - {source.years[0]} • {source.years.length} years
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                </button>
+                {/* Icon */}
+                <div className={`${colors.icon} ${colors.text} w-14 h-14 rounded-xl flex items-center justify-center mb-4`}>
+                  {source.icon}
+                </div>
 
-                {/* Expanded Content */}
-                {isExpanded && (
-                  <div className="p-5 border-t border-gray-100">
-                    <p className="text-sm text-gray-600 mb-4">{source.description}</p>
-                    
-                    {/* Year Grid */}
-                    <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2">
-                      {source.years.map((year) => {
-                        const isDownloading = downloading === `${source.id}-${year}`;
-                        return (
-                          <button
-                            key={year}
-                            onClick={() => handleDownload(source, year)}
-                            disabled={isDownloading}
-                            className={`
-                              flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium
-                              transition-all border
-                              ${isDownloading
-                                ? 'bg-green-100 border-green-300 text-green-700'
-                                : `${colors.light} ${colors.border} ${colors.text} hover:opacity-80`
-                              }
-                            `}
-                          >
-                            {isDownloading ? (
-                              <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <Download className="w-3.5 h-3.5" />
-                            )}
-                            {year}
-                          </button>
-                        );
-                      })}
-                    </div>
+                {/* Title & Description */}
+                <h3 className="text-lg font-semibold text-slate-900 mb-1">{source.name}</h3>
+                <p className="text-sm text-slate-500 mb-4">{source.description}</p>
 
-                    {/* Download All Button */}
-                    <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between">
-                      <span className="text-xs text-gray-400">
-                        Click a year to download that year&apos;s data as Excel
-                      </span>
-                      <button
-                        onClick={() => {
-                          const url = getDownloadUrl(source.table, 0).replace('year=0', 'all=true');
-                          window.open(url, '_blank');
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
-                      >
-                        <Download className="w-4 h-4" />
-                        Download All Years
-                      </button>
-                    </div>
+                {/* Meta Info */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${colors.light} ${colors.text}`}>
+                      {source.years.length} years
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {source.years[source.years.length - 1]}–{source.years[0]}
+                    </span>
                   </div>
-                )}
-              </div>
+                  <ArrowRight className="w-4 h-4 text-slate-300" />
+                </div>
+              </button>
             );
           })}
         </div>
 
-        {/* Footer Note */}
-        <div className="mt-12 p-6 bg-amber-50 border border-amber-200 rounded-xl">
-          <h3 className="font-semibold text-amber-900 mb-2">Data Update Schedule</h3>
-          <p className="text-sm text-amber-800">
-            CMS releases most data monthly (enrollment) or annually (star ratings, risk scores). 
-            Our platform typically updates within 24-48 hours of new CMS releases. 
-            Star ratings are released in October for the following payment year.
-          </p>
+        {/* Info Footer */}
+        <div className="mt-12 bg-white rounded-xl border border-slate-200 p-6">
+          <div className="flex items-start gap-4">
+            <div className="bg-slate-100 p-2 rounded-lg">
+              <Database className="w-5 h-5 text-slate-600" />
+            </div>
+            <div>
+              <h4 className="font-medium text-slate-900 mb-1">About these files</h4>
+              <p className="text-sm text-slate-500">
+                These are the original CMS data files as published. Most are ZIP archives containing CSV, Excel, 
+                and PDF documentation. Enrollment data updates monthly, star ratings release in October, 
+                and risk scores update annually after payment reconciliation.
+              </p>
+            </div>
+          </div>
         </div>
       </main>
+
+      {/* Download Modal */}
+      {selectedSource && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setSelectedSource(null)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className={`${colorConfig[selectedSource.color].light} px-6 py-5 border-b border-slate-100`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className={`${colorConfig[selectedSource.color].icon} ${colorConfig[selectedSource.color].text} w-12 h-12 rounded-xl flex items-center justify-center`}>
+                    {selectedSource.icon}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">{selectedSource.name}</h3>
+                    <p className="text-sm text-slate-500">{selectedSource.fileType}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedSource(null)}
+                  className="p-2 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              {/* Details */}
+              <div className="mb-6">
+                <h4 className="text-sm font-medium text-slate-700 mb-2">What's included:</h4>
+                <ul className="space-y-1.5">
+                  {selectedSource.details.map((detail, i) => (
+                    <li key={i} className="flex items-center gap-2 text-sm text-slate-600">
+                      <div className={`w-1.5 h-1.5 rounded-full ${colorConfig[selectedSource.color].bg}`} />
+                      {detail}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Year Selection */}
+              <div>
+                <h4 className="text-sm font-medium text-slate-700 mb-3">Select year to download:</h4>
+                <div className="grid grid-cols-5 gap-2">
+                  {selectedSource.years.map((year) => {
+                    const isDownloading = downloading === `${selectedSource.id}-${year}`;
+                    const colors = colorConfig[selectedSource.color];
+                    
+                    return (
+                      <button
+                        key={year}
+                        onClick={() => handleDownload(selectedSource, year)}
+                        disabled={isDownloading}
+                        className={`
+                          py-2.5 px-3 rounded-lg text-sm font-medium transition-all
+                          ${isDownloading 
+                            ? 'bg-green-100 text-green-700 border border-green-300' 
+                            : `bg-slate-50 text-slate-700 border border-slate-200 hover:${colors.light} hover:${colors.text} hover:border-${selectedSource.color}-200`
+                          }
+                        `}
+                      >
+                        {isDownloading ? (
+                          <div className="flex items-center justify-center">
+                            <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        ) : (
+                          year
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
+              <p className="text-xs text-slate-400 text-center">
+                Files download directly from CMS archives stored in S3
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -244,7 +244,7 @@ export default function RiskScoresPage() {
   ).slice(0, payerSearch ? 30 : 15) || [];
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
       {/* Control Bar */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
         <div className="flex items-center gap-3 flex-wrap">

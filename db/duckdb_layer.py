@@ -207,6 +207,9 @@ class MAQueryEngine:
             # Measure data with stable keys - 328K rows, 2008-2026
             'measures_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/measures_all_years.parquet',
 
+            # Measure STAR RATINGS - 245K rows, 2014-2026 (actual 1-5 star values)
+            'measure_stars_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/measure_stars_all_years.parquet',
+
             # Summary ratings - 32K rows, 2009-2026
             'summary_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/summary_all_years.parquet',
 
@@ -224,6 +227,51 @@ class MAQueryEngine:
 
             # Disenrollment reasons - 6K rows, 2024-2026
             'disenrollment_all_years': f's3://{S3_BUCKET}/{PROCESSED_PREFIX}/unified/disenrollment_all_years.parquet',
+
+            # =================================================================
+            # RATE NOTICE DATA (Policy/Rate tables) - ALL WITH AUDIT FIELDS
+            # =================================================================
+            # Part D benefit parameters by year (deductible, ICL, TrOOP, IRA caps)
+            'part_d_parameters': f's3://{S3_BUCKET}/gold/rate_notice/part_d_parameters.parquet',
+            
+            # Risk adjustment parameters by year (model version, phase-in, normalization)
+            'risk_adjustment_parameters': f's3://{S3_BUCKET}/gold/rate_notice/risk_adjustment_parameters.parquet',
+            
+            # MA growth rates by year (advance, final, effective)
+            'ma_growth_rates': f's3://{S3_BUCKET}/gold/rate_notice/ma_growth_rates.parquet',
+            
+            # Star rating bonus structure by year
+            'star_bonus_structure': f's3://{S3_BUCKET}/gold/rate_notice/star_bonus_structure.parquet',
+            
+            # HCC coefficients by model version
+            'hcc_coefficients_v28': f's3://{S3_BUCKET}/gold/rate_notice/hcc_coefficients_v28.parquet',
+            
+            # County benchmarks (from ratebooks) - MA benchmark rates by county/year
+            'county_benchmarks': f's3://{S3_BUCKET}/gold/rate_notice/county_benchmarks.parquet',
+            
+            # National USPCC (United States Per Capita Costs) - FFS baseline by year
+            'national_uspcc': f's3://{S3_BUCKET}/gold/rate_notice/national_uspcc.parquet',
+            
+            # =================================================================
+            # PARSED RATE NOTICE TABLES (extracted from PDF tables with audit)
+            # =================================================================
+            # USPCC projections by calendar year (Part A, Part B costs)
+            'uspcc_projections': f's3://{S3_BUCKET}/gold/rate_notice_parsed/uspcc_projections.parquet',
+            
+            # HCC coefficients from all model versions (V21, V22, V24, V28, RxHCC)
+            'hcc_coefficients_all': f's3://{S3_BUCKET}/gold/rate_notice_parsed/hcc_coefficients_all.parquet',
+            
+            # ESRD rates and risk adjustment factors
+            'esrd_rates': f's3://{S3_BUCKET}/gold/rate_notice_parsed/esrd_rates.parquet',
+            
+            # Demographic adjustment factors (age/sex, trends)
+            'demographic_factors': f's3://{S3_BUCKET}/gold/rate_notice_parsed/demographic_factors.parquet',
+            
+            # Benchmark parameters (applicable percentages, quartiles)
+            'benchmark_parameters': f's3://{S3_BUCKET}/gold/rate_notice_parsed/benchmark_parameters.parquet',
+            
+            # Service type cost breakdowns (inpatient, outpatient, etc.)
+            'service_type_costs': f's3://{S3_BUCKET}/gold/rate_notice_parsed/service_type_costs.parquet',
         }
 
         self.registered_tables = []

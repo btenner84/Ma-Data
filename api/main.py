@@ -60,6 +60,14 @@ except ImportError as e:
     print(f"Warning: Audit API not available: {e}")
     AUDIT_API_AVAILABLE = False
 
+# Import Agent V2 router (multi-step with full audit)
+try:
+    from api.routes.agent_v2_routes import router as agent_v2_router
+    AGENT_V2_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Agent V2 not available: {e}")
+    AGENT_V2_AVAILABLE = False
+
 app = FastAPI(
     title="MA Intelligence Platform API",
     description="API for Medicare Advantage data intelligence",
@@ -83,6 +91,10 @@ if CHAT_AVAILABLE:
 # Register audit API router
 if AUDIT_API_AVAILABLE:
     app.include_router(audit_router)
+
+# Register Agent V2 router
+if AGENT_V2_AVAILABLE:
+    app.include_router(agent_v2_router)
 
 S3_BUCKET = os.environ.get("S3_BUCKET", "ma-data123")
 s3 = boto3.client('s3')
@@ -2384,6 +2396,86 @@ async def get_stars_by_plan_type(year: Optional[int] = None):
     }
 
 
+def get_measures_2026_from_unified(engine) -> tuple:
+    """
+    Get 2026 measures from unified tables (consistent measure_key normalization).
+    Uses composite key (measure_key + part) to distinguish Part C vs Part D.
+    Returns (measures_df, measures_keys_list).
+    """
+    try:
+        measures_2026_sql = """
+        SELECT * FROM (
+            SELECT DISTINCT 
+                m.measure_id, 
+                m.measure_key,
+                CASE WHEN m.measure_id LIKE 'D%' THEN 'D' ELSE 'C' END as part,
+                m.measure_key || '_' || CASE WHEN m.measure_id LIKE 'D%' THEN 'D' ELSE 'C' END as measure_key_part,
+                m.measure_name,
+                m.measure_name || ' (Part ' || CASE WHEN m.measure_id LIKE 'D%' THEN 'D' ELSE 'C' END || ')' as measure_name_with_part,
+                FALSE as lower_is_better,
+                CASE 
+                    WHEN m.measure_id IN ('C30', 'D04') THEN 5.0
+                    WHEN m.measure_id IN ('C18', 'D08', 'D09', 'D10') THEN 3.0
+                    WHEN m.measure_id IN ('C22', 'C23', 'C24', 'C25', 'C26', 'C27', 'C28', 'C29', 'C31', 'C32', 'D02', 'D05', 'D06') THEN 2.0
+                    ELSE 1.0
+                END as weight
+            FROM (SELECT DISTINCT measure_id, measure_key, measure_name FROM measures_all_years WHERE year = 2026) m
+        ) sub
+        ORDER BY part, measure_id
+        """
+        measures_2026 = engine.query(measures_2026_sql)
+        # Use composite key for matching
+        measures_2026_keys = measures_2026['measure_key_part'].tolist()
+        return measures_2026, measures_2026_keys
+    except Exception as e:
+        print(f"Error loading 2026 measures from unified: {e}")
+        return pd.DataFrame(), []
+
+
+def get_weights_by_year_from_unified(engine, years: list) -> dict:
+    """
+    Get measure weights by year from unified tables.
+    Returns {year: {measure_key_part: weight}}.
+    Uses composite key (measure_key + part) to distinguish Part C vs Part D.
+    """
+    weights_by_year = {}
+    try:
+        # Get measure_key mapping with part from measures_all_years
+        key_map_sql = f"""
+        SELECT DISTINCT 
+            year, 
+            measure_id, 
+            measure_key,
+            CASE WHEN measure_id LIKE 'D%' THEN 'D' ELSE 'C' END as part,
+            measure_key || '_' || CASE WHEN measure_id LIKE 'D%' THEN 'D' ELSE 'C' END as measure_key_part
+        FROM measures_all_years 
+        WHERE year BETWEEN {min(years)} AND {max(years)}
+        """
+        key_map_df = engine.query(key_map_sql)
+        
+        for _, row in key_map_df.iterrows():
+            y = int(row['year'])
+            mid = str(row['measure_id'])
+            mkey_part = str(row['measure_key_part'])
+            
+            if y not in weights_by_year:
+                weights_by_year[y] = {}
+            
+            # CMS weight rules
+            if mid in ('C30', 'D04'):
+                weight = 5.0
+            elif mid in ('C18', 'D08', 'D09', 'D10'):
+                weight = 3.0
+            elif mid in ('C22', 'C23', 'C24', 'C25', 'C26', 'C27', 'C28', 'C29', 'C31', 'C32', 'D02', 'D05', 'D06'):
+                weight = 2.0
+            else:
+                weight = 1.0
+            weights_by_year[y][mkey_part] = weight
+    except Exception as e:
+        print(f"Error loading weights from unified: {e}")
+    return weights_by_year
+
+
 def get_measure_performance_aggregates():
     """Load pre-computed measure performance aggregates."""
     try:
@@ -2395,145 +2487,206 @@ def get_measure_performance_aggregates():
 @app.get("/api/stars/measure-performance")
 async def get_measure_performance_table(
     parent_org: Optional[str] = None,  # None or "_INDUSTRY_" = industry, else specific payer
+    plan_type: Optional[str] = None,
+    snp_type: Optional[str] = None,
+    group_type: Optional[str] = None,
     avg_type: str = "weighted",  # "simple" or "weighted"
 ):
     """
     Get measure performance table data.
     Returns average performance % for each measure by year.
+    
+    Queries directly from unified tables (measures_all_years + stars_enrollment_unified).
+
+    Supports any combination of filters:
+    - parent_org: payer name (e.g., 'Humana Inc.')
+    - plan_type: HMO/HMOPOS, Local PPO, Regional PPO, PFFS, 1876 Cost
+    - snp_type: SNP, Non-SNP
+    - group_type: Individual, Group
 
     Args:
-        parent_org: Filter to specific payer, or None/"_INDUSTRY_" for industry
         avg_type: "simple" (mean) or "weighted" (enrollment-weighted)
     """
-    df = get_measure_performance_aggregates()
-
+    from db import get_engine
+    engine = get_engine()
+    
+    # Build filter clause for unified tables
+    filter_parts = []
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
+        filter_parts.append(f"e.parent_org LIKE '%{parent_org}%'")
+    if plan_type:
+        filter_parts.append(f"e.plan_type = '{plan_type}'")
+    if snp_type:
+        filter_parts.append(f"e.snp_type = '{snp_type}'")
+    if group_type:
+        filter_parts.append(f"e.group_type = '{group_type}'")
+    
+    filter_sql = " AND " + " AND ".join(filter_parts) if filter_parts else ""
+    
+    # Query measures with enrollment from unified tables
+    sql = f"""
+    SELECT 
+        m.year,
+        m.contract_id,
+        m.measure_id,
+        m.measure_name,
+        m.measure_key,
+        m.numeric_value as performance_pct,
+        COALESCE(e.parent_org, 'Unknown') as parent_org,
+        COALESCE(e.enrollment, 0) as enrollment,
+        e.plan_type,
+        e.snp_type,
+        e.group_type
+    FROM measures_all_years m
+    LEFT JOIN (
+        SELECT contract_id, star_year, parent_org, enrollment, plan_type, snp_type, group_type
+        FROM stars_enrollment_unified
+    ) e ON m.contract_id = e.contract_id AND m.year = e.star_year
+    WHERE m.numeric_value IS NOT NULL
+      AND m.measure_key IS NOT NULL
+      {filter_sql}
+    """
+    
+    df = engine.query(sql)
+    
     if df.empty:
-        return {"error": "Measure performance data not available - run build_measure_performance.py"}
-
-    # Filter to industry or specific payer
-    if not parent_org or parent_org == "_INDUSTRY_" or parent_org == "Industry":
-        df = df[df['parent_org'] == '_INDUSTRY_']
-        display_org = "Industry"
-    else:
-        df = df[df['parent_org'] == parent_org]
+        return {"error": "Measure performance data not available", "years": [], "measures": []}
+    
+    # Build display name for filters
+    display_org = "Industry"
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
         display_org = parent_org
+    if plan_type:
+        display_org += f" ({plan_type})"
+    if snp_type:
+        display_org += f" [{snp_type}]"
+    if group_type:
+        display_org += f" - {group_type}"
 
-    if df.empty:
-        return {"error": f"No data for {parent_org}"}
-
-    # Get value column based on avg_type
-    value_col = 'weighted_avg' if avg_type == 'weighted' else 'simple_avg'
-
-    # Get all years
     years = sorted(df['year'].unique())
-
-    # Build measure order: 2026 measures first (by measure_key), then older measures
-    # Load 2026 cutpoints for ordering and metadata
-    try:
-        cutpoints_2026 = load_parquet('processed/stars/cutpoints/2026/data.parquet')
-        measures_2026 = cutpoints_2026[['measure_id', 'measure_key', 'measure_name', 'part', 'lower_is_better']].drop_duplicates()
-        measures_2026_keys = measures_2026['measure_key'].tolist()
-    except:
-        measures_2026 = pd.DataFrame()
-        measures_2026_keys = []
-
-    # Load weights for all years (by measure_key since IDs change)
-    weights_by_year = {}  # {year: {measure_key: weight}}
-    for weight_year in years:
-        try:
-            cutpoints = load_parquet(f'processed/stars/cutpoints/{weight_year}/data.parquet')
-            if not cutpoints.empty:
-                weights_by_year[int(weight_year)] = {}
-                for _, row in cutpoints[['measure_key', 'weight']].drop_duplicates().iterrows():
-                    weights_by_year[int(weight_year)][row['measure_key']] = float(row['weight']) if pd.notna(row['weight']) else 1.0
-        except:
-            pass
-
+    
+    # Use unified tables for 2026 measures (consistent measure_key normalization)
+    measures_2026, measures_2026_keys = get_measures_2026_from_unified(engine)
+    weights_by_year = get_weights_by_year_from_unified(engine, years)
+    
+    # Add part column and composite key to data
+    df['part'] = df['measure_id'].apply(lambda x: 'D' if str(x).startswith('D') else 'C')
+    df['measure_key_part'] = df['measure_key'] + '_' + df['part']
+    
+    # Aggregate data by measure_key_part and year (distinguishes Part C vs Part D)
+    aggregated = {}  # {measure_key_part: {year: {value, contract_count, enrollment, measure_id, part, measure_name}}}
+    
+    for mkey_part in df['measure_key_part'].dropna().unique():
+        mdf = df[df['measure_key_part'] == mkey_part]
+        aggregated[mkey_part] = {}
+        
+        for year in years:
+            ydf = mdf[mdf['year'] == year]
+            if ydf.empty:
+                continue
+            
+            # Filter to valid performance values
+            valid = ydf[ydf['performance_pct'].notna()]
+            if valid.empty:
+                continue
+            
+            total_enrollment = valid['enrollment'].sum()
+            
+            # Calculate based on avg_type
+            if avg_type == 'weighted' and total_enrollment > 0:
+                value = (valid['performance_pct'] * valid['enrollment']).sum() / total_enrollment
+            else:
+                value = valid['performance_pct'].mean()
+            
+            sample = valid.iloc[0]
+            aggregated[mkey_part][year] = {
+                'value': float(value),
+                'contract_count': len(valid),
+                'enrollment': int(total_enrollment),
+                'measure_id': str(sample['measure_id']),
+                'part': str(sample['part']),
+                'measure_key': str(sample['measure_key']),
+                'measure_name': str(sample['measure_name']) if pd.notna(sample['measure_name']) else '',
+            }
+    
     # Build response with measures as rows, years as columns
-    # Group by measure_key (stable across years), NOT measure_id
     result_measures = []
     processed_keys = set()
-
-    # First: measures in 2026 (in order by 2026 measure_id)
+    
+    # First: measures in 2026 (in order by 2026 measure_id, using composite key)
     for _, m2026 in measures_2026.iterrows():
-        mkey = m2026['measure_key']
-        if mkey in processed_keys:
+        mkey_part = m2026['measure_key_part']
+        if mkey_part in processed_keys or mkey_part not in aggregated:
             continue
-        processed_keys.add(mkey)
-
-        measure_df = df[df['measure_key'] == mkey]
-        if measure_df.empty:
-            continue
-
+        processed_keys.add(mkey_part)
+        
         yearly_data = {}
         for year in years:
-            year_row = measure_df[measure_df['year'] == year]
-            if not year_row.empty:
-                row = year_row.iloc[0]
+            if year in aggregated[mkey_part]:
                 yearly_data[int(year)] = {
-                    'value': float(row[value_col]) if pd.notna(row[value_col]) else None,
-                    'contract_count': int(row['contract_count']),
-                    'enrollment': int(row['total_enrollment']) if pd.notna(row['total_enrollment']) else 0,
-                    'measure_id': str(row['measure_id']),  # Year-specific ID
+                    'value': aggregated[mkey_part][year]['value'],
+                    'contract_count': aggregated[mkey_part][year]['contract_count'],
+                    'enrollment': aggregated[mkey_part][year]['enrollment'],
+                    'measure_id': aggregated[mkey_part][year]['measure_id'],
                 }
             else:
                 yearly_data[int(year)] = None
-
-        # Get weights for this measure across years
+        
+        # Get weights for this measure across years (using composite key)
         measure_weights = {}
         for wy in weights_by_year:
-            if mkey in weights_by_year[wy]:
-                measure_weights[wy] = weights_by_year[wy][mkey]
-
+            if mkey_part in weights_by_year[wy]:
+                measure_weights[wy] = weights_by_year[wy][mkey_part]
+        
         result_measures.append({
-            'measure_id': str(m2026['measure_id']),  # 2026 ID for display
-            'measure_key': mkey,
-            'measure_name': str(m2026['measure_name']),
-            'part': str(m2026['part']) if pd.notna(m2026['part']) else 'C',
+            'measure_id': str(m2026['measure_id']),
+            'measure_key': str(m2026['measure_key']),
+            'measure_key_part': mkey_part,
+            'measure_name': str(m2026['measure_name_with_part']),  # Includes (Part C/D)
+            'part': str(m2026['part']),
             'lower_is_better': bool(m2026['lower_is_better']) if pd.notna(m2026['lower_is_better']) else False,
             'in_2026': True,
             'yearly': yearly_data,
             'weights': measure_weights,
         })
-
-    # Second: measures NOT in 2026 (discontinued)
-    all_measure_keys = df['measure_key'].dropna().unique()
-    discontinued_keys = [k for k in all_measure_keys if k not in processed_keys]
-
-    for mkey in sorted(discontinued_keys):
-        measure_df = df[df['measure_key'] == mkey]
-        if measure_df.empty:
-            continue
-
+    
+    # Second: measures NOT in 2026 (discontinued, using composite key)
+    discontinued_keys = [k for k in aggregated.keys() if k not in processed_keys]
+    
+    for mkey_part in sorted(discontinued_keys):
         # Get measure info from most recent year
-        sample_row = measure_df.sort_values('year', ascending=False).iloc[0]
-
+        latest_year = max(aggregated[mkey_part].keys())
+        sample_data = aggregated[mkey_part][latest_year]
+        
         yearly_data = {}
         for year in years:
-            year_row = measure_df[measure_df['year'] == year]
-            if not year_row.empty:
-                row = year_row.iloc[0]
+            if year in aggregated[mkey_part]:
                 yearly_data[int(year)] = {
-                    'value': float(row[value_col]) if pd.notna(row[value_col]) else None,
-                    'contract_count': int(row['contract_count']),
-                    'enrollment': int(row['total_enrollment']) if pd.notna(row['total_enrollment']) else 0,
-                    'measure_id': str(row['measure_id']),
+                    'value': aggregated[mkey_part][year]['value'],
+                    'contract_count': aggregated[mkey_part][year]['contract_count'],
+                    'enrollment': aggregated[mkey_part][year]['enrollment'],
+                    'measure_id': aggregated[mkey_part][year]['measure_id'],
                 }
             else:
                 yearly_data[int(year)] = None
-
-        # Get weights for this measure across years
+        
+        # Get weights (using composite key)
         measure_weights = {}
         for wy in weights_by_year:
-            if mkey in weights_by_year[wy]:
-                measure_weights[wy] = weights_by_year[wy][mkey]
-
+            if mkey_part in weights_by_year[wy]:
+                measure_weights[wy] = weights_by_year[wy][mkey_part]
+        
+        part = sample_data['part']
+        measure_name = sample_data['measure_name']
+        measure_name_with_part = f"{measure_name} (Part {part})" if measure_name else mkey_part
+        
         result_measures.append({
-            'measure_id': str(sample_row['measure_id']),
-            'measure_key': mkey,
-            'measure_name': str(sample_row.get('measure_name', mkey)) if pd.notna(sample_row.get('measure_name')) else mkey,
-            'part': str(sample_row.get('part', 'C')) if pd.notna(sample_row.get('part')) else 'C',
-            'lower_is_better': bool(sample_row.get('lower_is_better', False)) if pd.notna(sample_row.get('lower_is_better')) else False,
+            'measure_id': sample_data['measure_id'],
+            'measure_key': sample_data['measure_key'],
+            'measure_key_part': mkey_part,
+            'measure_name': measure_name_with_part,
+            'part': part,
+            'lower_is_better': False,
             'in_2026': False,
             'yearly': yearly_data,
             'weights': measure_weights,
@@ -2556,6 +2709,520 @@ async def get_measure_performance_table(
     }
 
 
+@app.get("/api/stars/measure-stars")
+async def get_measure_stars_table(
+    parent_org: Optional[str] = None,
+    plan_type: Optional[str] = None,
+    snp_type: Optional[str] = None,
+    group_type: Optional[str] = None,
+    avg_type: str = "weighted",  # "weighted", "simple", or "pct_fourplus"
+):
+    """
+    Get measure stars table data.
+    Returns average star ratings (1-5) for each measure by year.
+    
+    Supports any combination of filters:
+    - parent_org: payer name (e.g., 'Humana Inc.')
+    - plan_type: HMO/HMOPOS, Local PPO, Regional PPO, PFFS, 1876 Cost
+    - snp_type: SNP, Non-SNP
+    - group_type: Individual, Group
+    
+    avg_type options:
+    - "weighted": enrollment-weighted average star rating
+    - "simple": simple average star rating
+    - "pct_fourplus": % of enrollment in 4+ star contracts
+    """
+    from db import get_engine
+    engine = get_engine()
+    
+    # Build filter clause for unified tables
+    filter_parts = []
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
+        filter_parts.append(f"e.parent_org LIKE '%{parent_org}%'")
+    if plan_type:
+        filter_parts.append(f"e.plan_type = '{plan_type}'")
+    if snp_type:
+        filter_parts.append(f"e.snp_type = '{snp_type}'")
+    if group_type:
+        filter_parts.append(f"e.group_type = '{group_type}'")
+    
+    filter_sql = " AND " + " AND ".join(filter_parts) if filter_parts else ""
+    
+    # Get measure stars with enrollment for weighting
+    # Use stars_enrollment_unified which has data from 2013-2026
+    sql = f"""
+    SELECT 
+        ms.year,
+        ms.contract_id,
+        ms.measure_id,
+        ms.star_rating,
+        ms._source_file,
+        COALESCE(e.parent_org, 'Unknown') as parent_org,
+        COALESCE(e.enrollment, 0) as enrollment,
+        e.plan_type,
+        e.snp_type,
+        e.group_type,
+        m.measure_name,
+        m.measure_key
+    FROM measure_stars_all_years ms
+    LEFT JOIN (
+        SELECT contract_id, star_year, parent_org, enrollment, plan_type, snp_type, group_type
+        FROM stars_enrollment_unified
+    ) e ON ms.contract_id = e.contract_id AND ms.year = e.star_year
+    LEFT JOIN (
+        SELECT DISTINCT measure_id, measure_name, measure_key, year
+        FROM measures_all_years
+    ) m ON ms.measure_id = m.measure_id AND ms.year = m.year
+    WHERE ms.star_rating IS NOT NULL
+    {filter_sql}
+    """
+    
+    df = engine.query(sql)
+    
+    if df.empty:
+        return {"error": "Measure stars data not available", "years": [], "measures": []}
+    
+    # Build display name for filters
+    display_org = "Industry"
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
+        display_org = parent_org
+    if plan_type:
+        display_org += f" ({plan_type})"
+    if snp_type:
+        display_org += f" [{snp_type}]"
+    if group_type:
+        display_org += f" - {group_type}"
+    
+    years = sorted(df['year'].unique())
+    
+    # Use unified tables for 2026 measures (consistent measure_key normalization)
+    measures_2026, measures_2026_keys = get_measures_2026_from_unified(engine)
+    weights_by_year = get_weights_by_year_from_unified(engine, years)
+    
+    # Add part column and composite key to data
+    df['part'] = df['measure_id'].apply(lambda x: 'D' if str(x).startswith('D') else 'C')
+    df['measure_key_part'] = df['measure_key'] + '_' + df['part']
+    
+    # Aggregate by year/measure_key_part (distinguishes Part C vs Part D)
+    aggregated = []
+    for mkey_part in df['measure_key_part'].dropna().unique():
+        mdf = df[df['measure_key_part'] == mkey_part]
+        for year in years:
+            ydf = mdf[mdf['year'] == year]
+            if ydf.empty:
+                continue
+            
+            total_enrollment = ydf['enrollment'].sum()
+            
+            # Calculate based on avg_type
+            if avg_type == 'pct_fourplus':
+                # % of enrollment in 4+ star contracts - requires enrollment data
+                if total_enrollment <= 0:
+                    # No enrollment data = can't calculate this metric, skip
+                    continue
+                fourplus_enrollment = ydf[ydf['star_rating'] >= 4]['enrollment'].sum()
+                value = (fourplus_enrollment / total_enrollment) * 100
+            elif avg_type == 'weighted' and total_enrollment > 0:
+                value = (ydf['star_rating'] * ydf['enrollment']).sum() / total_enrollment
+            else:
+                value = ydf['star_rating'].mean()
+            
+            sample = ydf.iloc[0]
+            aggregated.append({
+                'year': int(year),
+                'measure_key': str(sample['measure_key']),
+                'measure_key_part': mkey_part,
+                'part': str(sample['part']),
+                'measure_id': str(sample['measure_id']),
+                'measure_name': str(sample['measure_name']) if pd.notna(sample['measure_name']) else mkey_part,
+                'avg_star': float(value),
+                'contract_count': len(ydf),
+                'total_enrollment': int(total_enrollment),
+                'fourplus_count': int(len(ydf[ydf['star_rating'] >= 4])),
+                'fourplus_enrollment': int(ydf[ydf['star_rating'] >= 4]['enrollment'].sum()),
+            })
+    
+    agg_df = pd.DataFrame(aggregated)
+    
+    # Build response
+    result_measures = []
+    processed_keys = set()
+    
+    # First: measures in 2026 (using composite key)
+    for _, m2026 in measures_2026.iterrows():
+        mkey_part = m2026['measure_key_part']
+        if mkey_part in processed_keys:
+            continue
+        processed_keys.add(mkey_part)
+        
+        measure_df = agg_df[agg_df['measure_key_part'] == mkey_part]
+        if measure_df.empty:
+            continue
+        
+        yearly_data = {}
+        for year in years:
+            year_row = measure_df[measure_df['year'] == year]
+            if not year_row.empty:
+                row = year_row.iloc[0]
+                yearly_data[int(year)] = {
+                    'value': round(float(row['avg_star']), 2) if pd.notna(row['avg_star']) else None,
+                    'contract_count': int(row['contract_count']),
+                    'enrollment': int(row['total_enrollment']),
+                    'measure_id': str(row['measure_id']),
+                }
+            else:
+                yearly_data[int(year)] = None
+        
+        # Get weights (using composite key)
+        measure_weights = {}
+        for wy in weights_by_year:
+            if mkey_part in weights_by_year[wy]:
+                measure_weights[wy] = weights_by_year[wy][mkey_part]
+        
+        result_measures.append({
+            'measure_id': str(m2026['measure_id']),
+            'measure_key': str(m2026['measure_key']),
+            'measure_key_part': mkey_part,
+            'measure_name': str(m2026['measure_name_with_part']),  # Includes (Part C/D)
+            'part': str(m2026['part']),
+            'lower_is_better': bool(m2026['lower_is_better']) if pd.notna(m2026['lower_is_better']) else False,
+            'in_2026': True,
+            'yearly': yearly_data,
+            'weights': measure_weights,
+        })
+    
+    # Second: discontinued measures (using composite key)
+    all_keys = agg_df['measure_key_part'].dropna().unique()
+    discontinued_keys = [k for k in all_keys if k not in processed_keys]
+    
+    for mkey_part in sorted(discontinued_keys):
+        measure_df = agg_df[agg_df['measure_key_part'] == mkey_part]
+        if measure_df.empty:
+            continue
+        
+        sample_row = measure_df.sort_values('year', ascending=False).iloc[0]
+        
+        yearly_data = {}
+        for year in years:
+            year_row = measure_df[measure_df['year'] == year]
+            if not year_row.empty:
+                row = year_row.iloc[0]
+                yearly_data[int(year)] = {
+                    'value': round(float(row['avg_star']), 2) if pd.notna(row['avg_star']) else None,
+                    'contract_count': int(row['contract_count']),
+                    'enrollment': int(row['total_enrollment']),
+                    'measure_id': str(row['measure_id']),
+                }
+            else:
+                yearly_data[int(year)] = None
+        
+        measure_weights = {}
+        for wy in weights_by_year:
+            if mkey_part in weights_by_year[wy]:
+                measure_weights[wy] = weights_by_year[wy][mkey_part]
+        
+        part = str(sample_row['part'])
+        measure_name = str(sample_row.get('measure_name', ''))
+        measure_name_with_part = f"{measure_name} (Part {part})" if measure_name else mkey_part
+        
+        result_measures.append({
+            'measure_id': str(sample_row['measure_id']),
+            'measure_key': str(sample_row.get('measure_key', '')),
+            'measure_key_part': mkey_part,
+            'measure_name': measure_name_with_part,
+            'part': part,
+            'lower_is_better': False,
+            'in_2026': False,
+            'yearly': yearly_data,
+            'weights': measure_weights,
+        })
+    
+    total_measures = len(result_measures)
+    measures_in_2026 = len([m for m in result_measures if m['in_2026']])
+    
+    return {
+        'parent_org': display_org,
+        'avg_type': avg_type,
+        'years': [int(y) for y in years],
+        'measures': result_measures,
+        'validation': {
+            'total_measures': total_measures,
+            'measures_in_2026': measures_in_2026,
+            'discontinued_measures': total_measures - measures_in_2026,
+        }
+    }
+
+
+@app.get("/api/stars/measure-stars/detail")
+async def get_measure_stars_detail(
+    measure_key: str,
+    year: int,
+    parent_org: Optional[str] = None,
+    plan_type: Optional[str] = None,
+    snp_type: Optional[str] = None,
+    group_type: Optional[str] = None,
+):
+    """
+    Get contract-level star rating detail for a specific measure/year.
+    Supports all filter combinations (parent_org, plan_type, snp_type, group_type).
+    """
+    from db import get_engine
+    engine = get_engine()
+    
+    # Build filter clause for unified tables
+    filter_parts = []
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
+        filter_parts.append(f"e.parent_org LIKE '%{parent_org}%'")
+    if plan_type:
+        filter_parts.append(f"e.plan_type = '{plan_type}'")
+    if snp_type:
+        filter_parts.append(f"e.snp_type = '{snp_type}'")
+    if group_type:
+        filter_parts.append(f"e.group_type = '{group_type}'")
+    
+    filter_sql = " AND " + " AND ".join(filter_parts) if filter_parts else ""
+    
+    # Use stars_enrollment_unified for consistent enrollment data (2013-2026)
+    sql = f"""
+    SELECT 
+        ms.contract_id,
+        ms.star_rating,
+        COALESCE(e.parent_org, 'Unknown') as parent_org,
+        COALESCE(e.enrollment, 0) as enrollment,
+        e.plan_type,
+        e.snp_type,
+        e.group_type
+    FROM measure_stars_all_years ms
+    LEFT JOIN (
+        SELECT contract_id, star_year, parent_org, enrollment, plan_type, snp_type, group_type
+        FROM stars_enrollment_unified
+    ) e ON ms.contract_id = e.contract_id AND ms.year = e.star_year
+    WHERE ms.year = {year}
+      AND ms.measure_id IN (
+          SELECT DISTINCT measure_id FROM measures_all_years 
+          WHERE measure_key = '{measure_key}' AND year = {year}
+      )
+      AND ms.star_rating IS NOT NULL
+      {filter_sql}
+    """
+    
+    df = engine.query(sql)
+    
+    contracts = []
+    for _, row in df.iterrows():
+        contracts.append({
+            'contract_id': str(row['contract_id']),
+            'parent_org': str(row['parent_org']) if pd.notna(row['parent_org']) else None,
+            'star_rating': int(row['star_rating']) if pd.notna(row['star_rating']) else None,
+            'enrollment': int(row['enrollment']) if pd.notna(row['enrollment']) else None,
+        })
+    
+    return {
+        'measure_key': measure_key,
+        'year': year,
+        'parent_org': parent_org or "Industry",
+        'contract_count': len(contracts),
+        'contracts': sorted(contracts, key=lambda x: x['contract_id']),
+    }
+
+
+@app.get("/api/stars/audit-download")
+async def download_stars_audit_package(
+    year: int,
+    data_type: str = "overall",  # "overall", "measures", "cutpoints"
+    parent_org: Optional[str] = None,
+):
+    """
+    Download a ZIP package with raw CMS star ratings files needed to replicate calculations,
+    plus a README explaining how they connect.
+    
+    Args:
+        year: Star year (e.g., 2024)
+        data_type: "overall" for overall ratings, "measures" for measure-level, "cutpoints" for cutpoints
+        parent_org: Optional filter (included in README for context)
+    """
+    import boto3
+    import zipfile
+    from datetime import datetime
+    
+    try:
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        # Create ZIP in memory
+        zip_buffer = BytesIO()
+        files_included = []
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            
+            # Helper to add file from S3
+            def add_s3_file(s3_key, local_path, description):
+                try:
+                    response = s3.get_object(Bucket=bucket, Key=s3_key)
+                    data = response['Body'].read()
+                    zf.writestr(local_path, data)
+                    files_included.append((local_path, description, s3_key))
+                    return True
+                except Exception as e:
+                    print(f"Failed to add {s3_key}: {e}")
+                    return False
+            
+            # === FILE 1: Star Ratings Data (main ratings file) ===
+            star_files = [
+                f"docs/stars/data_tables/{year}_star_ratings_data.zip",
+                f"docs/stars/data_tables/{year}_star_ratings.zip",
+                f"raw/stars/{year}_ratings.zip",
+                f"raw/stars/{year}_star_ratings.zip",
+            ]
+            for sf in star_files:
+                if add_s3_file(sf, f"1_star_ratings/star_ratings_{year}.zip",
+                              "Star Ratings - Overall ratings and measure performance by contract"):
+                    break
+            
+            # === FILE 1b: Star Display file (additional ratings data) ===
+            display_files = [
+                f"raw/stars/{year}_display.zip",
+            ]
+            for df_path in display_files:
+                add_s3_file(df_path, f"1_star_ratings/star_display_{year}.zip",
+                           "Star Display - Additional star ratings display data")
+            
+            # === FILE 2: Star Cutpoints (thresholds for each star level) ===
+            cutpoint_files = [
+                (f"docs/stars/cut_points/{year}_cutpoints.xlsx", f"2_cutpoints/cutpoints_{year}.xlsx"),
+                (f"docs/stars/data_tables/star_cutpoints_{year}.zip", f"2_cutpoints/star_cutpoints_{year}.zip"),
+                (f"docs/stars/data_tables/{year}_cutpoints.zip", f"2_cutpoints/cutpoints_{year}.zip"),
+                (f"raw/stars/cutpoints_{year}.zip", f"2_cutpoints/cutpoints_{year}.zip"),
+            ]
+            for s3_key, local_path in cutpoint_files:
+                if add_s3_file(s3_key, local_path,
+                              "Star Cutpoints - Performance thresholds for each star rating level"):
+                    break
+            
+            # === FILE 3: Enrollment Data (for weighting) ===
+            # Try multiple enrollment sources
+            enrollment_files = [
+                (f"raw/enrollment/by_plan/{year}-01/enrollment_plan_{year}_01.zip", f"3_enrollment/enrollment_{year}_01.zip"),
+                (f"raw/enrollment/by_plan/{year}-12/enrollment_plan_{year}_12.zip", f"3_enrollment/enrollment_{year}_12.zip"),
+                (f"raw/enrollment/by_plan/{year-1}-12/enrollment_plan_{year-1}_12.zip", f"3_enrollment/enrollment_{year-1}_12.zip"),
+            ]
+            for s3_key, local_path in enrollment_files:
+                if add_s3_file(s3_key, local_path,
+                              "Monthly Enrollment - Used for enrollment-weighted averages"):
+                    break
+            
+            # === FILE 4: Contract Info / Crosswalk ===
+            crosswalk_key = f"raw/crosswalks/crosswalk_{year}.zip"
+            add_s3_file(crosswalk_key, f"4_crosswalk/crosswalk_{year}.zip",
+                       "Contract Crosswalk - Maps contract changes and parent organizations")
+            
+            # === Create comprehensive README ===
+            readme_content = f"""# Star Ratings Data Audit Package
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Query Parameters
+- Star Year: {year}
+- Data Type: {data_type}
+- Parent Organization Filter: {parent_org or 'All (Industry)'}
+
+## Files Included
+
+"""
+            for local_path, description, s3_key in files_included:
+                readme_content += f"### {local_path}\n"
+                readme_content += f"- **Description**: {description}\n"
+                readme_content += f"- **Source**: s3://{bucket}/{s3_key}\n\n"
+            
+            readme_content += """
+## How to Replicate Our Calculations
+
+### Overall Star Ratings
+1. Open the star ratings file (1_star_ratings/)
+2. Look for the "Part C & D Overall" or "Summary" sheet
+3. Each contract has an overall star rating (1-5)
+4. To calculate enrollment-weighted averages:
+   - Join with enrollment data (3_enrollment/) on contract_id
+   - Weight = contract enrollment / total enrollment
+   - Weighted Avg = SUM(rating * weight)
+
+### Measure-Level Performance
+1. Open the star ratings file (1_star_ratings/)
+2. Look for "Part C" and "Part D" sheets with measure data
+3. Each contract has performance values for each measure (usually percentages)
+4. Measure IDs (C01, C02, D01, etc.) correspond to specific measures
+5. See cutpoints file (2_cutpoints/) for how performance maps to stars
+
+### Measure-Level Star Ratings
+1. Open the star ratings file, find "Measure Stars" sheet
+2. Each contract/measure combination has a 1-5 star rating
+3. Stars are assigned based on cutpoints:
+   - Performance >= 5-star cutpoint -> 5 stars
+   - Performance >= 4-star cutpoint -> 4 stars
+   - etc.
+
+### Cutpoints Reference
+The cutpoints file (2_cutpoints/) contains thresholds for each measure:
+- Column: measure_id, measure_name, 2_star_cutpoint, 3_star_cutpoint, 4_star_cutpoint, 5_star_cutpoint
+- Performance values between cutpoints determine star level
+
+### Weighted Average Calculation
+```
+For each measure/year:
+1. Get all contracts with valid data for that measure
+2. Join with enrollment data
+3. If weighted average:
+   - numerator = SUM(value * enrollment)
+   - denominator = SUM(enrollment)
+   - weighted_avg = numerator / denominator
+4. If simple average:
+   - simple_avg = MEAN(value)
+```
+
+### % of Enrollees in 4+ Star Contracts
+```
+For each measure/year:
+1. Get all contracts with star ratings for that measure
+2. Join with enrollment data
+3. fourplus_enrollment = SUM(enrollment WHERE star >= 4)
+4. total_enrollment = SUM(enrollment)
+5. pct_fourplus = fourplus_enrollment / total_enrollment * 100
+```
+
+## Data Sources
+
+Our platform uses these CMS data sources:
+- Star Ratings: https://www.cms.gov/medicare/health-drug-plans/part-c-d-performance-data
+- Enrollment: https://www.cms.gov/data-research/statistics-trends-and-reports/medicare-advantagepart-d-contract-and-enrollment-data
+- Cutpoints: Published annually with Star Ratings methodology
+
+## Questions?
+
+All calculations are transparent and reproducible using these source files.
+Contact support for additional assistance.
+"""
+            
+            zf.writestr("README.md", readme_content)
+        
+        # Return ZIP file
+        zip_buffer.seek(0)
+        
+        from fastapi.responses import StreamingResponse
+        
+        filename = f"stars_audit_{year}_{data_type}.zip"
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+        
+    except Exception as e:
+        return {"error": f"Failed to create audit package: {str(e)}"}
+
+
 @lru_cache(maxsize=1)
 def get_measure_performance_contracts():
     """Load contract-level measure performance data."""
@@ -2567,33 +3234,79 @@ async def get_measure_performance_detail(
     measure_key: str,
     year: int,
     parent_org: Optional[str] = None,  # None or "_INDUSTRY_" = all, else specific payer
+    plan_type: Optional[str] = None,
+    snp_type: Optional[str] = None,
+    group_type: Optional[str] = None,
 ):
     """
     Get contract-level detail for a specific measure/year.
     Used for auditing/drilling down into aggregate numbers.
+    Queries directly from unified tables for consistency.
+    
+    Supports all filter combinations (parent_org, plan_type, snp_type, group_type).
     """
-    df = get_measure_performance_contracts()
+    from db import get_engine
+    engine = get_engine()
+    
+    # Build filter clause for unified tables
+    filter_parts = []
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
+        filter_parts.append(f"e.parent_org LIKE '%{parent_org}%'")
+    if plan_type:
+        filter_parts.append(f"e.plan_type = '{plan_type}'")
+    if snp_type:
+        filter_parts.append(f"e.snp_type = '{snp_type}'")
+    if group_type:
+        filter_parts.append(f"e.group_type = '{group_type}'")
+    
+    filter_sql = " AND " + " AND ".join(filter_parts) if filter_parts else ""
+    
+    # Query directly from unified tables
+    sql = f"""
+    SELECT 
+        m.contract_id,
+        m.measure_id,
+        m.measure_name,
+        m.numeric_value as performance_pct,
+        COALESCE(e.parent_org, 'Unknown') as parent_org,
+        COALESCE(e.enrollment, 0) as enrollment,
+        e.plan_type,
+        e.snp_type,
+        e.group_type
+    FROM measures_all_years m
+    LEFT JOIN (
+        SELECT contract_id, star_year, parent_org, enrollment, plan_type, snp_type, group_type
+        FROM stars_enrollment_unified
+    ) e ON m.contract_id = e.contract_id AND m.year = e.star_year
+    WHERE m.year = {year}
+      AND m.measure_key = '{measure_key}'
+      AND m.numeric_value IS NOT NULL
+      {filter_sql}
+    """
+    
+    filtered = engine.query(sql)
+    
+    if filtered.empty:
+        return {"error": f"No data for {measure_key} in {year}", "contracts": []}
 
-    if df.empty:
-        return {"error": "Contract-level data not available"}
-
-    # Filter by measure_key and year
-    filtered = df[(df['measure_key'] == measure_key) & (df['year'] == year)]
-
-    # Filter by parent_org if specified
-    if parent_org and parent_org != "_INDUSTRY_" and parent_org != "Industry":
-        filtered = filtered[filtered['parent_org'] == parent_org]
+    # Build display name for filters
+    display_org = "Industry"
+    if parent_org and parent_org not in ["_INDUSTRY_", "Industry"]:
         display_org = parent_org
-    else:
-        display_org = "Industry"
+    if plan_type:
+        display_org += f" ({plan_type})"
+    if snp_type:
+        display_org += f" [{snp_type}]"
+    if group_type:
+        display_org += f" - {group_type}"
 
     if filtered.empty:
-        return {"error": f"No data for {measure_key} in {year}"}
+        return {"error": f"No data for {measure_key} in {year} for {display_org}", "contracts": []}
 
     # Get measure info
     sample = filtered.iloc[0]
-    measure_name = str(sample.get('measure_name', measure_key)) if pd.notna(sample.get('measure_name')) else measure_key
-    measure_id = str(sample.get('measure_id', ''))
+    measure_name = str(sample['measure_name']) if pd.notna(sample['measure_name']) else measure_key
+    measure_id = str(sample['measure_id']) if pd.notna(sample['measure_id']) else ''
 
     # Build contract list sorted by performance
     contracts = []
@@ -2602,7 +3315,7 @@ async def get_measure_performance_detail(
             'contract_id': str(row['contract_id']),
             'parent_org': str(row['parent_org']) if pd.notna(row['parent_org']) else None,
             'performance_pct': float(row['performance_pct']) if pd.notna(row['performance_pct']) else None,
-            'enrollment': int(row['enrollment']) if pd.notna(row.get('enrollment')) else None,
+            'enrollment': int(row['enrollment']) if pd.notna(row['enrollment']) else 0,
         })
 
     return {
@@ -3393,6 +4106,305 @@ async def export_enrollment_data(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.get("/api/v3/enrollment/audit-download")
+async def download_enrollment_audit_package(
+    year: int,
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    states: Optional[str] = None,
+    data_source: str = "national"
+):
+    """
+    Download a ZIP package with ALL raw CMS files needed to replicate the enrollment calculation,
+    plus a README explaining how they connect.
+    """
+    import boto3
+    import zipfile
+    from datetime import datetime
+    
+    try:
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        # Create ZIP in memory
+        zip_buffer = BytesIO()
+        files_included = []
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            
+            # Helper to add file from S3
+            def add_s3_file(s3_key, local_path, description):
+                try:
+                    response = s3.get_object(Bucket=bucket, Key=s3_key)
+                    data = response['Body'].read()
+                    zf.writestr(local_path, data)
+                    files_included.append((local_path, description, s3_key))
+                    return True
+                except:
+                    return False
+            
+            # Find best available month (prefer Dec, then work backwards)
+            def find_month(prefix_pattern, year):
+                for month in ['12', '11', '10', '02', '01']:
+                    key = prefix_pattern.format(year=year, month=month)
+                    try:
+                        s3.head_object(Bucket=bucket, Key=key)
+                        return month, key
+                    except:
+                        continue
+                return None, None
+            
+            # === FILE 1: Primary Enrollment File ===
+            if data_source == "geographic" or states:
+                # CPSC file for geographic data
+                month, key = find_month("raw/enrollment/cpsc/{year}-{month}/cpsc_enrollment_{year}_{month}.zip", year)
+                if key:
+                    add_s3_file(key, f"1_enrollment/cpsc_enrollment_{year}_{month}.zip", 
+                               "CPSC Enrollment - County-level enrollment with geographic detail")
+            else:
+                # Monthly enrollment by plan for national data
+                month, key = find_month("raw/enrollment/by_plan/{year}-{month}/enrollment_plan_{year}_{month}.zip", year)
+                if key:
+                    add_s3_file(key, f"1_enrollment/enrollment_plan_{year}_{month}.zip",
+                               "Monthly Enrollment by Plan - Contract/plan level enrollment with parent org")
+            
+            # === FILE 2: SNP Classification (if SNP filter used or for completeness) ===
+            month_snp, key_snp = find_month("raw/snp/{year}-{month}/snp_{year}_{month}.zip", year)
+            if key_snp:
+                add_s3_file(key_snp, f"2_snp_classification/snp_{year}_{month_snp}.zip",
+                           "SNP Classification - Identifies D-SNP, C-SNP, I-SNP plans")
+            
+            # === FILE 3: Contract Crosswalk (for tracking contract changes) ===
+            crosswalk_key = f"raw/crosswalks/crosswalk_{year}.zip"
+            try:
+                s3.head_object(Bucket=bucket, Key=crosswalk_key)
+                add_s3_file(crosswalk_key, f"3_crosswalk/crosswalk_{year}.zip",
+                           "Contract Crosswalk - Maps contract ID changes over time")
+            except:
+                pass
+            
+            # === FILE 4: CPSC file too if using national (for geographic reference) ===
+            if data_source != "geographic" and not states:
+                month_cpsc, key_cpsc = find_month("raw/enrollment/cpsc/{year}-{month}/cpsc_enrollment_{year}_{month}.zip", year)
+                if key_cpsc:
+                    add_s3_file(key_cpsc, f"4_geographic_reference/cpsc_enrollment_{year}_{month_cpsc}.zip",
+                               "CPSC Enrollment (Reference) - Use for geographic breakdowns")
+            
+            # === Create comprehensive README ===
+            readme_content = f"""# Enrollment Data Audit Package
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Query Parameters
+- Year: {year}
+- Parent Organization: {parent_org or 'All'}
+- Plan Types: {plan_types or 'All'}
+- SNP Types: {snp_types or 'All'}
+- Group Types: {group_types or 'All'}
+- States: {states or 'All (National)'}
+- Data Source: {'CPSC (Geographic)' if data_source == 'geographic' or states else 'Monthly Enrollment by Plan (National)'}
+
+## Files Included
+
+"""
+            for local_path, description, s3_key in files_included:
+                readme_content += f"""### {local_path}
+**{description}**
+- Source: s3://{bucket}/{s3_key}
+- Extract the ZIP to access CSV/Excel files
+
+"""
+
+            readme_content += f"""
+## How to Replicate the Calculation
+
+### Step 1: Start with the Enrollment File
+Open `1_enrollment/` and extract the ZIP file.
+
+The CMS enrollment file contains these key columns:
+- **Contract Number**: CMS contract ID (e.g., H1234, S5678)
+- **Plan ID**: Plan within contract (001, 002, etc.)
+- **Parent Organization**: Ultimate parent company (e.g., "Humana Inc.")
+- **Plan Type**: HMO, PPO, PDP, etc.
+- **Enrollment**: Number of members
+
+### Step 2: Apply Filters
+
+"""
+            if parent_org:
+                readme_content += f"""**Parent Organization Filter:**
+Filter where `Parent Organization` = "{parent_org}"
+
+"""
+            if plan_types:
+                readme_content += f"""**Plan Type Filter:**
+Filter where `Plan Type` IN ({plan_types})
+
+"""
+            if snp_types:
+                readme_content += f"""**SNP Type Filter:**
+To filter by SNP type, you need to JOIN with the SNP classification file:
+1. Open `2_snp_classification/` and extract the ZIP
+2. Join on Contract Number + Plan ID
+3. Filter where SNP Type = {snp_types}
+
+SNP Types:
+- D-SNP = Dual Eligible Special Needs Plan
+- C-SNP = Chronic Condition Special Needs Plan  
+- I-SNP = Institutional Special Needs Plan
+
+"""
+            if group_types:
+                readme_content += f"""**Group Type Filter:**
+Group type is derived from Plan ID:
+- Plan IDs 800-899 = Group/Employer plans
+- Plan IDs 001-799 = Individual plans
+
+Filter: {group_types}
+
+"""
+            if states:
+                readme_content += f"""**Geographic Filter:**
+Use the CPSC file for state/county filtering:
+1. Open `1_enrollment/` (CPSC file)
+2. Filter where State IN ({states})
+3. Note: Values marked "*" are suppressed (<10 enrollees)
+
+"""
+
+            readme_content += f"""### Step 3: Aggregate
+Sum the `Enrollment` column for all rows matching your filters.
+
+### SQL Query Used (Our Platform)
+```sql
+SELECT year, SUM(enrollment) as enrollment
+FROM {'fact_enrollment_by_geography' if data_source == 'geographic' or states else 'fact_enrollment_unified'}
+WHERE year = {year}
+"""
+            if parent_org:
+                readme_content += f"  AND parent_org = '{parent_org}'\n"
+            if plan_types:
+                pt_formatted = plan_types.replace(",", "', '")
+                readme_content += f"  AND plan_type IN ('{pt_formatted}')\n"
+            if snp_types:
+                st_formatted = snp_types.replace(",", "', '")
+                readme_content += f"  AND snp_type IN ('{st_formatted}')\n"
+            if group_types:
+                gt_formatted = group_types.replace(",", "', '")
+                readme_content += f"  AND group_type IN ('{gt_formatted}')\n"
+            if states:
+                states_formatted = states.replace(",", "', '")
+                readme_content += f"  AND state IN ('{states_formatted}')\n"
+            
+            readme_content += """GROUP BY year
+```
+
+## File Relationships
+
+```
+┌─────────────────────────────────┐
+│  Monthly Enrollment by Plan    │
+│  (Contract + Plan + Parent Org)│
+└────────────┬────────────────────┘
+             │ JOIN on Contract + Plan ID
+             ▼
+┌─────────────────────────────────┐
+│  SNP Classification File       │
+│  (D-SNP, C-SNP, I-SNP flags)  │
+└─────────────────────────────────┘
+
+┌─────────────────────────────────┐
+│  CPSC Enrollment               │
+│  (State + County detail)       │
+│  (Use for geographic analysis) │
+└─────────────────────────────────┘
+
+┌─────────────────────────────────┐
+│  Contract Crosswalk            │
+│  (Track contract ID changes)   │
+│  (Use for historical analysis) │
+└─────────────────────────────────┘
+```
+
+## Data Dictionary
+
+| Field | Description | Source File |
+|-------|-------------|-------------|
+| Contract Number | CMS contract ID (H=MA, S=PDP) | Enrollment |
+| Plan ID | Plan identifier (001-899) | Enrollment |
+| Parent Organization | Ultimate parent company | Enrollment |
+| Plan Type | HMO, PPO, PDP, PFFS, etc. | Enrollment |
+| SNP Type | D-SNP, C-SNP, I-SNP, or blank | SNP File |
+| State | 2-letter state code | CPSC |
+| County | County name | CPSC |
+| Enrollment | Member count | All |
+
+## Notes
+- Enrollment data is a point-in-time snapshot (month-end)
+- CPSC suppresses values <10 for privacy (shown as "*")
+- Plan IDs 800+ indicate employer/group plans
+- Contract IDs: H=MA-only, R=Regional PPO, S=PDP
+- Parent org mapping maintained by CMS, may change with M&A
+
+## Questions?
+This package contains all raw CMS files needed to independently 
+verify the enrollment calculation from the MA Intelligence Platform.
+"""
+            zf.writestr("README.md", readme_content)
+            
+            # === Add processed data for comparison ===
+            db = get_engine()
+            if db:
+                conditions = [f"year = {year}"]
+                if parent_org:
+                    conditions.append(f"parent_org = '{parent_org}'")
+                if plan_types:
+                    type_list = [f"'{t.strip()}'" for t in plan_types.split(",")]
+                    conditions.append(f"plan_type IN ({', '.join(type_list)})")
+                if snp_types:
+                    snp_list = [f"'{t.strip()}'" for t in snp_types.split(",")]
+                    conditions.append(f"snp_type IN ({', '.join(snp_list)})")
+                if group_types:
+                    group_list = [f"'{t.strip()}'" for t in group_types.split(",")]
+                    conditions.append(f"group_type IN ({', '.join(group_list)})")
+                if states:
+                    state_list = [f"'{s.strip()}'" for s in states.split(",")]
+                    conditions.append(f"state IN ({', '.join(state_list)})")
+                
+                where_clause = " AND ".join(conditions)
+                table = 'fact_enrollment_by_geography' if data_source == 'geographic' or states else 'fact_enrollment_unified'
+                
+                sql = f"SELECT * FROM {table} WHERE {where_clause} LIMIT 50000"
+                try:
+                    df = db.query(sql)
+                    excel_buffer = BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                        df.to_excel(writer, sheet_name='Processed Data', index=False)
+                        
+                        # Add summary sheet
+                        summary = df.groupby(['year']).agg({'enrollment': 'sum'}).reset_index()
+                        summary.to_excel(writer, sheet_name='Summary', index=False)
+                    excel_buffer.seek(0)
+                    zf.writestr("5_processed_comparison/our_calculation.xlsx", excel_buffer.getvalue())
+                    files_included.append(("5_processed_comparison/our_calculation.xlsx", 
+                                          "Our processed calculation for comparison", ""))
+                except:
+                    pass
+        
+        zip_buffer.seek(0)
+        
+        filename = f"enrollment_audit_{year}_{parent_org.replace(' ', '_').replace(',', '').replace('.', '') if parent_org else 'all'}.zip"
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audit download failed: {str(e)}")
 
 
 @app.get("/api/v4/risk-scores/export")
@@ -4690,194 +5702,603 @@ async def get_risk_contracts_v3(
 
 
 # =====================================================
-# DATA SOURCES DOWNLOAD ENDPOINTS
+# DATA SOURCES DOWNLOAD ENDPOINTS - RAW CMS FILES
 # =====================================================
 
+def get_s3_presigned_url(s3_key: str, filename: str, expiration: int = 3600):
+    """Generate a presigned URL for downloading a raw file from S3."""
+    import boto3
+    s3 = boto3.client('s3')
+    bucket = 'ma-data123'
+    
+    url = s3.generate_presigned_url(
+        'get_object',
+        Params={
+            'Bucket': bucket,
+            'Key': s3_key,
+            'ResponseContentDisposition': f'attachment; filename="{filename}"'
+        },
+        ExpiresIn=expiration
+    )
+    return url
+
+def find_raw_file(prefix: str, year: int, month: str = "12") -> tuple:
+    """Find a raw file in S3, returns (s3_key, filename) or raises error."""
+    import boto3
+    s3 = boto3.client('s3')
+    bucket = 'ma-data123'
+    
+    # List files matching the prefix and year/month
+    search_prefix = f"{prefix}{year}-{month}/"
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=search_prefix, MaxKeys=10)
+    
+    files = [obj for obj in response.get('Contents', []) if obj['Size'] > 1000]
+    if files:
+        key = files[0]['Key']
+        filename = key.split('/')[-1]
+        return key, filename
+    
+    # Try without month for yearly files
+    search_prefix = f"{prefix}{year}/"
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=search_prefix, MaxKeys=10)
+    files = [obj for obj in response.get('Contents', []) if obj['Size'] > 1000]
+    if files:
+        key = files[0]['Key']
+        filename = key.split('/')[-1]
+        return key, filename
+    
+    return None, None
+
+
 @app.get("/api/data-sources/cpsc")
-async def download_cpsc_data(
+async def download_cpsc_raw(
     year: int = 2024,
-    format: str = "xlsx",
-    all: bool = False
+    month: str = "12",
+    format: str = "raw"
 ):
-    """Download CPSC enrollment data by year."""
+    """
+    Download RAW CPSC enrollment file from CMS.
+    Returns the original ZIP file from S3.
+    """
     try:
-        db = get_engine()
-        if not db:
-            raise HTTPException(status_code=503, detail="Database not available")
+        # Find the raw CPSC file
+        s3_key, filename = find_raw_file("raw/enrollment/cpsc/", year, month)
         
-        if all:
-            sql = """
-                SELECT * FROM fact_enrollment_by_geography
-                ORDER BY year DESC, state, county
-                LIMIT 100000
-            """
-        else:
-            sql = f"""
-                SELECT * FROM fact_enrollment_by_geography
-                WHERE year = {year}
-                ORDER BY state, county
-                LIMIT 100000
-            """
+        if not s3_key:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw CPSC file not found for {year}-{month}. Available years: 2013-2025"
+            )
         
-        df = db.query(sql)
+        # Generate presigned URL for direct download
+        url = get_s3_presigned_url(s3_key, filename)
         
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name=f'CPSC_{year if not all else "All"}')
-        output.seek(0)
+        # Redirect to presigned URL
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
         
-        filename = f"cpsc_enrollment_{year if not all else 'all_years'}.xlsx"
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
 @app.get("/api/data-sources/enrollment")
-async def download_enrollment_by_plan(
+async def download_enrollment_raw(
     year: int = 2024,
-    format: str = "xlsx",
-    all: bool = False
+    month: str = "12",
+    format: str = "raw"
 ):
-    """Download enrollment by plan data by year."""
+    """
+    Download RAW Monthly Enrollment by Plan file from CMS.
+    Returns the original ZIP file from S3.
+    """
     try:
-        db = get_engine()
-        if not db:
-            raise HTTPException(status_code=503, detail="Database not available")
+        # Find the raw enrollment file
+        s3_key, filename = find_raw_file("raw/enrollment/by_plan/", year, month)
         
-        if all:
-            sql = """
-                SELECT * FROM fact_enrollment_unified
-                ORDER BY year DESC, parent_org, enrollment DESC
-                LIMIT 100000
-            """
-        else:
-            sql = f"""
-                SELECT * FROM fact_enrollment_unified
-                WHERE year = {year}
-                ORDER BY parent_org, enrollment DESC
-                LIMIT 100000
-            """
+        if not s3_key:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw enrollment file not found for {year}-{month}. Available years: 2007-2025"
+            )
         
-        df = db.query(sql)
+        # Generate presigned URL for direct download
+        url = get_s3_presigned_url(s3_key, filename)
         
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name=f'Enrollment_{year if not all else "All"}')
-        output.seek(0)
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
         
-        filename = f"enrollment_by_plan_{year if not all else 'all_years'}.xlsx"
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
 @app.get("/api/data-sources/snp")
-async def download_snp_data(
+async def download_snp_raw(
     year: int = 2024,
-    format: str = "xlsx",
-    all: bool = False
+    month: str = "12",
+    format: str = "raw"
 ):
-    """Download SNP enrollment data by year."""
+    """
+    Download RAW SNP (Special Needs Plan) file from CMS.
+    Returns the original ZIP file from S3.
+    """
     try:
-        db = get_engine()
-        if not db:
-            raise HTTPException(status_code=503, detail="Database not available")
+        # Find the raw SNP file
+        s3_key, filename = find_raw_file("raw/snp/", year, month)
         
-        if all:
-            sql = """
-                SELECT * FROM fact_snp_historical
-                ORDER BY year DESC, snp_type
-                LIMIT 100000
-            """
-        else:
-            sql = f"""
-                SELECT * FROM fact_snp_historical
-                WHERE year = {year}
-                ORDER BY snp_type
-                LIMIT 100000
-            """
+        if not s3_key:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw SNP file not found for {year}-{month}. Available years: 2007-2024"
+            )
         
-        df = db.query(sql)
+        # Generate presigned URL for direct download
+        url = get_s3_presigned_url(s3_key, filename)
         
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name=f'SNP_{year if not all else "All"}')
-        output.seek(0)
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
         
-        filename = f"snp_enrollment_{year if not all else 'all_years'}.xlsx"
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
 @app.get("/api/data-sources/crosswalk")
-async def download_crosswalk_data(
+async def download_crosswalk_raw(
     year: int = 2024,
-    format: str = "xlsx",
-    all: bool = False
+    format: str = "raw"
 ):
-    """Download contract crosswalk data by year."""
+    """
+    Download RAW Contract Crosswalk file from CMS.
+    Returns the original ZIP file from S3.
+    """
     try:
-        db = get_engine()
-        if not db:
-            raise HTTPException(status_code=503, detail="Database not available")
+        import boto3
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
         
-        if all:
-            sql = """
-                SELECT * FROM gold_dim_entity
-                ORDER BY effective_from DESC
-                LIMIT 100000
-            """
-        else:
-            sql = f"""
-                SELECT * FROM gold_dim_entity
-                WHERE CAST(effective_from AS VARCHAR) LIKE '{year}%'
-                   OR CAST(effective_to AS VARCHAR) LIKE '{year}%'
-                ORDER BY effective_from DESC
-                LIMIT 100000
-            """
+        # Crosswalk files are named crosswalk_YYYY.zip directly in raw/crosswalks/
+        s3_key = f"raw/crosswalks/crosswalk_{year}.zip"
         
-        df = db.query(sql)
+        # Verify file exists
+        try:
+            s3.head_object(Bucket=bucket, Key=s3_key)
+        except:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw crosswalk file not found for {year}. Available years: 2006-2026"
+            )
         
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name=f'Crosswalk_{year if not all else "All"}')
-        output.seek(0)
+        filename = f"crosswalk_{year}.zip"
+        url = get_s3_presigned_url(s3_key, filename)
         
-        filename = f"contract_crosswalk_{year if not all else 'all_years'}.xlsx"
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
+        
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@app.get("/api/data-sources/stars")
+async def download_stars_raw(
+    year: int = 2024,
+    format: str = "raw"
+):
+    """
+    Download RAW Star Ratings file from CMS.
+    Returns the original ZIP file from S3.
+    """
+    try:
+        import boto3
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        # Stars files have different naming patterns by year
+        search_prefix = f"raw/stars/{year}"
+        response = s3.list_objects_v2(Bucket=bucket, Prefix=search_prefix, MaxKeys=10)
+        
+        files = [obj for obj in response.get('Contents', []) if obj['Size'] > 1000]
+        if not files:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw stars file not found for {year}. Available years: 2007-2026"
+            )
+        
+        s3_key = files[0]['Key']
+        filename = s3_key.split('/')[-1]
+        
+        url = get_s3_presigned_url(s3_key, filename)
+        
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@app.get("/api/data-sources/risk-scores")
+async def download_risk_scores_raw(
+    year: int = 2024,
+    format: str = "raw"
+):
+    """
+    Download RAW Plan Payment (Risk Scores) file from CMS.
+    Returns the original ZIP file from S3.
+    """
+    try:
+        import boto3
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        # Plan payment files are yearly
+        search_prefix = f"raw/plan_payment/{year}"
+        response = s3.list_objects_v2(Bucket=bucket, Prefix=search_prefix, MaxKeys=10)
+        
+        files = [obj for obj in response.get('Contents', []) if obj['Size'] > 1000]
+        if not files:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw risk scores file not found for {year}. Available years: 2006-2024"
+            )
+        
+        s3_key = files[0]['Key']
+        filename = s3_key.split('/')[-1]
+        
+        url = get_s3_presigned_url(s3_key, filename)
+        
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@app.get("/api/data-sources/list")
+async def list_available_raw_files():
+    """
+    List all available raw CMS files that can be downloaded.
+    Returns years available for each data source.
+    """
+    try:
+        import boto3
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        result = {}
+        
+        # CPSC files
+        cpsc_years = set()
+        paginator = s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=bucket, Prefix='raw/enrollment/cpsc/'):
+            for obj in page.get('Contents', []):
+                if obj['Size'] > 1000:
+                    parts = obj['Key'].split('/')
+                    if len(parts) > 3:
+                        year_month = parts[3]
+                        if '-' in year_month:
+                            cpsc_years.add(int(year_month.split('-')[0]))
+        result['cpsc'] = sorted(cpsc_years)
+        
+        # Monthly enrollment
+        enrollment_years = set()
+        for page in paginator.paginate(Bucket=bucket, Prefix='raw/enrollment/by_plan/'):
+            for obj in page.get('Contents', []):
+                if obj['Size'] > 1000:
+                    parts = obj['Key'].split('/')
+                    if len(parts) > 3:
+                        year_month = parts[3]
+                        if '-' in year_month:
+                            enrollment_years.add(int(year_month.split('-')[0]))
+        result['enrollment'] = sorted(enrollment_years)
+        
+        # SNP files
+        snp_years = set()
+        for page in paginator.paginate(Bucket=bucket, Prefix='raw/snp/'):
+            for obj in page.get('Contents', []):
+                if obj['Size'] > 100:
+                    parts = obj['Key'].split('/')
+                    if len(parts) > 2:
+                        year_month = parts[2]
+                        if '-' in year_month:
+                            snp_years.add(int(year_month.split('-')[0]))
+        result['snp'] = sorted(snp_years)
+        
+        # Stars files
+        stars_years = set()
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='raw/stars/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            if obj['Size'] > 1000:
+                filename = obj['Key'].split('/')[-1]
+                for y in range(2007, 2030):
+                    if str(y) in filename:
+                        stars_years.add(y)
+                        break
+        result['stars'] = sorted(stars_years)
+        
+        # Risk scores (plan payment)
+        risk_years = set()
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='raw/plan_payment/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            if obj['Size'] > 1000:
+                parts = obj['Key'].split('/')
+                if len(parts) > 2 and parts[2].isdigit():
+                    risk_years.add(int(parts[2]))
+        result['risk_scores'] = sorted(risk_years)
+        
+        # Crosswalks - files are named crosswalk_YYYY.zip
+        crosswalk_years = set()
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='raw/crosswalks/', MaxKeys=100)
+        import re
+        for obj in response.get('Contents', []):
+            if obj['Size'] > 100:
+                filename = obj['Key'].split('/')[-1]
+                # Match crosswalk_YYYY.zip pattern
+                match = re.search(r'crosswalk_(\d{4})\.zip', filename)
+                if match:
+                    crosswalk_years.add(int(match.group(1)))
+        result['crosswalk'] = sorted(crosswalk_years)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
 
 
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "version": "1.0.0"}
+
+
+# ================================================================
+# RATE NOTICE AUDIT ENDPOINTS
+# ================================================================
+
+@app.get("/api/rate-notice/audit-download")
+async def download_rate_notice_audit_package(
+    year: Optional[int] = None,
+    include_county_benchmarks: bool = True,
+    format: str = "parquet"  # "parquet" or "csv"
+):
+    """
+    Download comprehensive rate notice audit package.
+    
+    Includes all rate notice data with full audit fields:
+    - Part D parameters (deductible, ICL, TrOOP by year)
+    - Risk adjustment parameters (model version, phase-in, normalization)
+    - MA growth rates (advance vs final, effective)
+    - Star bonus structure (bonus %, rebate % by star level)
+    - HCC coefficients (V28 model coefficients)
+    - National USPCC (FFS baseline by year)
+    - County benchmarks (MA rates by county/year) - optional, large file
+    
+    All tables include source_document, source_section, extracted_at columns.
+    """
+    import zipfile
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    import boto3
+    import pandas as pd
+    
+    s3 = boto3.client('s3')
+    bucket = 'ma-data123'
+    
+    tables = [
+        'part_d_parameters',
+        'risk_adjustment_parameters',
+        'ma_growth_rates',
+        'star_bonus_structure',
+        'hcc_coefficients_v28',
+        'national_uspcc',
+    ]
+    
+    if include_county_benchmarks:
+        tables.append('county_benchmarks')
+    
+    try:
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Add metadata
+            metadata = {
+                "package_type": "rate_notice_audit",
+                "created_at": datetime.utcnow().isoformat(),
+                "year_filter": year,
+                "format": format,
+                "tables_included": tables,
+                "audit_fields": [
+                    "source_document",
+                    "source_section", 
+                    "source_table",
+                    "extracted_at",
+                    "data_type",
+                    "verification_status"
+                ],
+                "description": "Complete rate notice data with full provenance tracking"
+            }
+            zf.writestr("_metadata.json", json.dumps(metadata, indent=2))
+            
+            # Add README
+            readme = """# Rate Notice Audit Package
+
+## Contents
+This package contains CMS rate notice data with full audit/provenance tracking.
+
+### Tables
+- part_d_parameters: Part D standard benefit parameters by year
+- risk_adjustment_parameters: HCC model version, phase-in, normalization factors
+- ma_growth_rates: MA capitation rate changes (advance vs final)
+- star_bonus_structure: Quality bonus and rebate percentages by star level
+- hcc_coefficients_v28: CMS-HCC V28 model coefficients
+- national_uspcc: National per capita FFS costs (USPCC baseline)
+- county_benchmarks: County-level MA benchmark rates (from ratebooks)
+
+### Audit Fields (present in all tables)
+- source_document: The CMS document from which data was extracted
+- source_section: Section within the document
+- source_table: Table name within the document
+- extracted_at: Timestamp when data was extracted
+- data_type: "CMS Official" or "Statutory"
+- verification_status: "verified" for manually validated data
+
+### Data Sources
+All data extracted from official CMS Rate Announcements and Ratebooks:
+- Rate Announcements: https://www.cms.gov/Medicare/Health-Plans/MedicareAdvtgSpecRateStats
+- Ratebooks: https://www.cms.gov/Medicare/Health-Plans/MedicareAdvtgSpecRateStats/Ratebooks
+"""
+            zf.writestr("README.md", readme)
+            
+            # Add each table
+            for table_name in tables:
+                try:
+                    key = f"gold/rate_notice/{table_name}.parquet"
+                    response = s3.get_object(Bucket=bucket, Key=key)
+                    df = pd.read_parquet(BytesIO(response['Body'].read()))
+                    
+                    # Filter by year if specified
+                    if year and 'year' in df.columns:
+                        df = df[df['year'] == year]
+                    
+                    # Save in requested format
+                    if format == "csv":
+                        csv_buffer = BytesIO()
+                        df.to_csv(csv_buffer, index=False)
+                        zf.writestr(f"{table_name}.csv", csv_buffer.getvalue())
+                    else:
+                        parquet_buffer = BytesIO()
+                        df.to_parquet(parquet_buffer, index=False)
+                        zf.writestr(f"{table_name}.parquet", parquet_buffer.getvalue())
+                        
+                except Exception as e:
+                    # Skip missing tables
+                    continue
+            
+            # Add county benchmarks audit metadata
+            if include_county_benchmarks:
+                try:
+                    response = s3.get_object(Bucket=bucket, Key="gold/rate_notice/county_benchmarks_audit.json")
+                    audit_meta = response['Body'].read()
+                    zf.writestr("county_benchmarks_audit.json", audit_meta)
+                except:
+                    pass
+        
+        zip_buffer.seek(0)
+        
+        year_suffix = f"_{year}" if year else "_all_years"
+        filename = f"rate_notice_audit{year_suffix}.zip"
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audit download failed: {str(e)}")
+
+
+@app.get("/api/rate-notice/tables")
+async def list_rate_notice_tables():
+    """
+    List all available rate notice tables with metadata.
+    """
+    import boto3
+    import pandas as pd
+    from io import BytesIO
+    
+    s3 = boto3.client('s3')
+    bucket = 'ma-data123'
+    
+    tables = {}
+    
+    table_names = [
+        'part_d_parameters',
+        'risk_adjustment_parameters',
+        'ma_growth_rates',
+        'star_bonus_structure',
+        'hcc_coefficients_v28',
+        'national_uspcc',
+        'county_benchmarks',
+    ]
+    
+    for table_name in table_names:
+        try:
+            key = f"gold/rate_notice/{table_name}.parquet"
+            response = s3.get_object(Bucket=bucket, Key=key)
+            df = pd.read_parquet(BytesIO(response['Body'].read()))
+            
+            # Get audit columns
+            audit_cols = [c for c in df.columns if 'source' in c.lower() or 'extracted' in c.lower() or 'verification' in c.lower()]
+            
+            tables[table_name] = {
+                "row_count": len(df),
+                "columns": list(df.columns),
+                "audit_columns": audit_cols,
+                "year_range": [int(df['year'].min()), int(df['year'].max())] if 'year' in df.columns else None,
+            }
+        except Exception as e:
+            tables[table_name] = {"error": str(e)}
+    
+    return {
+        "tables": tables,
+        "total_tables": len(table_names),
+        "description": "Rate notice data tables with full audit/provenance tracking"
+    }
+
+
+@app.get("/api/rate-notice/county-benchmarks")
+async def get_county_benchmarks(
+    year: int,
+    state: Optional[str] = None,
+    limit: int = 100
+):
+    """
+    Query county benchmark rates with audit fields.
+    
+    Returns MA benchmark rates by county from CMS ratebooks.
+    Includes source_file, source_row, and extracted_at for audit.
+    """
+    import boto3
+    import pandas as pd
+    from io import BytesIO
+    
+    s3 = boto3.client('s3')
+    bucket = 'ma-data123'
+    
+    try:
+        response = s3.get_object(Bucket=bucket, Key="gold/rate_notice/county_benchmarks.parquet")
+        df = pd.read_parquet(BytesIO(response['Body'].read()))
+        
+        # Filter
+        df = df[df['year'] == year]
+        if state:
+            df = df[df['state_code'].str.upper() == state.upper()]
+        
+        # Limit results
+        df = df.head(limit)
+        
+        return {
+            "data": df.to_dict(orient='records'),
+            "count": len(df),
+            "year": year,
+            "state_filter": state,
+            "audit_info": {
+                "source": "CMS MA Ratebooks",
+                "audit_columns": ["source_file", "source_table", "source_row", "extracted_at"],
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 if __name__ == "__main__":

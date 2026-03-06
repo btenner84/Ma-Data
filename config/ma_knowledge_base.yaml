@@ -1,0 +1,389 @@
+# MA Intelligence Platform - Knowledge Base
+# Version: 1.0
+# Last Updated: 2026-03-04
+#
+# Structured knowledge for the MA AI assistant.
+# Contains: Glossary, Measure Definitions, Policy Timeline, Calculations
+
+version: "1.0"
+
+# =============================================================================
+# GLOSSARY - Common MA terms and acronyms
+# =============================================================================
+glossary:
+  # Organizations & Programs
+  CMS:
+    term: "Centers for Medicare & Medicaid Services"
+    definition: "Federal agency that administers Medicare, Medicaid, CHIP, and the federal health insurance marketplace."
+    context: "CMS releases all the data we use - enrollment files, star ratings, risk scores."
+    
+  MA:
+    term: "Medicare Advantage"
+    definition: "Medicare Part C - private health plans approved by Medicare that provide Part A and Part B benefits."
+    context: "Also called 'Part C' or 'MA plans'. This is the core of our platform."
+    related: ["MAPD", "MA-only", "PDP"]
+    
+  MAPD:
+    term: "Medicare Advantage Prescription Drug Plan"
+    definition: "MA plan that includes Part D prescription drug coverage. Most common MA product type (~75% of MA)."
+    context: "MAPD = MA + Part D together. Most people choose this over MA-only."
+    
+  PDP:
+    term: "Prescription Drug Plan"
+    definition: "Standalone Medicare Part D drug plan. Not part of Medicare Advantage."
+    context: "PDPs are for people who want Original Medicare + drug coverage, not MA."
+    
+  SNP:
+    term: "Special Needs Plan"
+    definition: "MA plan designed for specific populations with specialized benefits and care coordination."
+    subtypes:
+      D-SNP: "Dual Eligible SNP - for people with both Medicare and Medicaid"
+      C-SNP: "Chronic Condition SNP - for people with specific chronic conditions"
+      I-SNP: "Institutional SNP - for people in nursing facilities or requiring institutional care"
+    context: "D-SNP is the fastest growing segment. Very important for Medicaid managed care companies like Centene, Molina."
+    
+  MMP:
+    term: "Medicare-Medicaid Plan"
+    definition: "Integrated plan for dual eligibles under the Financial Alignment Initiative demonstration."
+    context: "Different from D-SNP. MMPs are a specific CMS demonstration program, not standard MA."
+    
+  EGHP:
+    term: "Employer Group Health Plan"
+    definition: "MA plan offered through an employer or union to retirees."
+    context: "This is the 'Group' market vs 'Individual' market. EGHP plans have plan IDs 800+."
+    
+  # Quality & Ratings
+  star_rating:
+    term: "Star Rating"
+    definition: "CMS quality rating system for MA and PDP plans, ranging from 1 to 5 stars."
+    calculation: "Weighted average of ~40+ measures across domains (outcomes, process, patient experience, complaints)."
+    importance: |
+      4+ stars = bonus payments (5% extra capitation)
+      5 stars = can market year-round (Special Enrollment Period)
+      Below 3 stars for 3 years = CMS can terminate contract
+    released: "October each year for the following payment year"
+    
+  QBP:
+    term: "Quality Bonus Payment"
+    definition: "Extra payment to MA plans with 4+ star ratings, equal to 5% of their benchmark."
+    context: "This is why star ratings matter financially. A large plan can gain/lose hundreds of millions."
+    
+  CAI:
+    term: "Contract-level Adjustment Index"
+    definition: "Part of star ratings methodology that adjusts for social risk factors."
+    context: "Helps plans serving lower-income populations. Introduced in 2024."
+    
+  HEI:
+    term: "Health Equity Index"
+    definition: "New star ratings reward for plans reducing disparities in care."
+    context: "New in 2027 star ratings (released Oct 2026). Up to 10 bonus points."
+    
+  # Payment & Risk
+  RAF:
+    term: "Risk Adjustment Factor"
+    definition: "Multiplier applied to MA capitation based on beneficiary health status."
+    calculation: "Based on HCC (Hierarchical Condition Category) diagnoses from prior year claims."
+    context: "RAF of 1.0 = average. Higher RAF = sicker population = higher payments."
+    typical_range: "0.8 (healthy) to 1.5+ (complex chronic conditions)"
+    
+  HCC:
+    term: "Hierarchical Condition Category"
+    definition: "CMS diagnostic grouping used for risk adjustment."
+    context: "Certain diagnoses = higher RAF. Plans have incentives to document conditions accurately."
+    
+  CMS_HCC_model:
+    term: "CMS-HCC Risk Adjustment Model"
+    definition: "The risk adjustment model used to calculate risk scores for Medicare Advantage payment."
+    versions:
+      V12: 
+        years: "2004-2013"
+        description: "Original CMS-HCC model based on 1999-2000 FFS data"
+      V21:
+        years: "2014-2016"
+        description: "Major revision using 2004-2005 data, recalibrated coefficients"
+        changes: "New HCC structure, updated ICD-9 mappings"
+      V22:
+        years: "2017-2019"
+        description: "Refinement of V21 with updated calibration data (2010-2012)"
+        changes: "Improved dual eligible segments, added ESRD dialysis factors"
+      V23:
+        years: "2017-2019 (concurrent)"
+        description: "Alternative model used for certain populations"
+      V24:
+        years: "2020-2023"
+        description: "21st Century Cures Act implementation"
+        changes: |
+          - Added condition count factors per Cures Act requirement
+          - Updated to ICD-10 diagnostic codes
+          - Used 2015-2016 calibration data
+          - 3-year phase-in from V22 to V24 (2020-2022)
+        phase_in: "67% V22 + 33% V24 in 2020, 33% V22 + 67% V24 in 2021, 100% V24 in 2022"
+      V28:
+        years: "2024+"
+        description: "Major model update announced in 2023 Rate Notice"
+        changes: |
+          - ICD-10 based calibration (2018 diagnoses, 2019 costs)
+          - Removed ~2,000 diagnosis codes susceptible to coding intensity
+          - Added new HCCs for dementia, pressure ulcers
+          - Modified hierarchy rules
+          - 3-year phase-in from V24 to V28 (2024-2026)
+        phase_in: "67% V24 + 33% V28 in 2024, 33% V24 + 67% V28 in 2025, 100% V28 in 2026"
+        impact: "Estimated -2.16% payment impact from model revision in 2024"
+    model_components:
+      - "Demographic factors (age-sex)"
+      - "HCC factors (diagnosis-based)"
+      - "Interaction factors (condition combinations)"
+      - "Count factors (total number of conditions) - added V24"
+      - "Frailty adjustment for FIDE-SNPs"
+      - "ESRD factors (dialysis, transplant, functioning graft)"
+    segments:
+      - "Community Non-Dual Aged"
+      - "Community Non-Dual Disabled"
+      - "Community Full Dual Aged"
+      - "Community Full Dual Disabled"
+      - "Institutional"
+      - "New Enrollee"
+      - "ESRD Dialysis"
+      - "ESRD Transplant"
+      - "ESRD Functioning Graft"
+    
+  benchmark:
+    term: "County Benchmark"
+    definition: "Maximum amount CMS will pay for MA coverage in each county."
+    context: "Set annually in rate notice. Plans bid against benchmark."
+    
+  bid:
+    term: "Plan Bid"
+    definition: "Amount an MA plan proposes to provide Medicare benefits."
+    context: "If bid < benchmark, difference goes to supplemental benefits and/or rebates."
+    
+  rebate:
+    term: "Rebate"
+    definition: "Portion of savings (benchmark - bid) returned to plan for supplemental benefits."
+    context: "Rebate percentage depends on star rating (70% for 4+ stars, 65% for 3.5 stars, etc.)"
+    
+  # Enrollment Data
+  CPSC:
+    term: "Contract-Plan-State-County"
+    definition: "CMS enrollment file with geographic detail (state/county level)."
+    context: "Most granular enrollment data. Has suppression for <11 enrollees."
+    
+  crosswalk:
+    term: "Contract Crosswalk"
+    definition: "CMS file showing contract ID changes due to M&A, consolidation, or renumbering."
+    context: "Critical for tracking plans over time. A contract may change IDs but continue as same entity."
+
+# =============================================================================
+# STAR RATING MEASURES - Key measures and their weights
+# =============================================================================
+star_measures:
+  domains:
+    - name: "Outcomes"
+      weight: "Highest (3x)"
+      examples: ["Controlling Blood Pressure", "Diabetes Care", "Plan All-Cause Readmissions"]
+      
+    - name: "Intermediate Outcomes"
+      weight: "High (1.5x)"
+      examples: ["Medication Adherence - Diabetes", "Medication Adherence - Hypertension"]
+      
+    - name: "Patient Experience"
+      weight: "Medium (1.5x)"
+      examples: ["Getting Needed Care", "Rating of Health Plan", "Customer Service"]
+      source: "CAHPS survey"
+      
+    - name: "Process"
+      weight: "Standard (1x)"
+      examples: ["Breast Cancer Screening", "Annual Flu Vaccine", "Health Plan Call Center"]
+      
+  key_measures:
+    C01:
+      name: "Breast Cancer Screening"
+      domain: "Process"
+      description: "% of women 50-74 with mammogram in past 2 years"
+      
+    C06:
+      name: "Care for Older Adults - Medication Review"
+      domain: "Process"
+      description: "% of 66+ members with medication review"
+      
+    C14:
+      name: "Plan All-Cause Readmissions"
+      domain: "Outcomes"
+      description: "Risk-adjusted readmission rate within 30 days"
+      lower_is_better: true
+      
+    D08:
+      name: "Medication Adherence for Diabetes"
+      domain: "Intermediate Outcomes"
+      description: "% of diabetic members with 80%+ medication adherence"
+      
+    D10:
+      name: "Medication Adherence for Hypertension"
+      domain: "Intermediate Outcomes"
+      description: "% of hypertensive members with 80%+ medication adherence"
+      
+    H01:
+      name: "Getting Needed Care"
+      domain: "Patient Experience"
+      description: "% reporting ease of getting appointments/referrals"
+      source: "CAHPS"
+      
+    H03:
+      name: "Overall Rating of Health Plan"
+      domain: "Patient Experience"
+      description: "% rating plan 9 or 10 out of 10"
+      source: "CAHPS"
+      
+  cutpoints:
+    description: "Thresholds that determine star level for each measure"
+    note: "Released each year in Part C/D Star Ratings Technical Notes"
+    example:
+      measure: "C01 - Breast Cancer Screening"
+      two_star: "< 66%"
+      three_star: "66% - 73%"
+      four_star: "73% - 80%"
+      five_star: ">= 80%"
+
+# =============================================================================
+# POLICY TIMELINE - Key regulatory changes by year
+# =============================================================================
+policy_timeline:
+  2024:
+    - "Risk Model (V28) phase-in begins (25% V28, 75% V24)"
+    - "CAI (Contract-level Adjustment Index) introduced for stars"
+    - "Third year of 'hold harmless' provision expiring"
+    
+  2025:
+    - "Risk Model V28 phase-in continues (50% V28, 50% V24)"
+    - "Star ratings continue using 2019-2022 CAHPS data (COVID adjustment)"
+    - "Benchmark growth limited (ACA limits still in effect)"
+    
+  2026:
+    - "Risk Model V28 phase-in continues (75% V28, 25% V24)"
+    - "CAHPS survey methodology updates"
+    - "Part D redesign under IRA (cap on out-of-pocket costs)"
+    
+  2027:
+    - "Risk Model V28 fully phased in (100%)"
+    - "Health Equity Index added to star ratings (up to 10 bonus points)"
+    - "New quality measures for behavioral health"
+    
+  major_events:
+    ACA_passage:
+      year: 2010
+      impact: "Established bonus payments for 4+ star plans, benchmark limits"
+      
+    risk_model_v24:
+      year: 2020
+      impact: "Major risk model update, recalibrated HCCs"
+      
+    covid_adjustments:
+      years: [2021, 2022, 2023, 2024]
+      impact: "Disaster relief for stars (hold harmless), CAHPS adjustments"
+      
+    IRA_passage:
+      year: 2022
+      impact: "Part D redesign, drug price negotiation, $2000 OOP cap in 2025"
+
+# =============================================================================
+# CALCULATION METHODS - How key metrics are computed
+# =============================================================================
+calculations:
+  enrollment:
+    total_ma:
+      formula: "SUM(enrollment) WHERE product_type IN ('MA-only', 'MAPD') AND month = (SELECT MAX(month) FROM table WHERE year = target_year)"
+      note: "IMPORTANT: For enrollment counts, always use the LATEST MONTH available for that year. Do NOT sum across months - enrollment is a point-in-time snapshot, not cumulative. Each month's data represents total membership at that point."
+      critical_rule: "When asked 'what is enrollment in year X', filter to MAX(month) for that year"
+      
+    market_share:
+      formula: "(payer_enrollment / total_ma_enrollment) * 100"
+      note: "Always as percent of total MA, not Medicare"
+      
+    yoy_growth:
+      formula: "((current_year - prior_year) / prior_year) * 100"
+      
+  stars:
+    weighted_average:
+      formula: "SUM(measure_rating * measure_weight) / SUM(measure_weight)"
+      note: "Outcomes measures weighted 3x, intermediate outcomes 1.5x"
+      
+    four_plus_percent:
+      formula: "(enrollment_in_4plus_star_contracts / total_enrollment) * 100"
+      note: "At contract level - all plans in contract share same stars"
+      
+  risk_scores:
+    weighted_average_raf:
+      formula: "SUM(avg_risk_score * enrollment) / SUM(enrollment)"
+      note: "Weight by enrollment for accurate population average"
+
+# =============================================================================
+# TOP PAYERS - Reference for canonical names
+# =============================================================================
+top_payers:
+  - canonical: "UnitedHealth Group, Inc."
+    aliases: ["United", "UHC", "UnitedHealthcare", "Optum"]
+    market_position: 1
+    specialty: "Largest MA payer, strong in all segments"
+    
+  - canonical: "Humana Inc."
+    aliases: ["Humana"]
+    market_position: 2
+    specialty: "Strong in individual MA, historically PDP leader"
+    
+  - canonical: "CVS Health Corporation"
+    aliases: ["CVS", "Aetna", "CVS/Aetna"]
+    market_position: 3
+    specialty: "Retail pharmacy integration, PBM synergies"
+    
+  - canonical: "Elevance Health, Inc."
+    aliases: ["Elevance", "Anthem", "Blue Cross"]
+    market_position: 4
+    specialty: "Blue Cross licensee in 14 states"
+    note: "Exited PDP market in 2026"
+    
+  - canonical: "Kaiser Foundation Health Plan, Inc."
+    aliases: ["Kaiser", "Kaiser Permanente", "KP"]
+    market_position: 5
+    specialty: "Integrated delivery system (owns providers)"
+    
+  - canonical: "Centene Corporation"
+    aliases: ["Centene", "WellCare", "Ambetter"]
+    market_position: 6
+    specialty: "Medicaid-focused, strong D-SNP growth"
+    
+  - canonical: "Cigna Healthcare"
+    aliases: ["Cigna", "Express Scripts"]
+    market_position: 7
+    specialty: "Commercial/Medicare crossover, owns PBM"
+    
+  - canonical: "Molina Healthcare, Inc."
+    aliases: ["Molina"]
+    market_position: 8
+    specialty: "Medicaid specialist, growing D-SNP/MMP"
+
+# =============================================================================
+# DATA QUALITY NOTES
+# =============================================================================
+data_quality:
+  cpsc_suppression:
+    description: "CPSC files suppress enrollment < 11 for HIPAA"
+    impact: "State/county totals ~1-3% lower than national"
+    workaround: "Use enrollment by plan file for accurate totals"
+    
+  group_type_inference:
+    description: "Individual vs Group derived from EGHP field or plan ID heuristic"
+    reliability: "High confidence for explicit EGHP, medium for plan ID heuristic"
+    note: "Plan IDs 800+ are typically employer group"
+    
+  snp_type_coverage:
+    description: "D-SNP/C-SNP/I-SNP detail only in SNP Comprehensive Report"
+    reliability: "~95% of SNP enrollment has specific type identified"
+    note: "Some SNPs show as 'SNP-Unknown' if not in SNP report"
+    
+  crosswalk_completeness:
+    description: "Contract crosswalks from 2006-2026"
+    reliability: "Very high for recent years, may miss some pre-2010 changes"
+    
+  risk_score_timing:
+    description: "Risk scores are annual, linked to December enrollment of that year"
+    note: "2024 risk scores use December 2024 enrollment for linkage"

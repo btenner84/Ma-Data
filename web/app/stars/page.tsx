@@ -12,7 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Filter, Plus, X, ChevronDown, Home, Target, BarChart3, FileText, Info, Download } from "lucide-react";
+import { Filter, Plus, X, ChevronDown, Home, Target, BarChart3, FileText, Info, Download, Star } from "lucide-react";
 import { starsAPI } from "@/lib/api";
 import { AuditButton, type AuditMetadata } from "@/components/audit";
 
@@ -25,12 +25,14 @@ function useIsMounted() {
   return mounted;
 }
 
-type StarsTab = "home" | "cutpoints" | "measures" | "contract";
+type StarsTab = "home" | "cutpoints" | "measures" | "measurestars" | "fourplus" | "contract";
 
 const TABS: { id: StarsTab; label: string; icon: React.ReactNode }[] = [
   { id: "home", label: "Home", icon: <Home className="w-4 h-4" /> },
   { id: "cutpoints", label: "Cutpoints", icon: <Target className="w-4 h-4" /> },
   { id: "measures", label: "Measure Performance", icon: <BarChart3 className="w-4 h-4" /> },
+  { id: "measurestars", label: "Measure Stars", icon: <Star className="w-4 h-4" /> },
+  { id: "fourplus", label: "% in 4+ Stars", icon: <Target className="w-4 h-4" /> },
   { id: "contract", label: "Contract", icon: <FileText className="w-4 h-4" /> },
 ];
 
@@ -382,7 +384,7 @@ function MeasureRowChart({
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%" minHeight={180}>
+          <ResponsiveContainer width="100%" height="100%" minHeight={180} minWidth={0}>
             <LineChart data={chartData} margin={{ top: 10, right: 30, bottom: 10, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis
@@ -801,7 +803,7 @@ function MeasurePerformanceTab({ parentOrgs }: { parentOrgs: string[] }) {
               <tbody>
                 {measures.map((measure, idx) => (
                   <tr
-                    key={measure.measure_key}
+                    key={measure.measure_key_part || measure.measure_key}
                     className={`hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50 opacity-70' : ''} ${idx > 0 && measures[idx - 1].in_2026 && !measure.in_2026 ? 'border-t-2 border-gray-300' : ''}`}
                   >
                     <td className="py-2.5 px-4 border-b border-gray-100 sticky left-0 bg-white z-10">
@@ -996,6 +998,576 @@ WHERE measure = '${detailSelection?.measureKey}'
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// Measure Stars Tab Component - shows star ratings (1-5) instead of performance %
+function MeasureStarsTab({ parentOrgs }: { parentOrgs: string[] }) {
+  const [selectedPayer, setSelectedPayer] = useState<string>("Industry");
+  const [avgType, setAvgType] = useState<"simple" | "weighted">("weighted");
+  const [showPayerDropdown, setShowPayerDropdown] = useState(false);
+  const [payerSearch, setPayerSearch] = useState("");
+  const [detailSelection, setDetailSelection] = useState<{ measureKey: string; measureName: string; year: number } | null>(null);
+  const [weightYear, setWeightYear] = useState<number>(2026);
+
+  // Fetch measure stars data
+  const { data: starsData, isLoading } = useQuery<MeasurePerformanceData>({
+    queryKey: ["measure-stars", selectedPayer, avgType],
+    queryFn: async () => {
+      const params = new URLSearchParams({ avg_type: avgType });
+      if (selectedPayer !== "Industry") params.set("parent_org", selectedPayer);
+      const res = await fetch(`${API_BASE}/api/stars/measure-stars?${params}`);
+      if (!res.ok) return { error: "Failed to load", years: [], measures: [], parent_org: selectedPayer, avg_type: avgType, validation: { total_measures: 0, measures_in_2026: 0, discontinued_measures: 0 } };
+      return res.json();
+    },
+    staleTime: 60000,
+  });
+
+  const years = starsData?.years || [];
+  const measures = starsData?.measures || [];
+
+  // Fetch contract-level detail
+  const { data: detailData, isLoading: detailLoading } = useQuery<{
+    measure_key: string;
+    year: number;
+    parent_org: string;
+    contract_count: number;
+    contracts: { contract_id: string; parent_org: string | null; star_rating: number | null; enrollment: number | null }[];
+  }>({
+    queryKey: ["measure-stars-detail", detailSelection?.measureKey, detailSelection?.year, selectedPayer],
+    queryFn: async () => {
+      if (!detailSelection) return null;
+      const params = new URLSearchParams({
+        measure_key: detailSelection.measureKey,
+        year: String(detailSelection.year),
+      });
+      if (selectedPayer !== "Industry") params.set("parent_org", selectedPayer);
+      const res = await fetch(`${API_BASE}/api/stars/measure-stars/detail?${params}`);
+      if (!res.ok) return { error: "Failed to load" };
+      return res.json();
+    },
+    enabled: !!detailSelection,
+    staleTime: 60000,
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Header with controls */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Measure Stars Over Time</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {avgType === 'weighted' ? 'Weighted' : 'Simple'} average star rating by measure (2014-2026)
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Payer Selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowPayerDropdown(!showPayerDropdown)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-gray-300 bg-white text-gray-900 text-sm font-semibold transition-all hover:border-blue-500 hover:bg-blue-50 min-w-[200px]"
+              >
+                <span className="truncate">
+                  {selectedPayer === "Industry" ? "Industry (All Payers)" : selectedPayer.length > 25 ? selectedPayer.substring(0, 25) + "..." : selectedPayer}
+                </span>
+                <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              </button>
+
+              {showPayerDropdown && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => { setShowPayerDropdown(false); setPayerSearch(""); }} />
+                  <div className="absolute top-full left-0 mt-2 w-[380px] bg-white rounded-xl shadow-2xl border border-gray-300 p-4 z-50">
+                    <input
+                      type="text"
+                      placeholder="Search payers..."
+                      value={payerSearch}
+                      onChange={(e) => setPayerSearch(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg mb-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                      autoFocus
+                    />
+                    <div className="max-h-72 overflow-y-auto space-y-1">
+                      <button
+                        onClick={() => { setSelectedPayer("Industry"); setShowPayerDropdown(false); setPayerSearch(""); }}
+                        className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                          selectedPayer === "Industry"
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-50 text-gray-900 hover:bg-blue-50"
+                        }`}
+                      >
+                        Industry (All Payers)
+                      </button>
+                      {parentOrgs?.filter(p => p.toLowerCase().includes(payerSearch.toLowerCase())).slice(0, 20).map((org) => (
+                        <button
+                          key={org}
+                          onClick={() => { setSelectedPayer(org); setShowPayerDropdown(false); setPayerSearch(""); }}
+                          className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                            selectedPayer === org
+                              ? "bg-blue-600 text-white"
+                              : "text-gray-800 hover:bg-blue-50"
+                          }`}
+                        >
+                          {org}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Average Type Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Average:</span>
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setAvgType("weighted")}
+                  className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all ${
+                    avgType === "weighted"
+                      ? "bg-blue-600 text-white"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Weighted
+                </button>
+                <button
+                  onClick={() => setAvgType("simple")}
+                  className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-all ${
+                    avgType === "simple"
+                      ? "bg-blue-600 text-white"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Simple
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Validation info */}
+        {starsData?.validation && (
+          <div className="mt-3 text-xs text-gray-500">
+            {starsData.validation.total_measures} measures ({starsData.validation.measures_in_2026} active in 2026, {starsData.validation.discontinued_measures} discontinued)
+            {avgType === "weighted" && " • Weighted by enrollment"}
+          </div>
+        )}
+      </div>
+
+      {/* Stars Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          </div>
+        ) : starsData?.error ? (
+          <div className="p-8 text-center text-gray-500">{starsData.error}</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="py-3 px-4 font-semibold text-gray-700 text-left border-b border-gray-200 sticky left-0 bg-gray-50 z-10 min-w-[280px]">
+                    Measure
+                  </th>
+                  <th className="py-3 px-2 font-semibold text-gray-700 text-center border-b border-l border-gray-200 min-w-[70px]">
+                    <button
+                      onClick={() => {
+                        const idx = years.indexOf(weightYear);
+                        const nextIdx = (idx + 1) % years.length;
+                        setWeightYear(years[nextIdx]);
+                      }}
+                      className="hover:bg-gray-200 px-2 py-1 rounded transition-colors"
+                      title="Click to change weight year"
+                    >
+                      {weightYear} Wt
+                    </button>
+                  </th>
+                  {years.map(year => (
+                    <th key={year} className="py-3 px-3 font-semibold text-gray-700 text-center border-b border-l border-gray-200 min-w-[70px]">
+                      {year}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {measures.map((measure, idx) => (
+                  <tr
+                    key={measure.measure_key_part || measure.measure_key}
+                    className={`hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50 opacity-70' : ''} ${idx > 0 && measures[idx - 1].in_2026 && !measure.in_2026 ? 'border-t-2 border-gray-300' : ''}`}
+                  >
+                    <td className="py-2.5 px-4 border-b border-gray-100 sticky left-0 bg-white z-10">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 font-mono w-8">{measure.measure_id}</span>
+                        <div>
+                          <div className="font-medium text-gray-900 text-sm leading-tight">
+                            {measure.measure_name.length > 40 ? measure.measure_name.substring(0, 40) + "..." : measure.measure_name}
+                          </div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {measure.lower_is_better && (
+                              <span className="text-[10px] bg-red-100 text-red-600 px-1 py-0.5 rounded">↓ lower better</span>
+                            )}
+                            {!measure.in_2026 && (
+                              <span className="text-[10px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded">discontinued</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-2 px-2 text-center border-b border-l border-gray-100">
+                      {measure.weights && measure.weights[String(weightYear)] ? (
+                        <span className={`font-medium ${measure.weights[String(weightYear)] > 1 ? 'text-blue-600' : 'text-gray-500'}`}>
+                          {measure.weights[String(weightYear)] > 1 ? `${measure.weights[String(weightYear)]}x` : '1x'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">-</span>
+                      )}
+                    </td>
+                    {years.map((year, yearIdx) => {
+                      const yearData = measure.yearly[String(year)];
+                      const value = yearData?.value;
+                      const hasData = value !== null && value !== undefined;
+
+                      // Calculate YoY change
+                      const prevYear = years[yearIdx - 1];
+                      const prevYearData = prevYear ? measure.yearly[String(prevYear)] : null;
+                      const prevValue = prevYearData?.value;
+                      const hasPrevData = prevValue !== null && prevValue !== undefined;
+
+                      let yoyChange: number | null = null;
+                      let isImprovement: boolean | null = null;
+
+                      if (hasData && hasPrevData) {
+                        yoyChange = value - prevValue;
+                        isImprovement = measure.lower_is_better ? yoyChange < 0 : yoyChange > 0;
+                      }
+
+                      return (
+                        <td
+                          key={year}
+                          className={`py-2 px-2 text-center border-b border-l border-gray-100 ${hasData ? 'cursor-pointer hover:bg-blue-50' : ''}`}
+                          title={yearData ? `N=${yearData.contract_count}, Enrollment=${yearData.enrollment.toLocaleString()} - Click for details` : 'No data'}
+                          onClick={() => {
+                            if (hasData) {
+                              setDetailSelection({ measureKey: measure.measure_key, measureName: measure.measure_name, year });
+                            }
+                          }}
+                        >
+                          {hasData ? (
+                            <div className="flex flex-col items-center">
+                              <span className="font-medium text-gray-900">
+                                {value.toFixed(2)}
+                              </span>
+                              {yoyChange !== null && Math.abs(yoyChange) >= 0.05 && (
+                                <span className={`text-[10px] font-medium ${
+                                  Math.abs(yoyChange) < 0.1 ? 'text-gray-400' :
+                                  isImprovement ? 'text-green-600' : 'text-red-600'
+                                }`}>
+                                  {yoyChange > 0 ? '+' : ''}{yoyChange.toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Detail Modal */}
+      {detailSelection && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/50 z-50"
+            onClick={() => setDetailSelection(null)}
+          />
+          <div className="fixed inset-4 md:inset-10 lg:inset-20 bg-white rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {detailSelection.measureName}
+                </h3>
+                <p className="text-sm text-gray-500">
+                  {detailSelection.year} Star Ratings &middot; {selectedPayer === "Industry" ? "All Payers" : selectedPayer}
+                </p>
+              </div>
+              <button
+                onClick={() => setDetailSelection(null)}
+                className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6">
+              {detailLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-gray-500">Loading contract details...</div>
+                </div>
+              ) : detailData?.contracts ? (
+                <div>
+                  <div className="mb-4 text-sm text-gray-600">{detailData.contract_count} contracts</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-500 border-b border-gray-200">
+                        <th className="pb-2 font-medium">Contract ID</th>
+                        <th className="pb-2 font-medium">Parent Organization</th>
+                        <th className="pb-2 font-medium text-center">Star Rating</th>
+                        <th className="pb-2 font-medium text-right">Enrollment</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailData.contracts.map((contract) => (
+                        <tr key={contract.contract_id} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 font-mono text-gray-900">{contract.contract_id}</td>
+                          <td className="py-2 text-gray-700">{contract.parent_org || '-'}</td>
+                          <td className="py-2 text-center font-medium text-gray-900">
+                            {contract.star_rating !== null ? contract.star_rating : '-'}
+                          </td>
+                          <td className="py-2 text-right text-gray-600">
+                            {contract.enrollment !== null ? contract.enrollment.toLocaleString() : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// % in 4+ Stars Tab Component - shows % of enrollees in 4+ star contracts by measure
+function FourPlusTab({ parentOrgs }: { parentOrgs: string[] }) {
+  const [selectedPayer, setSelectedPayer] = useState<string>("Industry");
+  const [showPayerDropdown, setShowPayerDropdown] = useState(false);
+  const [payerSearch, setPayerSearch] = useState("");
+  const [detailSelection, setDetailSelection] = useState<{ measureKey: string; measureName: string; year: number } | null>(null);
+  const [weightYear, setWeightYear] = useState<number>(2026);
+
+  // Fetch data with pct_fourplus mode
+  const { data: starsData, isLoading } = useQuery<MeasurePerformanceData>({
+    queryKey: ["measure-fourplus", selectedPayer],
+    queryFn: async () => {
+      const params = new URLSearchParams({ avg_type: "pct_fourplus" });
+      if (selectedPayer !== "Industry") params.set("parent_org", selectedPayer);
+      const res = await fetch(`${API_BASE}/api/stars/measure-stars?${params}`);
+      if (!res.ok) return { error: "Failed to load", years: [], measures: [], parent_org: selectedPayer, avg_type: "pct_fourplus", validation: { total_measures: 0, measures_in_2026: 0, discontinued_measures: 0 } };
+      return res.json();
+    },
+    staleTime: 60000,
+  });
+
+  const years = starsData?.years || [];
+  const measures = starsData?.measures || [];
+
+  return (
+    <div className="space-y-4">
+      {/* Header with controls */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">% of Enrollees in 4+ Star Contracts</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              By measure (2014-2026)
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Payer Selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowPayerDropdown(!showPayerDropdown)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-gray-300 bg-white text-gray-900 text-sm font-semibold transition-all hover:border-blue-500 hover:bg-blue-50 min-w-[200px]"
+              >
+                <span className="truncate">
+                  {selectedPayer === "Industry" ? "Industry (All Payers)" : selectedPayer.length > 25 ? selectedPayer.substring(0, 25) + "..." : selectedPayer}
+                </span>
+                <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              </button>
+
+              {showPayerDropdown && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => { setShowPayerDropdown(false); setPayerSearch(""); }} />
+                  <div className="absolute top-full left-0 mt-2 w-[380px] bg-white rounded-xl shadow-2xl border border-gray-300 p-4 z-50">
+                    <input
+                      type="text"
+                      placeholder="Search payers..."
+                      value={payerSearch}
+                      onChange={(e) => setPayerSearch(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg mb-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                      autoFocus
+                    />
+                    <div className="max-h-72 overflow-y-auto space-y-1">
+                      <button
+                        onClick={() => { setSelectedPayer("Industry"); setShowPayerDropdown(false); setPayerSearch(""); }}
+                        className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                          selectedPayer === "Industry"
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-50 text-gray-900 hover:bg-blue-50"
+                        }`}
+                      >
+                        Industry (All Payers)
+                      </button>
+                      {parentOrgs?.filter(p => p.toLowerCase().includes(payerSearch.toLowerCase())).slice(0, 20).map((org) => (
+                        <button
+                          key={org}
+                          onClick={() => { setSelectedPayer(org); setShowPayerDropdown(false); setPayerSearch(""); }}
+                          className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                            selectedPayer === org
+                              ? "bg-blue-600 text-white"
+                              : "text-gray-800 hover:bg-blue-50"
+                          }`}
+                        >
+                          {org}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Validation info */}
+        {starsData?.validation && (
+          <div className="mt-3 text-xs text-gray-500">
+            {starsData.validation.total_measures} measures ({starsData.validation.measures_in_2026} active in 2026, {starsData.validation.discontinued_measures} discontinued)
+          </div>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          </div>
+        ) : starsData?.error ? (
+          <div className="p-8 text-center text-gray-500">{starsData.error}</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="py-3 px-4 font-semibold text-gray-700 text-left border-b border-gray-200 sticky left-0 bg-gray-50 z-10 min-w-[280px]">
+                    Measure
+                  </th>
+                  <th className="py-3 px-2 font-semibold text-gray-700 text-center border-b border-l border-gray-200 min-w-[70px]">
+                    <button
+                      onClick={() => {
+                        const idx = years.indexOf(weightYear);
+                        const nextIdx = (idx + 1) % years.length;
+                        setWeightYear(years[nextIdx]);
+                      }}
+                      className="hover:bg-gray-200 px-2 py-1 rounded transition-colors"
+                      title="Click to change weight year"
+                    >
+                      {weightYear} Wt
+                    </button>
+                  </th>
+                  {years.map(year => (
+                    <th key={year} className="py-3 px-3 font-semibold text-gray-700 text-center border-b border-l border-gray-200 min-w-[70px]">
+                      {year}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {measures.map((measure, idx) => (
+                  <tr
+                    key={measure.measure_key_part || measure.measure_key}
+                    className={`hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50 opacity-70' : ''} ${idx > 0 && measures[idx - 1].in_2026 && !measure.in_2026 ? 'border-t-2 border-gray-300' : ''}`}
+                  >
+                    <td className="py-2.5 px-4 border-b border-gray-100 sticky left-0 bg-white z-10">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 font-mono w-8">{measure.measure_id}</span>
+                        <div>
+                          <div className="font-medium text-gray-900 text-sm leading-tight">
+                            {measure.measure_name.length > 40 ? measure.measure_name.substring(0, 40) + "..." : measure.measure_name}
+                          </div>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {measure.lower_is_better && (
+                              <span className="text-[10px] bg-red-100 text-red-600 px-1 py-0.5 rounded">↓ lower better</span>
+                            )}
+                            {!measure.in_2026 && (
+                              <span className="text-[10px] bg-gray-200 text-gray-600 px-1 py-0.5 rounded">discontinued</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-2 px-2 text-center border-b border-l border-gray-100">
+                      {measure.weights && measure.weights[String(weightYear)] ? (
+                        <span className={`font-medium ${measure.weights[String(weightYear)] > 1 ? 'text-blue-600' : 'text-gray-500'}`}>
+                          {measure.weights[String(weightYear)] > 1 ? `${measure.weights[String(weightYear)]}x` : '1x'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">-</span>
+                      )}
+                    </td>
+                    {years.map((year, yearIdx) => {
+                      const yearData = measure.yearly[String(year)];
+                      const value = yearData?.value;
+                      const hasData = value !== null && value !== undefined;
+
+                      // Calculate YoY change
+                      const prevYear = years[yearIdx - 1];
+                      const prevYearData = prevYear ? measure.yearly[String(prevYear)] : null;
+                      const prevValue = prevYearData?.value;
+                      const hasPrevData = prevValue !== null && prevValue !== undefined;
+
+                      let yoyChange: number | null = null;
+                      if (hasData && hasPrevData) {
+                        yoyChange = value - prevValue;
+                      }
+
+                      return (
+                        <td
+                          key={year}
+                          className="py-2 px-2 text-center border-b border-l border-gray-100"
+                          title={yearData ? `N=${yearData.contract_count}, Enrollment=${yearData.enrollment.toLocaleString()}` : 'No data'}
+                        >
+                          {hasData ? (
+                            <div className="flex flex-col items-center">
+                              <span className="font-medium text-gray-900">
+                                {value.toFixed(1)}%
+                              </span>
+                              {yoyChange !== null && Math.abs(yoyChange) >= 0.5 && (
+                                <span className={`text-[10px] font-medium ${
+                                  yoyChange > 0 ? 'text-green-600' : 'text-red-600'
+                                }`}>
+                                  {yoyChange > 0 ? '+' : ''}{yoyChange.toFixed(1)}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1208,7 +1780,7 @@ function CutpointsTab({ parentOrgs, isMounted }: { parentOrgs: string[]; isMount
         <div className="space-y-0">
           {sortedMeasures.map((measure) => (
             <MeasureRowChart
-              key={measure.measure_key}
+              key={measure.measure_key_part || measure.measure_key}
               measure={measure}
               years={years}
               selectedPayer={selectedPayer}
@@ -1588,7 +2160,7 @@ WHERE contract_id = '${selectedContract}'`}
 
                 return (
                   <tr
-                    key={measure.measure_key}
+                    key={measure.measure_key_part || measure.measure_key}
                     className={`border-b border-gray-100 hover:bg-gray-50 ${!measure.in_2026 ? 'bg-gray-50' : ''}`}
                   >
                     {/* Measure Name */}
@@ -1939,7 +2511,7 @@ export default function StarsPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
       {/* Tab Navigation */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1.5 flex gap-1">
         {TABS.map((tab) => (
@@ -2196,7 +2768,7 @@ export default function StarsPage() {
           ) : timeseriesData?.error ? (
             <div className="flex items-center justify-center h-full text-gray-500">{timeseriesData.error}</div>
           ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
+            <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />
@@ -2823,6 +3395,12 @@ GROUP BY overall_rating`}
 
       {/* MEASURES TAB */}
       {activeTab === "measures" && <MeasurePerformanceTab parentOrgs={filterOptions?.parent_orgs || []} />}
+
+      {/* MEASURE STARS TAB */}
+      {activeTab === "measurestars" && <MeasureStarsTab parentOrgs={filterOptions?.parent_orgs || []} />}
+
+      {/* % IN 4+ STARS TAB */}
+      {activeTab === "fourplus" && <FourPlusTab parentOrgs={filterOptions?.parent_orgs || []} />}
 
       {/* CONTRACT TAB */}
       {activeTab === "contract" && <ContractTab />}
