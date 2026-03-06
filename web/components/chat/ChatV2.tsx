@@ -4,7 +4,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { 
   Send, Sparkles, User, ChevronDown, ChevronRight, 
   DollarSign, Clock, Database, Brain, CheckCircle, 
-  XCircle, AlertCircle, Activity, Loader2, Zap, Table, BarChart3, Download
+  XCircle, Activity, Loader2, Zap, Table, BarChart3, Download,
+  Search, FileText, Calculator
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -97,6 +98,8 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   isLoading?: boolean;
+  loadingPhase?: string;
+  loadingStep?: string;
   response?: AgentResponse;
 }
 
@@ -106,6 +109,14 @@ const PHASE_ICONS: Record<string, React.ReactNode> = {
   analyzing: <Activity className="w-4 h-4" />,
   validating: <CheckCircle className="w-4 h-4" />,
   synthesizing: <Sparkles className="w-4 h-4" />,
+};
+
+const PHASE_LABELS: Record<string, string> = {
+  planning: 'Planning what data to gather...',
+  executing: 'Querying databases...',
+  analyzing: 'Analyzing results...',
+  validating: 'Validating findings...',
+  synthesizing: 'Writing response...',
 };
 
 const PHASE_COLORS: Record<string, string> = {
@@ -131,15 +142,47 @@ function formatLatency(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function formatCellValue(val: unknown): string {
+  if (val === null || val === undefined) return '-';
+  if (typeof val === 'object') {
+    // Handle objects/arrays - stringify them or extract meaningful value
+    if (Array.isArray(val)) {
+      return val.length > 0 ? `[${val.length} items]` : '[]';
+    }
+    // Try to get a meaningful string representation
+    const obj = val as Record<string, unknown>;
+    if ('value' in obj) return formatCellValue(obj.value);
+    if ('name' in obj) return String(obj.name);
+    // Last resort - show as JSON (truncated)
+    const json = JSON.stringify(val);
+    return json.length > 50 ? json.slice(0, 47) + '...' : json;
+  }
+  if (typeof val === 'number') {
+    if (Number.isInteger(val) && Math.abs(val) > 10000) return val.toLocaleString();
+    if (!Number.isInteger(val)) return val.toFixed(2);
+    return val.toString();
+  }
+  return String(val);
+}
+
 function DataTableDisplay({ table }: { table: DataTable }) {
   const [collapsed, setCollapsed] = useState(false);
   
+  // Validate and fix table structure
+  const validColumns = table.columns?.filter(c => typeof c === 'string' && c !== 'rows') || [];
+  const validRows = Array.isArray(table.rows) ? table.rows.slice(0, 50) : []; // Limit to 50 rows
+  
+  // If columns are wrong, try to infer from first row
+  const columns = validColumns.length > 0 ? validColumns : 
+    (validRows.length > 0 && typeof validRows[0] === 'object' ? Object.keys(validRows[0] as object) : []);
+  
   const downloadCSV = () => {
-    const headers = table.columns.join(',');
-    const rows = table.rows.map(row => 
-      table.columns.map(col => {
-        const val = row[col];
-        return typeof val === 'string' && val.includes(',') ? `"${val}"` : val;
+    const headers = columns.join(',');
+    const rows = validRows.map(row => 
+      columns.map(col => {
+        const val = (row as Record<string, unknown>)[col];
+        const formatted = formatCellValue(val);
+        return formatted.includes(',') ? `"${formatted}"` : formatted;
       }).join(',')
     );
     const csv = [headers, ...rows].join('\n');
@@ -147,9 +190,21 @@ function DataTableDisplay({ table }: { table: DataTable }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${table.title.replace(/\s+/g, '_')}.csv`;
+    a.download = `${(table.title || 'data').replace(/\s+/g, '_')}.csv`;
     a.click();
   };
+
+  if (columns.length === 0 || validRows.length === 0) {
+    return (
+      <div className="my-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+        <div className="flex items-center gap-2 text-gray-500">
+          <Table className="w-4 h-4" />
+          <span>{table.title || 'Data'}</span>
+          <span className="text-xs">(No displayable data)</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="my-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
@@ -160,8 +215,8 @@ function DataTableDisplay({ table }: { table: DataTable }) {
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           <Table className="w-4 h-4 text-blue-500" />
-          {table.title}
-          <span className="text-xs text-gray-400 ml-2">({table.rows.length} rows)</span>
+          {table.title || 'Data Table'}
+          <span className="text-xs text-gray-400 ml-2">({validRows.length} rows)</span>
         </button>
         <button
           onClick={downloadCSV}
@@ -179,23 +234,23 @@ function DataTableDisplay({ table }: { table: DataTable }) {
               {table.summary}
             </div>
           )}
-          <div className="overflow-x-auto max-h-96">
+          <div className="overflow-x-auto max-h-80">
             <table className="w-full text-sm">
               <thead className="bg-gray-100 dark:bg-gray-800 sticky top-0">
                 <tr>
-                  {table.columns.map((col, i) => (
-                    <th key={i} className="px-4 py-2 text-left font-medium text-gray-600 dark:text-gray-400">
+                  {columns.map((col, i) => (
+                    <th key={i} className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">
                       {col}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                {table.rows.map((row, i) => (
+                {validRows.map((row, i) => (
                   <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
-                    {table.columns.map((col, j) => (
-                      <td key={j} className="px-4 py-2 text-gray-700 dark:text-gray-300">
-                        {formatCellValue(row[col])}
+                    {columns.map((col, j) => (
+                      <td key={j} className="px-3 py-2 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                        {formatCellValue((row as Record<string, unknown>)[col])}
                       </td>
                     ))}
                   </tr>
@@ -209,18 +264,23 @@ function DataTableDisplay({ table }: { table: DataTable }) {
   );
 }
 
-function formatCellValue(val: unknown): string {
-  if (val === null || val === undefined) return '-';
-  if (typeof val === 'number') {
-    if (Number.isInteger(val) && val > 10000) return val.toLocaleString();
-    if (!Number.isInteger(val)) return val.toFixed(2);
-    return val.toString();
-  }
-  return String(val);
-}
-
 function ChartDisplay({ chart }: { chart: ChartSpec }) {
   const [collapsed, setCollapsed] = useState(false);
+  
+  // Validate chart data
+  const validData = Array.isArray(chart.data) ? chart.data.filter(d => typeof d === 'object') : [];
+  
+  if (validData.length === 0) {
+    return (
+      <div className="my-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+        <div className="flex items-center gap-2 text-gray-500">
+          <BarChart3 className="w-4 h-4" />
+          <span>{chart.title || 'Chart'}</span>
+          <span className="text-xs">(No data)</span>
+        </div>
+      </div>
+    );
+  }
   
   const series = chart.series || [{ key: chart.y_axis, label: chart.y_axis, color: CHART_COLORS[0] }];
 
@@ -233,53 +293,39 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
         {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         <BarChart3 className="w-4 h-4 text-green-500" />
         {chart.title}
+        <span className="text-xs text-gray-400 ml-2">({validData.length} points)</span>
       </button>
       
       {!collapsed && (
         <div className="p-4 bg-white dark:bg-gray-900">
           <ResponsiveContainer width="100%" height={300}>
             {chart.chart_type === 'bar' ? (
-              <BarChart data={chart.data}>
+              <BarChart data={validData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
                 <XAxis dataKey={chart.x_axis} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
                 <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} />
                 <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1F2937', 
-                    border: 'none', 
-                    borderRadius: '8px',
-                    color: '#F3F4F6'
-                  }} 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} 
                 />
                 <Legend />
                 {series.map((s, i) => (
                   <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color || CHART_COLORS[i % CHART_COLORS.length]}>
-                    {chart.data.map((_, idx) => (
+                    {validData.map((_, idx) => (
                       <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
                     ))}
                   </Bar>
                 ))}
               </BarChart>
             ) : chart.chart_type === 'area' ? (
-              <AreaChart data={chart.data}>
+              <AreaChart data={validData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
                 <XAxis dataKey={chart.x_axis} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
                 <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1F2937', 
-                    border: 'none', 
-                    borderRadius: '8px',
-                    color: '#F3F4F6'
-                  }} 
-                />
+                <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} />
                 <Legend />
                 {series.map((s, i) => (
                   <Area 
-                    key={s.key} 
-                    type="monotone" 
-                    dataKey={s.key} 
-                    name={s.label}
+                    key={s.key} type="monotone" dataKey={s.key} name={s.label}
                     stroke={s.color || CHART_COLORS[i % CHART_COLORS.length]}
                     fill={s.color || CHART_COLORS[i % CHART_COLORS.length]}
                     fillOpacity={0.3}
@@ -287,25 +333,15 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 ))}
               </AreaChart>
             ) : (
-              <LineChart data={chart.data}>
+              <LineChart data={validData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
                 <XAxis dataKey={chart.x_axis} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
                 <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1F2937', 
-                    border: 'none', 
-                    borderRadius: '8px',
-                    color: '#F3F4F6'
-                  }} 
-                />
+                <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} />
                 <Legend />
                 {series.map((s, i) => (
                   <Line 
-                    key={s.key} 
-                    type="monotone" 
-                    dataKey={s.key}
-                    name={s.label}
+                    key={s.key} type="monotone" dataKey={s.key} name={s.label}
                     stroke={s.color || CHART_COLORS[i % CHART_COLORS.length]} 
                     strokeWidth={2}
                     dot={{ fill: s.color || CHART_COLORS[i % CHART_COLORS.length] }}
@@ -316,6 +352,47 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
           </ResponsiveContainer>
         </div>
       )}
+    </div>
+  );
+}
+
+function LoadingIndicator({ phase, step }: { phase?: string; step?: string }) {
+  const phaseKey = phase || 'planning';
+  const icon = PHASE_ICONS[phaseKey] || <Loader2 className="w-4 h-4 animate-spin" />;
+  const label = step || PHASE_LABELS[phaseKey] || 'Processing...';
+  const color = PHASE_COLORS[phaseKey] || 'text-blue-500 bg-blue-500/10';
+  
+  return (
+    <div className="flex items-start gap-3">
+      <div className={`p-2 rounded-lg ${color}`}>
+        {icon}
+      </div>
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <Loader2 className="w-3 h-3 animate-spin text-gray-400" />
+          <span className="text-sm text-gray-600 dark:text-gray-400">{label}</span>
+        </div>
+        <div className="mt-2 flex gap-1">
+          {['planning', 'executing', 'analyzing', 'validating', 'synthesizing'].map((p) => (
+            <div 
+              key={p}
+              className={`h-1 flex-1 rounded-full transition-all duration-500 ${
+                p === phaseKey ? 'bg-blue-500' : 
+                ['planning', 'executing', 'analyzing', 'validating', 'synthesizing'].indexOf(p) < 
+                ['planning', 'executing', 'analyzing', 'validating', 'synthesizing'].indexOf(phaseKey)
+                  ? 'bg-blue-500/50' : 'bg-gray-200 dark:bg-gray-700'
+              }`}
+            />
+          ))}
+        </div>
+        <div className="mt-1 flex justify-between text-[10px] text-gray-400">
+          <span>Plan</span>
+          <span>Query</span>
+          <span>Analyze</span>
+          <span>Validate</span>
+          <span>Write</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -339,7 +416,7 @@ function StepDetails({ step }: { step: AgentStep }) {
         <span className="text-xs text-gray-500 truncate flex-1">{step.description}</span>
         {step.llm_calls.length > 0 && (
           <span className="text-xs text-gray-400">
-            {step.llm_calls.reduce((sum, c) => sum + c.total_tokens, 0)} tokens
+            {step.llm_calls.reduce((sum, c) => sum + c.total_tokens, 0).toLocaleString()} tokens
           </span>
         )}
       </button>
@@ -352,10 +429,10 @@ function StepDetails({ step }: { step: AgentStep }) {
                 <Brain className="w-3 h-3" />
                 <span>LLM Call</span>
                 <span className="text-gray-400">|</span>
-                <span>{call.prompt_tokens} in</span>
-                <span>{call.completion_tokens} out</span>
+                <span>{call.prompt_tokens.toLocaleString()} in</span>
+                <span>{call.completion_tokens.toLocaleString()} out</span>
                 <span className="text-gray-400">|</span>
-                <span>{formatCost(call.cost_usd)}</span>
+                <span className="text-green-600">{formatCost(call.cost_usd)}</span>
                 <span className="text-gray-400">|</span>
                 <span>{formatLatency(call.latency_ms)}</span>
               </div>
@@ -366,7 +443,7 @@ function StepDetails({ step }: { step: AgentStep }) {
             <div key={call.call_id} className="p-2 bg-gray-50 dark:bg-gray-800 rounded">
               <div className="flex items-center gap-3 text-gray-500">
                 <Database className="w-3 h-3" />
-                <span className="font-medium">{call.tool_name}</span>
+                <span className="font-medium text-blue-600">{call.tool_name}</span>
                 {call.success ? (
                   <CheckCircle className="w-3 h-3 text-green-500" />
                 ) : (
@@ -378,8 +455,8 @@ function StepDetails({ step }: { step: AgentStep }) {
                 <span className="text-gray-400">{formatLatency(call.latency_ms)}</span>
               </div>
               {call.result_preview && (
-                <pre className="mt-1 text-gray-600 dark:text-gray-400 truncate max-w-full">
-                  {call.result_preview.slice(0, 150)}...
+                <pre className="mt-1 text-gray-600 dark:text-gray-400 truncate max-w-full text-[10px]">
+                  {call.result_preview.slice(0, 100)}...
                 </pre>
               )}
             </div>
@@ -396,41 +473,47 @@ function StepDetails({ step }: { step: AgentStep }) {
   );
 }
 
+function TokenUsageBar({ response }: { response: AgentResponse }) {
+  return (
+    <div className="flex items-center gap-4 px-3 py-2 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-lg text-xs">
+      <div className="flex items-center gap-1.5">
+        <Brain className="w-3.5 h-3.5 text-purple-500" />
+        <span className="font-medium text-gray-700 dark:text-gray-300">{response.llm_calls} LLM</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Database className="w-3.5 h-3.5 text-blue-500" />
+        <span className="font-medium text-gray-700 dark:text-gray-300">{response.tool_calls} tools</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Zap className="w-3.5 h-3.5 text-yellow-500" />
+        <span className="font-medium text-gray-700 dark:text-gray-300">{response.total_tokens.toLocaleString()} tokens</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <DollarSign className="w-3.5 h-3.5 text-green-500" />
+        <span className="font-medium text-green-600">{formatCost(response.cost_usd)}</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Clock className="w-3.5 h-3.5 text-gray-500" />
+        <span className="text-gray-500">{formatLatency(response.latency_ms)}</span>
+      </div>
+      <div className={`ml-auto px-2 py-0.5 rounded text-xs font-medium ${
+        response.confidence >= 0.8 ? 'bg-green-500/20 text-green-700' : 
+        response.confidence >= 0.6 ? 'bg-yellow-500/20 text-yellow-700' : 
+        'bg-red-500/20 text-red-700'
+      }`}>
+        {(response.confidence * 100).toFixed(0)}% confidence
+      </div>
+    </div>
+  );
+}
+
 function AuditPanel({ response }: { response: AgentResponse }) {
   const [showSteps, setShowSteps] = useState(false);
 
   return (
     <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      {/* Summary bar */}
-      <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-gray-800/50 text-xs">
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1 text-gray-500">
-            <Brain className="w-3 h-3" />
-            {response.llm_calls} LLM calls
-          </span>
-          <span className="flex items-center gap-1 text-gray-500">
-            <Database className="w-3 h-3" />
-            {response.tool_calls} tools
-          </span>
-          <span className="flex items-center gap-1 text-gray-500">
-            <Zap className="w-3 h-3" />
-            {response.total_tokens.toLocaleString()} tokens
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1 text-green-600">
-            <DollarSign className="w-3 h-3" />
-            {formatCost(response.cost_usd)}
-          </span>
-          <span className="flex items-center gap-1 text-gray-500">
-            <Clock className="w-3 h-3" />
-            {formatLatency(response.latency_ms)}
-          </span>
-          <span className={`flex items-center gap-1 ${response.confidence >= 0.8 ? 'text-green-600' : response.confidence >= 0.6 ? 'text-yellow-600' : 'text-red-600'}`}>
-            {(response.confidence * 100).toFixed(0)}% confidence
-          </span>
-        </div>
-      </div>
+      {/* Token usage bar - prominent */}
+      <TokenUsageBar response={response} />
 
       {/* Sources */}
       {response.sources && response.sources.length > 0 && (
@@ -472,14 +555,11 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
       </div>
       <div className="flex-1 min-w-0">
         {message.isLoading ? (
-          <div className="flex items-center gap-2 text-gray-500">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Analyzing data across multiple sources...</span>
-          </div>
+          <LoadingIndicator phase={message.loadingPhase} step={message.loadingStep} />
         ) : (
           <>
             {/* Main answer */}
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-table:text-sm">
+            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2">
               <ReactMarkdown>{message.content}</ReactMarkdown>
             </div>
 
@@ -539,6 +619,12 @@ export function ChatV2() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  const updateLoadingPhase = useCallback((messageId: string, phase: string, step: string) => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId ? { ...msg, loadingPhase: phase, loadingStep: step } : msg
+    ));
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -550,17 +636,38 @@ export function ChatV2() {
       timestamp: new Date().toISOString(),
     };
 
+    const loadingId = crypto.randomUUID();
     const loadingMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: loadingId,
       role: 'assistant',
       content: '',
       timestamp: new Date().toISOString(),
       isLoading: true,
+      loadingPhase: 'planning',
+      loadingStep: 'Planning what data to gather...',
     };
 
     setMessages((prev) => [...prev, userMessage, loadingMessage]);
     setInput('');
     setIsLoading(true);
+
+    // Simulate phase progression while waiting
+    const phases = [
+      { phase: 'planning', step: 'Determining data requirements...', delay: 2000 },
+      { phase: 'executing', step: 'Querying star ratings database...', delay: 5000 },
+      { phase: 'executing', step: 'Fetching enrollment data...', delay: 8000 },
+      { phase: 'analyzing', step: 'Analyzing patterns and trends...', delay: 12000 },
+      { phase: 'validating', step: 'Validating findings...', delay: 18000 },
+      { phase: 'synthesizing', step: 'Writing response...', delay: 25000 },
+    ];
+    
+    const phaseTimeouts: NodeJS.Timeout[] = [];
+    phases.forEach(({ phase, step, delay }) => {
+      const timeout = setTimeout(() => {
+        updateLoadingPhase(loadingId, phase, step);
+      }, delay);
+      phaseTimeouts.push(timeout);
+    });
 
     try {
       const response = await fetch(`${API_BASE}/api/v2/agent/ask`, {
@@ -572,6 +679,9 @@ export function ChatV2() {
         }),
       });
 
+      // Clear phase simulation
+      phaseTimeouts.forEach(t => clearTimeout(t));
+
       if (!response.ok) {
         throw new Error(`Request failed: ${response.status}`);
       }
@@ -580,24 +690,31 @@ export function ChatV2() {
 
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === loadingMessage.id
+          msg.id === loadingId
             ? {
                 ...msg,
                 content: data.answer,
                 isLoading: false,
+                loadingPhase: undefined,
+                loadingStep: undefined,
                 response: data,
               }
             : msg
         )
       );
     } catch (error) {
+      // Clear phase simulation
+      phaseTimeouts.forEach(t => clearTimeout(t));
+      
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === loadingMessage.id
+          msg.id === loadingId
             ? {
                 ...msg,
                 content: `Sorry, something went wrong: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 isLoading: false,
+                loadingPhase: undefined,
+                loadingStep: undefined,
               }
             : msg
         )
@@ -615,40 +732,40 @@ export function ChatV2() {
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
             <Sparkles className="w-12 h-12 mb-4 text-blue-500 opacity-50" />
             <h3 className="text-lg font-medium text-gray-700 dark:text-gray-300">
-              MA Intelligence Agent V2
+              MA Intelligence Agent
             </h3>
             <p className="text-sm mt-1 max-w-md">
               Multi-step reasoning with charts, tables, and full audit trail. 
-              Ask about rate notices, enrollment trends, star ratings, risk adjustment.
+              Ask about enrollment, star ratings, risk adjustment, rate notices.
             </p>
             <div className="mt-6 grid grid-cols-2 gap-3 text-xs max-w-lg">
               <button
-                onClick={() => setInput('Show me companies that had major 4+ star drops and their recovery patterns')}
+                onClick={() => setInput('Show companies with major 4+ star drops and their recovery patterns')}
                 className="px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-left"
               >
                 <span className="font-medium block mb-1">Star Rating Drops</span>
-                <span className="text-gray-500">Companies with major 4+ star losses</span>
+                <span className="text-gray-500">Major 4+ star losses & recoveries</span>
               </button>
               <button
-                onClick={() => setInput('Compare V24 vs V28 risk models with a chart of coefficient changes')}
+                onClick={() => setInput('Compare V24 vs V28 risk models')}
                 className="px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-left"
               >
                 <span className="font-medium block mb-1">V24 vs V28 Models</span>
-                <span className="text-gray-500">Risk model comparison with charts</span>
+                <span className="text-gray-500">Risk model comparison</span>
               </button>
               <button
-                onClick={() => setInput('What are the USPCC rate trends from 2020-2027 with projections?')}
+                onClick={() => setInput('Show D-SNP enrollment growth by payer from 2018-2026')}
                 className="px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-left"
               >
-                <span className="font-medium block mb-1">USPCC Rate Trends</span>
-                <span className="text-gray-500">Historical and projected rates</span>
+                <span className="font-medium block mb-1">D-SNP Growth</span>
+                <span className="text-gray-500">Dual eligible trends</span>
               </button>
               <button
-                onClick={() => setInput('Top 10 payers by enrollment with year-over-year growth chart')}
+                onClick={() => setInput('Top payers by enrollment with market share')}
                 className="px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-left"
               >
-                <span className="font-medium block mb-1">Enrollment Leaders</span>
-                <span className="text-gray-500">Top payers with growth trends</span>
+                <span className="font-medium block mb-1">Market Leaders</span>
+                <span className="text-gray-500">Enrollment & market share</span>
               </button>
             </div>
           </div>
@@ -671,7 +788,7 @@ export function ChatV2() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about Medicare Advantage (include 'with chart' or 'with table' for visuals)..."
+            placeholder="Ask about Medicare Advantage data..."
             disabled={isLoading}
             className="flex-1 px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           />
@@ -687,11 +804,6 @@ export function ChatV2() {
             )}
           </button>
         </form>
-
-        {/* Usage hint */}
-        <div className="mt-2 text-xs text-gray-400 text-center">
-          Tip: Ask for charts and tables explicitly for visual outputs • Multi-step agent with audit trail
-        </div>
       </div>
     </div>
   );

@@ -1061,9 +1061,52 @@ Analyze this data and provide your findings with structured charts and tables.""
             raw_data = req_data.get("data", {})
             desc = req_data.get("description", "Data")
             
-            # Handle different data formats
+            # Handle SQL result format: {"rows": [...], "columns": [...], "row_count": N}
+            if isinstance(raw_data, dict) and "rows" in raw_data and "columns" in raw_data:
+                rows = raw_data.get("rows", [])
+                columns = raw_data.get("columns", [])
+                
+                if rows and columns:
+                    # Use the actual columns from the query result
+                    display_columns = columns[:10]  # Limit to 10 columns
+                    
+                    tables.append({
+                        "title": desc[:50],
+                        "summary": f"{len(rows)} rows returned",
+                        "columns": display_columns,
+                        "rows": rows[:100],  # Limit to 100 rows for display
+                    })
+                    
+                    # Try to make a chart if there's a year/time column
+                    first = rows[0] if rows else {}
+                    time_cols = [c for c in display_columns if any(t in c.lower() for t in ["year", "date", "month", "period", "star_year"])]
+                    numeric_cols = [c for c in display_columns if isinstance(first.get(c), (int, float))]
+                    
+                    if time_cols and numeric_cols and len(rows) > 1:
+                        # Line chart for time series
+                        charts.append({
+                            "chart_type": "line",
+                            "title": f"{desc[:40]} Over Time",
+                            "x_axis": time_cols[0],
+                            "y_axis": numeric_cols[0],
+                            "data": rows[:50],
+                            "series": [{"key": nc, "label": nc, "color": "#3B82F6"} for nc in numeric_cols[:3]]
+                        })
+                    elif numeric_cols and 2 <= len(rows) <= 20:
+                        # Bar chart for categorical comparison
+                        name_col = next((c for c in display_columns if any(n in c.lower() for n in ["name", "org", "payer", "plan", "parent"])), display_columns[0])
+                        charts.append({
+                            "chart_type": "bar",
+                            "title": f"{desc[:40]}",
+                            "x_axis": name_col,
+                            "y_axis": numeric_cols[0],
+                            "data": rows[:20],
+                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
+                        })
+                continue
+            
+            # Handle direct list of records (e.g., from document search)
             if isinstance(raw_data, list) and len(raw_data) > 0:
-                # List of records - make a table
                 first = raw_data[0]
                 if isinstance(first, dict):
                     columns = list(first.keys())[:8]  # Limit columns
@@ -1071,7 +1114,7 @@ Analyze this data and provide your findings with structured charts and tables.""
                         "title": desc[:50],
                         "summary": f"Data for: {desc}",
                         "columns": columns,
-                        "rows": raw_data[:20],  # Limit rows
+                        "rows": raw_data[:50],  # Limit rows
                     })
                     
                     # Try to make a chart if there's a year/time column
@@ -1099,11 +1142,12 @@ Analyze this data and provide your findings with structured charts and tables.""
                             "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
                         })
                         
-            elif isinstance(raw_data, dict):
-                # Single record - convert to table format
-                if raw_data:
-                    columns = ["Metric", "Value"]
-                    rows = [{"Metric": k, "Value": v} for k, v in list(raw_data.items())[:15]]
+            elif isinstance(raw_data, dict) and raw_data:
+                # Generic dict - convert to key-value table (but not SQL results)
+                columns = ["Metric", "Value"]
+                rows = [{"Metric": k, "Value": v} for k, v in list(raw_data.items())[:15] 
+                        if not isinstance(v, (list, dict))]  # Skip nested structures
+                if rows:
                     tables.append({
                         "title": desc[:50],
                         "summary": f"Key metrics for: {desc}",
