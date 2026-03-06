@@ -276,16 +276,37 @@ PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS t
 **ENROLLMENT TABLES:**
 - fact_enrollment_all_years: year, month, contract_id, plan_id, parent_organization, enrollment, state
 - enrollment_by_parent: year, parent_organization, total_enrollment (aggregated)
+- fact_enrollment_by_state: year, month, state, parent_organization, enrollment (state aggregates)
+- fact_enrollment_by_geography: year, month, state, county, fips, contract_id, enrollment (county-level!)
 
 **STAR RATING TABLES:**
 - stars_enrollment_unified: star_year, contract_id, parent_org, enrollment, overall_rating (1-5), plan_type, group_type, snp_type
-  * THIS IS THE MAIN TABLE for 4+ star analysis - already has enrollment joined!
+  * THE MAIN TABLE for 4+ star analysis - already has enrollment joined!
 - summary_all_years: year, contract_id, parent_organization, overall_rating (1-5 scale), plan_type
-- measure_stars_all_years: year, contract_id, measure_id, star_rating (individual measures)
-- measures_all_years: year, contract_id, measure_id, measure_key, measure_name, numeric_value
+- measure_stars_all_years: year, contract_id, measure_id, star_rating (individual measure stars 1-5)
+- measures_all_years: year, contract_id, measure_id, measure_key, measure_name, numeric_value (raw scores)
+- cutpoints_all_years: year, measure_id, star_level (1-5), low_threshold, high_threshold
+  * Use to see "what score gets 4 stars on measure X"
+- stars_measure_specs: measure_id, measure_name, domain, weight, data_source
+  * Use to see measure weights and which domain they belong to
+
+**SNP (SPECIAL NEEDS PLAN) TABLES:**
+- fact_snp: year, parent_org, snp_type (D-SNP/C-SNP/I-SNP), enrollment, contract_count
+- fact_snp_historical: year, parent_org, snp_type, enrollment (longer history)
+  * Use for D-SNP growth analysis, dual eligible trends
+
+**DISENROLLMENT TABLES:**
+- disenrollment_all_years: year, contract_id, parent_organization, disenrollment_count, disenrollment_rate
+  * Use for member retention analysis, "which plans have high churn"
+
+**ENTITY TRACKING (Contract ID Changes):**
+- dim_entity: contract_id, entity_id, parent_org, first_year, last_year, predecessor_id, successor_id
+  * CRITICAL for tracking contracts through mergers, ID changes over time
+  * entity_id is stable across contract_id changes
 
 **RISK SCORE TABLES:**
 - fact_risk_scores_unified: year, contract_id, risk_score, member_months
+- risk_scores_by_parent: year, parent_org, avg_risk_score, total_member_months
 
 **RATE/BENCHMARK TABLES:**
 - uspcc_projections: year, aged_uspcc, disabled_uspcc, esrd_uspcc
@@ -352,6 +373,66 @@ SELECT star_year as year, parent_org, SUM(enrollment) as enrollment
 FROM stars_enrollment_unified 
 WHERE parent_org IN ('Humana', 'UnitedHealth Group', 'CVS Health')
 GROUP BY star_year, parent_org ORDER BY parent_org, star_year
+```
+
+**D-SNP Growth by Parent Organization:**
+```sql
+SELECT year, parent_org, snp_type, enrollment
+FROM fact_snp_historical
+WHERE snp_type = 'D-SNP'
+ORDER BY parent_org, year
+```
+
+**State-Level Market Share:**
+```sql
+SELECT year, state, parent_organization, SUM(enrollment) as enrollment,
+  ROUND(100.0 * SUM(enrollment) / SUM(SUM(enrollment)) OVER (PARTITION BY year, state), 1) as market_share
+FROM fact_enrollment_by_state
+WHERE year = 2026 AND month = 12
+GROUP BY year, state, parent_organization
+ORDER BY state, market_share DESC
+```
+
+**County-Level Enrollment (Geographic Analysis):**
+```sql
+SELECT year, state, county, fips, SUM(enrollment) as enrollment
+FROM fact_enrollment_by_geography
+WHERE state = 'FL' AND year = 2026
+GROUP BY year, state, county, fips
+ORDER BY enrollment DESC
+```
+
+**Star Rating Cutpoints (What score gets 4 stars?):**
+```sql
+SELECT year, measure_id, star_level, low_threshold, high_threshold
+FROM cutpoints_all_years
+WHERE measure_id = 'C01' AND star_level = 4
+ORDER BY year
+```
+
+**Measure Weights and Domains:**
+```sql
+SELECT measure_id, measure_name, domain, weight
+FROM stars_measure_specs
+WHERE weight > 1
+ORDER BY weight DESC
+```
+
+**Disenrollment Analysis:**
+```sql
+SELECT year, parent_organization, SUM(disenrollment_count) as disenrollment,
+  AVG(disenrollment_rate) as avg_rate
+FROM disenrollment_all_years
+GROUP BY year, parent_organization
+ORDER BY avg_rate DESC
+```
+
+**Contract ID Tracking (Entity Changes):**
+```sql
+SELECT contract_id, entity_id, parent_org, first_year, last_year, predecessor_id, successor_id
+FROM dim_entity
+WHERE parent_org LIKE '%Humana%'
+ORDER BY first_year
 ```
 
 === TOOL-BASED QUERIES (for documents/knowledge) ===
