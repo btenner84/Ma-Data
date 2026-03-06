@@ -330,23 +330,29 @@ class EnrollmentService:
             elif state:
                 filters.append(f"state = '{state}'")
         
-        # Get December enrollment for each year (or latest available month)
+        # Get latest month enrollment for each year
+        # Use a simpler approach: get max month per year first, then filter
         sql = f"""
-            SELECT
-                year,
-                MAX(month) as month_used,
-                SUM(enrollment) as enrollment,
-                SUM(plan_count) as plan_count,
-                COUNT(DISTINCT parent_org) as parent_org_count
-            FROM {table}
-            WHERE {' AND '.join(filters)}
-              AND (year, month) IN (
-                SELECT year, MAX(month) FROM {table} 
-                WHERE {' AND '.join(filters)}
+            WITH latest_months AS (
+                SELECT year, MAX(month) as max_month 
+                FROM {table} 
+                WHERE year BETWEEN {start_year} AND {end_year}
                 GROUP BY year
-              )
-            GROUP BY year
-            ORDER BY year
+            ),
+            base_data AS (
+                SELECT * FROM {table}
+                WHERE {' AND '.join(filters)}
+            )
+            SELECT
+                b.year,
+                lm.max_month as month_used,
+                SUM(b.enrollment) as enrollment,
+                SUM(b.plan_count) as plan_count,
+                COUNT(DISTINCT b.parent_org) as parent_org_count
+            FROM base_data b
+            INNER JOIN latest_months lm ON b.year = lm.year AND b.month = lm.max_month
+            GROUP BY b.year, lm.max_month
+            ORDER BY b.year
         """
 
         df, audit_id = self.engine.query_with_record_audit(
