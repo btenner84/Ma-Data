@@ -282,6 +282,7 @@ Your analysis should:
 2. Compare to relevant benchmarks or historical values
 3. Note any surprising or noteworthy patterns
 4. Flag if more data is needed for a complete answer
+5. CREATE CHARTS and DATA TABLES when data supports visualization
 
 Output JSON:
 ```json
@@ -289,12 +290,42 @@ Output JSON:
   "findings": ["Key finding 1", "Key finding 2", ...],
   "comparisons": {"metric": {"current": X, "prior_year": Y, "industry": Z}},
   "trends": [{"metric": "name", "direction": "up|down|stable", "magnitude": "X%"}],
+  "data_tables": [
+    {
+      "title": "Title for the table",
+      "summary": "Brief description of what this shows",
+      "columns": ["Column1", "Column2", "Column3"],
+      "rows": [
+        {"Column1": "val1", "Column2": 123, "Column3": 45.6},
+        {"Column1": "val2", "Column2": 456, "Column3": 78.9}
+      ]
+    }
+  ],
+  "charts": [
+    {
+      "chart_type": "line|bar|area",
+      "title": "Chart title",
+      "x_axis": "field_for_x",
+      "y_axis": "field_for_y",
+      "data": [
+        {"x_field": "2020", "y_field": 100},
+        {"x_field": "2021", "y_field": 120}
+      ],
+      "series": [{"key": "y_field", "label": "Metric Name", "color": "#3B82F6"}]
+    }
+  ],
   "needs_more_data": false,
   "additional_queries": [],
   "confidence": 0.9,
   "caveats": ["Any data limitations"]
 }
 ```
+
+IMPORTANT VISUAL OUTPUTS:
+- If data shows a TREND over time -> create a LINE or AREA chart
+- If comparing CATEGORIES (payers, plans) -> create a BAR chart
+- If showing RANKINGS or LISTS -> create a DATA TABLE
+- If data has NUMBERS -> format them nicely with commas and percentages
 
 Be analytical - look for the story in the data, not just the numbers."""
 
@@ -330,30 +361,36 @@ Given the analyzed data, create a natural, conversational response that:
 2. Explains implications, not just facts
 3. Provides context and comparisons
 4. Is conversational, not robotic
+5. REFERENCES the charts and tables that will be shown below your response
+
+IMPORTANT: Charts and data tables are displayed SEPARATELY below your text response. 
+- Don't repeat all the numbers that are in the tables
+- DO reference them: "As shown in the table below...", "The chart illustrates..."
+- Your text should INTERPRET and ADD CONTEXT to the visuals
 
 TONE: Like a senior consultant briefing a colleague - knowledgeable, direct, insightful.
 
 DO NOT:
-- Use bullet points unless showing a specific list
-- Dump raw numbers without context
+- List all the raw numbers that are already in the tables
 - Use robotic phrasing like "Based on my analysis..."
-- Structure response like a report
+- Structure response like a formal report
+- Repeat data that's in the charts/tables
 
 DO:
 - Lead with the headline takeaway
-- Explain what the numbers mean
-- Compare to benchmarks and prior years
+- Explain what the numbers MEAN
+- Reference the visualizations naturally
 - Share your expert perspective
 - Note any caveats naturally in the flow
 
-Example good opening:
-"The 2027 advance notice is actually pretty favorable - the 4.33% growth rate is above last year, and with V28 fully phased in, we finally have some stability on the risk model front."
+Example good response (when a table of payer drops is shown below):
+"Humana's 4-star drop is actually unprecedented for them - they've been the model of consistency for years. The table below shows the major drops since 2014, and you'll notice Humana had never appeared on this list until now. What's interesting is the recovery patterns: most large payers bounce back within 2-3 years. Centene is the outlier here - they've had repeated drops without sustained recovery, which suggests structural issues rather than one-off problems."
 
 NOT:
-"Here are the key parameters from the 2027 Advance Notice:
-- MA Growth Rate: 4.33%
-- Risk Model: V28 at 100%
-..."
+"Here are all the drops:
+- Humana: 96.9% to 40.8% in 2025
+- CIGNA: 74.4% to 21.0% in 2017
+- Healthfirst: 100% to 0% in 2018..."
 """
 
 
@@ -682,44 +719,149 @@ class MAAgentV2:
         step: AgentStep
     ) -> AnalysisResult:
         """Analyze gathered data."""
+        # Determine what visualizations would be helpful
+        question_lower = question.lower()
+        viz_hints = []
+        if any(w in question_lower for w in ["trend", "over time", "history", "year", "growth"]):
+            viz_hints.append("Create a LINE chart showing the trend over time")
+        if any(w in question_lower for w in ["compare", "vs", "versus", "rank", "top"]):
+            viz_hints.append("Create a BAR chart or table comparing the entities")
+        if any(w in question_lower for w in ["drop", "decrease", "increase", "change"]):
+            viz_hints.append("Show the change magnitude in a table with before/after values")
+        
+        viz_instruction = "\n".join(viz_hints) if viz_hints else "Create appropriate visualizations"
+        
         prompt = f"""{ANALYZER_PROMPT}
 
 User Question: {question}
 
-Gathered Data:
-{json.dumps(data, default=str, indent=2)[:4000]}
+Visualization Hints: {viz_instruction}
 
-Analyze this data and provide your findings."""
+Gathered Data:
+{json.dumps(data, default=str, indent=2)[:6000]}
+
+Analyze this data and provide your findings with structured charts and tables."""
 
         response = await self._call_llm(prompt, step)
         
         # Parse analysis response
+        data_tables = []
+        charts = []
+        findings = []
+        confidence = 0.7
+        needs_more_data = False
+        
         try:
             # Try to extract JSON from response
             json_match = response.find("{")
             if json_match >= 0:
                 json_str = response[json_match:]
-                json_end = json_str.rfind("}") + 1
-                parsed = json.loads(json_str[:json_end])
+                # Find matching closing brace
+                depth = 0
+                end_idx = 0
+                for i, c in enumerate(json_str):
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_idx = i + 1
+                            break
                 
-                return AnalysisResult(
-                    findings=parsed.get("findings", []),
-                    data_tables=parsed.get("data_tables", []),
-                    charts=parsed.get("charts", []),
-                    needs_more_data=parsed.get("needs_more_data", False),
-                    confidence=parsed.get("confidence", 0.7),
-                )
-        except:
-            pass
+                if end_idx > 0:
+                    parsed = json.loads(json_str[:end_idx])
+                    findings = parsed.get("findings", [])
+                    data_tables = parsed.get("data_tables", [])
+                    charts = parsed.get("charts", [])
+                    needs_more_data = parsed.get("needs_more_data", False)
+                    confidence = parsed.get("confidence", 0.7)
+        except Exception as e:
+            # Log but continue
+            print(f"Error parsing analysis JSON: {e}")
         
-        # Fallback: treat entire response as a finding
+        # If no structured output, try to build from raw data
+        if not data_tables and not charts and data:
+            data_tables, charts = self._build_visualizations_from_data(question, data)
+        
+        # If still no findings, use raw response
+        if not findings:
+            findings = [response[:500]]
+        
         return AnalysisResult(
-            findings=[response[:500]],
-            data_tables=[],
-            charts=[],
-            needs_more_data=False,
-            confidence=0.6,
+            findings=findings,
+            data_tables=data_tables,
+            charts=charts,
+            needs_more_data=needs_more_data,
+            confidence=confidence,
         )
+    
+    def _build_visualizations_from_data(
+        self, 
+        question: str, 
+        data: Dict
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """Build visualizations directly from gathered data."""
+        tables = []
+        charts = []
+        
+        for req_id, req_data in data.items():
+            if not isinstance(req_data, dict):
+                continue
+                
+            raw_data = req_data.get("data", {})
+            desc = req_data.get("description", "Data")
+            
+            # Handle different data formats
+            if isinstance(raw_data, list) and len(raw_data) > 0:
+                # List of records - make a table
+                first = raw_data[0]
+                if isinstance(first, dict):
+                    columns = list(first.keys())[:8]  # Limit columns
+                    tables.append({
+                        "title": desc[:50],
+                        "summary": f"Data for: {desc}",
+                        "columns": columns,
+                        "rows": raw_data[:20],  # Limit rows
+                    })
+                    
+                    # Try to make a chart if there's a year/time column
+                    time_cols = [c for c in columns if any(t in c.lower() for t in ["year", "date", "month", "period"])]
+                    numeric_cols = [c for c in columns if isinstance(first.get(c), (int, float))]
+                    
+                    if time_cols and numeric_cols:
+                        charts.append({
+                            "chart_type": "line",
+                            "title": f"{desc[:40]} Over Time",
+                            "x_axis": time_cols[0],
+                            "y_axis": numeric_cols[0],
+                            "data": raw_data[:30],
+                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#3B82F6"}]
+                        })
+                    elif numeric_cols and len(raw_data) <= 15:
+                        # Bar chart for categorical comparison
+                        name_col = next((c for c in columns if any(n in c.lower() for n in ["name", "org", "payer", "plan"])), columns[0])
+                        charts.append({
+                            "chart_type": "bar",
+                            "title": f"{desc[:40]} Comparison",
+                            "x_axis": name_col,
+                            "y_axis": numeric_cols[0],
+                            "data": raw_data[:15],
+                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
+                        })
+                        
+            elif isinstance(raw_data, dict):
+                # Single record - convert to table format
+                if raw_data:
+                    columns = ["Metric", "Value"]
+                    rows = [{"Metric": k, "Value": v} for k, v in list(raw_data.items())[:15]]
+                    tables.append({
+                        "title": desc[:50],
+                        "summary": f"Key metrics for: {desc}",
+                        "columns": columns,
+                        "rows": rows,
+                    })
+        
+        return tables, charts
     
     async def _validate(
         self, 
@@ -779,6 +921,18 @@ Validate this analysis."""
             description="Generating response",
         )
         
+        # Describe what visuals will be shown
+        visual_desc = []
+        if analysis.charts:
+            for chart in analysis.charts[:3]:
+                visual_desc.append(f"- CHART ({chart.get('chart_type', 'unknown')}): {chart.get('title', 'Untitled')}")
+        if analysis.data_tables:
+            for table in analysis.data_tables[:3]:
+                row_count = len(table.get('rows', []))
+                visual_desc.append(f"- TABLE: {table.get('title', 'Untitled')} ({row_count} rows)")
+        
+        visuals_info = "\n".join(visual_desc) if visual_desc else "None"
+        
         prompt = f"""{SYNTHESIZER_PROMPT}
 
 User Question: {question}
@@ -786,13 +940,14 @@ User Question: {question}
 Key Findings:
 {json.dumps(analysis.findings, indent=2)}
 
-Data Tables Available:
-{json.dumps(analysis.data_tables[:3], indent=2) if analysis.data_tables else "None"}
+VISUALIZATIONS THAT WILL BE SHOWN BELOW YOUR RESPONSE:
+{visuals_info}
 
 Validation Notes:
 {json.dumps(validation.get("suggestions", []), indent=2)}
 
-Now write a natural, conversational response as an MA expert."""
+Write a conversational response that INTERPRETS and CONTEXTUALIZES the data. 
+Reference the charts/tables naturally but don't repeat all the numbers they contain."""
 
         response = await self._call_llm(prompt, step)
         
