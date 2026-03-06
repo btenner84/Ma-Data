@@ -435,6 +435,139 @@ WHERE parent_org LIKE '%Humana%'
 ORDER BY first_year
 ```
 
+=== MEASURE-LEVEL ANALYSIS QUERIES (Critical for deep analysis!) ===
+
+**Get Specific Measure Stars for a Contract (which measures hurt them?):**
+```sql
+SELECT 
+  m.year,
+  m.contract_id,
+  m.measure_id,
+  m.star_rating,
+  ms.measure_name,
+  ms.domain,
+  ms.weight
+FROM measure_stars_all_years m
+JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
+WHERE m.contract_id IN (
+  SELECT contract_id FROM summary_all_years 
+  WHERE parent_organization LIKE '%Humana%'
+)
+AND m.year BETWEEN 2023 AND 2026
+ORDER BY m.contract_id, m.year, ms.weight DESC
+```
+
+**Year-over-Year Measure Changes (identify what dropped):**
+```sql
+WITH measure_history AS (
+  SELECT 
+    m.year,
+    m.contract_id,
+    s.parent_organization,
+    m.measure_id,
+    ms.measure_name,
+    ms.domain,
+    ms.weight,
+    m.star_rating
+  FROM measure_stars_all_years m
+  JOIN summary_all_years s ON m.contract_id = s.contract_id AND m.year = s.year
+  JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
+  WHERE ms.weight >= 1  -- Focus on weighted measures
+)
+SELECT 
+  curr.parent_organization,
+  curr.measure_id,
+  curr.measure_name,
+  curr.domain,
+  curr.weight,
+  prev.star_rating as prev_stars,
+  curr.star_rating as curr_stars,
+  curr.star_rating - prev.star_rating as change
+FROM measure_history curr
+JOIN measure_history prev 
+  ON curr.contract_id = prev.contract_id 
+  AND curr.measure_id = prev.measure_id 
+  AND curr.year = prev.year + 1
+WHERE curr.star_rating - prev.star_rating <= -2  -- 2+ star drop on a measure
+AND curr.year = 2025
+ORDER BY curr.weight DESC, change ASC
+```
+
+**Recovery Analysis - Companies that recovered (with measure detail):**
+```sql
+WITH yearly_pct AS (
+  SELECT 
+    star_year,
+    parent_org,
+    SUM(enrollment) as enrollment,
+    ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / 
+          NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+  FROM stars_enrollment_unified
+  GROUP BY star_year, parent_org
+  HAVING SUM(enrollment) > 50000
+),
+drops AS (
+  SELECT 
+    curr.parent_org,
+    curr.star_year as drop_year,
+    prev.pct_four_star as before_drop,
+    curr.pct_four_star as after_drop
+  FROM yearly_pct curr
+  JOIN yearly_pct prev ON curr.parent_org = prev.parent_org AND curr.star_year = prev.star_year + 1
+  WHERE prev.pct_four_star - curr.pct_four_star > 25  -- Major drop
+)
+SELECT 
+  d.parent_org,
+  d.drop_year,
+  d.before_drop,
+  d.after_drop,
+  y.star_year,
+  y.pct_four_star,
+  CASE 
+    WHEN y.pct_four_star >= d.before_drop * 0.9 THEN 'RECOVERED'
+    WHEN y.pct_four_star >= d.after_drop + 20 THEN 'PARTIAL'
+    ELSE 'NOT_RECOVERED'
+  END as recovery_status,
+  y.star_year - d.drop_year as years_since_drop
+FROM drops d
+JOIN yearly_pct y ON d.parent_org = y.parent_org AND y.star_year >= d.drop_year
+ORDER BY d.parent_org, y.star_year
+```
+
+**Measure Performance for Specific Domain (e.g., Member Experience):**
+```sql
+SELECT 
+  m.year,
+  s.parent_organization,
+  ms.domain,
+  COUNT(*) as measure_count,
+  AVG(m.star_rating) as avg_stars,
+  SUM(CASE WHEN m.star_rating >= 4 THEN 1 ELSE 0 END) as measures_at_4_plus
+FROM measure_stars_all_years m
+JOIN summary_all_years s ON m.contract_id = s.contract_id AND m.year = s.year
+JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
+WHERE s.parent_organization LIKE '%Humana%'
+AND ms.domain LIKE '%Experience%'  -- Or '%Outcome%', '%Process%', '%Access%'
+GROUP BY m.year, s.parent_organization, ms.domain
+ORDER BY m.year
+```
+
+=== MULTI-STEP ANALYSIS STRATEGY ===
+
+For complex questions like "4+ star drops and recovery patterns", use MULTIPLE requirements:
+
+1. **First**: Get the drops - who dropped, when, how much
+2. **Second**: Get measure-level detail - which specific measures caused it  
+3. **Third**: Get recovery data - for companies that dropped before, how did they recover?
+4. **Fourth**: Compare current situation - how does Humana's measure profile compare to recoverers?
+
+DO NOT make assumptions about recovery timelines or causes. 
+Query the actual historical data to find:
+- Real examples of companies that dropped and recovered
+- How long it actually took them
+- Which measures they improved
+- What changed in their performance
+
 === TOOL-BASED QUERIES (for documents/knowledge) ===
 
 **For Technical Notes questions (star rating methodology):**
@@ -502,46 +635,66 @@ ANALYZER_PROMPT = """You are a Medicare Advantage analyst examining ACTUAL DATA 
 You have been given REAL query results from our database. Analyze them thoroughly.
 
 Your analysis MUST:
-1. Extract specific numbers and findings from the data
-2. Identify patterns, trends, and outliers
+1. Extract specific numbers and findings from the data - BE PRECISE
+2. Identify patterns with ACTUAL EXAMPLES (company X did Y in year Z)
 3. Calculate changes (year-over-year, percentages)
 4. CREATE CHARTS AND TABLES - this is critical for visualization
+5. IDENTIFY GAPS - what data is missing to fully answer the question?
+
+=== DEEP ANALYSIS REQUIREMENTS ===
+
+For star rating drop/recovery questions, you MUST analyze:
+1. WHO dropped: List specific organizations with exact numbers
+2. WHEN: Which years, magnitude of drop
+3. RECOVERY: Did they recover? How long? To what level?
+4. MEASURES: If measure data is available, which specific measures drove the change?
+
+If measure-level data is NOT in the results, set "needs_more_data": true and specify:
+- "We have overall ratings but need measure_stars_all_years to identify which measures drove the drop"
 
 === REQUIRED OUTPUT FORMAT ===
 ```json
 {
   "findings": [
-    "Specific finding with actual numbers from the data",
-    "Another finding - be precise with values"
+    "CVS Health dropped from 89.0% to 57.1% (31.9 point drop) in 2023",
+    "CVS recovered to 92.3% by 2024 - full recovery in 1 year",
+    "Humana dropped from 96.9% to 40.8% (56.1 points) in 2025 - largest drop in dataset"
   ],
   "data_tables": [
     {
-      "title": "Descriptive Table Title",
-      "summary": "What this table shows",
-      "columns": ["Year", "Organization", "Value", "Change"],
+      "title": "Major 4+ Star Drops (>25 points) and Recovery Status",
+      "summary": "Shows each major drop, the year it occurred, and whether company recovered",
+      "columns": ["Organization", "Drop Year", "Before", "After", "Drop", "Recovered?", "Years to Recover"],
       "rows": [
-        {"Year": 2020, "Organization": "Humana", "Value": 95.2, "Change": null},
-        {"Year": 2021, "Organization": "Humana", "Value": 92.1, "Change": -3.1}
+        {"Organization": "CVS Health", "Drop Year": 2023, "Before": 89.0, "After": 57.1, "Drop": -31.9, "Recovered?": "Yes", "Years to Recover": 1},
+        {"Organization": "Humana", "Drop Year": 2025, "Before": 96.9, "After": 40.8, "Drop": -56.1, "Recovered?": "Ongoing", "Years to Recover": null}
       ]
     }
   ],
   "charts": [
     {
       "chart_type": "line",
-      "title": "4+ Star Enrollment % Over Time",
+      "title": "Recovery Trajectories After Major Drops",
       "x_axis": "year",
       "y_axis": "pct_four_star",
       "data": [
-        {"year": 2020, "pct_four_star": 95.2},
-        {"year": 2021, "pct_four_star": 92.1},
-        {"year": 2022, "pct_four_star": 88.5}
+        {"year": 2022, "CVS": 89.0, "Humana": 96.9},
+        {"year": 2023, "CVS": 57.1, "Humana": 96.5},
+        {"year": 2024, "CVS": 92.3, "Humana": 40.8}
       ],
-      "series": [{"key": "pct_four_star", "label": "% in 4+ Star Plans", "color": "#3B82F6"}]
+      "series": [
+        {"key": "CVS", "label": "CVS Health", "color": "#3B82F6"},
+        {"key": "Humana", "label": "Humana", "color": "#EF4444"}
+      ]
     }
   ],
-  "needs_more_data": false,
-  "confidence": 0.9,
-  "caveats": []
+  "needs_more_data": true,
+  "additional_data_needed": [
+    "Measure-level stars from measure_stars_all_years to identify which measures drove Humana's drop",
+    "Domain-level breakdown to see if drop was concentrated in Experience, Outcomes, or Process measures"
+  ],
+  "confidence": 0.85,
+  "caveats": ["Recovery analysis limited to overall rating - measure-level recovery patterns not analyzed"]
 }
 ```
 
@@ -606,41 +759,66 @@ Output JSON:
 
 SYNTHESIZER_PROMPT = """You are an expert Medicare Advantage consultant explaining findings to a colleague.
 
-Given the analyzed data, create a natural, conversational response that:
-1. Leads with the key insight (not data dumps)
-2. Explains implications, not just facts
-3. Provides context and comparisons
-4. Is conversational, not robotic
-5. REFERENCES the charts and tables that will be shown below your response
+=== CRITICAL: DATA-BACKED ANALYSIS ONLY ===
+
+NEVER make claims you cannot prove with the data provided. Examples of BAD unsupported claims:
+- "Recovery typically takes 3-4 years" (unless you have actual data showing this)
+- "They should recover because they have resources" (opinion, not data)
+- "This is due to CMS methodology changes" (unless you searched documents and found evidence)
+
+ALWAYS back up claims with specific data:
+- "CVS dropped 32 points in 2021 and recovered 15 points by 2024 - that's 3 years"
+- "Looking at the 5 companies that had >30 point drops, 3 recovered within 2 years: X, Y, Z"
+- "Humana's drop was concentrated in Member Experience measures - C18 dropped from 4 to 2"
+
+If you don't have data to support a conclusion, say so:
+- "I don't have measure-level data to identify which specific measures drove this"
+- "To assess recovery likelihood, we'd need to compare their measure profile to past recoverers"
+
+=== OUTPUT STRUCTURE ===
+
+Given the analyzed data, create a response that:
+1. Leads with the KEY FINDING backed by specific numbers
+2. Shows ACTUAL HISTORICAL EXAMPLES (not generalizations)
+3. Provides MEASURE-LEVEL DETAIL when relevant
+4. References the charts and tables that will appear below
 
 IMPORTANT: Charts and data tables are displayed SEPARATELY below your text response. 
 - Don't repeat all the numbers that are in the tables
 - DO reference them: "As shown in the table below...", "The chart illustrates..."
 - Your text should INTERPRET and ADD CONTEXT to the visuals
 
-TONE: Like a senior consultant briefing a colleague - knowledgeable, direct, insightful.
+TONE: Like a senior consultant briefing a colleague - direct, data-driven, no fluff.
 
 DO NOT:
-- List all the raw numbers that are already in the tables
-- Use robotic phrasing like "Based on my analysis..."
-- Structure response like a formal report
-- Repeat data that's in the charts/tables
+- Make unsupported predictions or timelines
+- Use vague phrases like "typically", "usually", "should" without data
+- Guess at causation without evidence
+- List all the raw numbers already in the tables
 
 DO:
-- Lead with the headline takeaway
-- Explain what the numbers MEAN
-- Reference the visualizations naturally
-- Share your expert perspective
-- Note any caveats naturally in the flow
+- Lead with specific, data-backed findings
+- Show actual historical examples with real numbers
+- Reference specific measures, domains, contracts when available
+- Acknowledge what the data does NOT show
+- Be specific about uncertainty
 
-Example good response (when a table of payer drops is shown below):
-"Humana's 4-star drop is actually unprecedented for them - they've been the model of consistency for years. The table below shows the major drops since 2014, and you'll notice Humana had never appeared on this list until now. What's interesting is the recovery patterns: most large payers bounce back within 2-3 years. Centene is the outlier here - they've had repeated drops without sustained recovery, which suggests structural issues rather than one-off problems."
+=== EXAMPLE: Good vs Bad Responses ===
 
-NOT:
-"Here are all the drops:
-- Humana: 96.9% to 40.8% in 2025
-- CIGNA: 74.4% to 21.0% in 2017
-- Healthfirst: 100% to 0% in 2018..."
+Question: "How do companies recover from 4+ star drops?"
+
+BAD (unsupported):
+"Most companies recover within 2-3 years. Humana has strong resources so they should bounce back. The key is focusing on member experience measures."
+
+GOOD (data-backed):
+"Looking at the 8 major drops (>25 points) in our data since 2015:
+- 5 recovered to within 10 points of prior level within 3 years (CVS, CIGNA, Healthfirst, Blue Cross MI, Highmark)
+- 2 showed partial recovery but not full (Anthem, California Physicians)  
+- 1 has never recovered (Centene - they've had 3 separate major drops)
+
+The table below shows the specific trajectory of each. Notable: the fastest recoverers (Healthfirst, Blue Cross MI) were regional plans with concentrated markets. National players like CVS took 2-3 years.
+
+For Humana, I don't have the measure-level breakdown yet to identify which specific measures drove their drop. That analysis would help predict their recovery path."
 """
 
 
@@ -840,6 +1018,82 @@ class MAAgentV2:
             return f"V{num}"
         return "V28"  # Default to current
     
+    def _extract_company_from_question(self, question: str) -> str:
+        """Extract company name from question for targeted queries."""
+        import re
+        question_lower = question.lower()
+        
+        # Common company patterns
+        companies = {
+            "humana": "Humana",
+            "unitedhealth": "UnitedHealth",
+            "united health": "UnitedHealth", 
+            "cvs": "CVS Health",
+            "aetna": "CVS Health",
+            "anthem": "Elevance",
+            "elevance": "Elevance",
+            "centene": "Centene",
+            "cigna": "CIGNA",
+            "kaiser": "Kaiser",
+            "bcbs": "Blue Cross Blue Shield",
+            "blue cross": "Blue Cross",
+        }
+        
+        for pattern, name in companies.items():
+            if pattern in question_lower:
+                return name
+        
+        return "Humana"  # Default to Humana as the most commonly asked about
+    
+    def _generate_measure_query(self, question: str) -> str:
+        """Generate SQL for measure-level star rating analysis."""
+        company = self._extract_company_from_question(question)
+        return f"""
+WITH company_contracts AS (
+    SELECT DISTINCT contract_id 
+    FROM summary_all_years 
+    WHERE parent_organization LIKE '%{company}%'
+)
+SELECT 
+    m.year,
+    m.contract_id,
+    s.parent_organization,
+    m.measure_id,
+    ms.measure_name,
+    ms.domain,
+    ms.weight,
+    m.star_rating
+FROM measure_stars_all_years m
+JOIN summary_all_years s ON m.contract_id = s.contract_id AND m.year = s.year
+JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
+WHERE m.contract_id IN (SELECT contract_id FROM company_contracts)
+AND m.year BETWEEN 2022 AND 2026
+AND ms.weight >= 1
+ORDER BY m.year, ms.weight DESC, m.measure_id
+LIMIT 200
+"""
+    
+    def _generate_domain_query(self, question: str) -> str:
+        """Generate SQL for domain-level star rating breakdown."""
+        company = self._extract_company_from_question(question)
+        return f"""
+SELECT 
+    m.year,
+    s.parent_organization,
+    ms.domain,
+    COUNT(*) as measure_count,
+    ROUND(AVG(m.star_rating), 2) as avg_stars,
+    SUM(CASE WHEN m.star_rating >= 4 THEN 1 ELSE 0 END) as measures_at_4_plus,
+    SUM(CASE WHEN m.star_rating <= 2 THEN 1 ELSE 0 END) as measures_at_2_or_below
+FROM measure_stars_all_years m
+JOIN summary_all_years s ON m.contract_id = s.contract_id AND m.year = s.year
+JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
+WHERE s.parent_organization LIKE '%{company}%'
+AND m.year BETWEEN 2020 AND 2026
+GROUP BY m.year, s.parent_organization, ms.domain
+ORDER BY m.year, ms.domain
+"""
+    
     async def _execute_requirement(
         self, 
         req: DataRequirement, 
@@ -1001,6 +1255,8 @@ Analyze this data and provide your findings with structured charts and tables.""
         confidence = 0.7
         needs_more_data = False
         
+        additional_requirements = []
+        
         try:
             # Try to extract JSON from response
             json_match = response.find("{")
@@ -1025,6 +1281,44 @@ Analyze this data and provide your findings with structured charts and tables.""
                     charts = parsed.get("charts", [])
                     needs_more_data = parsed.get("needs_more_data", False)
                     confidence = parsed.get("confidence", 0.7)
+                    
+                    # Parse additional_data_needed into actual requirements
+                    additional_data_needed = parsed.get("additional_data_needed", [])
+                    for desc in additional_data_needed:
+                        if isinstance(desc, str):
+                            # Try to determine if this is a SQL or tool request
+                            desc_lower = desc.lower()
+                            
+                            if "measure" in desc_lower and "stars" in desc_lower:
+                                # Measure-level query needed
+                                additional_requirements.append(DataRequirement(
+                                    requirement_id=str(uuid.uuid4()),
+                                    description=desc,
+                                    data_type="stars",
+                                    query_approach="sql",
+                                    specific_query=self._generate_measure_query(question),
+                                    priority=1,
+                                ))
+                            elif "domain" in desc_lower:
+                                # Domain-level breakdown
+                                additional_requirements.append(DataRequirement(
+                                    requirement_id=str(uuid.uuid4()),
+                                    description=desc,
+                                    data_type="stars",
+                                    query_approach="sql", 
+                                    specific_query=self._generate_domain_query(question),
+                                    priority=1,
+                                ))
+                            else:
+                                # Generic additional requirement
+                                additional_requirements.append(DataRequirement(
+                                    requirement_id=str(uuid.uuid4()),
+                                    description=desc,
+                                    data_type="unknown",
+                                    query_approach="sql",
+                                    priority=2,
+                                ))
+                                
         except Exception as e:
             # Log but continue
             print(f"Error parsing analysis JSON: {e}")
@@ -1042,6 +1336,7 @@ Analyze this data and provide your findings with structured charts and tables.""
             data_tables=data_tables,
             charts=charts,
             needs_more_data=needs_more_data,
+            additional_requirements=additional_requirements,
             confidence=confidence,
         )
     
