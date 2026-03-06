@@ -254,8 +254,9 @@ YOU HAVE DATA FOR:
 - enrollment_by_parent: year, parent_organization, total_enrollment (aggregated)
 
 **STAR RATING TABLES:**
+- stars_enrollment_unified: star_year, contract_id, parent_org, enrollment, overall_rating (1-5), plan_type, group_type, snp_type
+  * THIS IS THE MAIN TABLE for 4+ star analysis - already has enrollment joined!
 - summary_all_years: year, contract_id, parent_organization, overall_rating (1-5 scale), plan_type
-  * Use this for 4+ star analysis - join with enrollment for weighted calculations
 - measure_stars_all_years: year, contract_id, measure_id, star_rating (individual measures)
 - measures_all_years: year, contract_id, measure_id, measure_key, measure_name, numeric_value
 
@@ -269,51 +270,64 @@ YOU HAVE DATA FOR:
 
 === EXAMPLE QUERIES ===
 
-**4+ Star Enrollment by Parent Org (for drops/recovery analysis):**
+**4+ Star Enrollment by Parent Org (THE MAIN QUERY for star rating analysis):**
 ```sql
 SELECT 
-  e.year,
-  e.parent_organization,
-  SUM(e.enrollment) as total_enrollment,
-  SUM(CASE WHEN s.overall_rating >= 4 THEN e.enrollment ELSE 0 END) as four_star_enrollment,
-  ROUND(100.0 * SUM(CASE WHEN s.overall_rating >= 4 THEN e.enrollment ELSE 0 END) / SUM(e.enrollment), 1) as pct_four_star
-FROM fact_enrollment_all_years e
-JOIN summary_all_years s ON e.contract_id = s.contract_id AND e.year = s.year
-WHERE e.month = 12 AND e.year BETWEEN 2015 AND 2026
-GROUP BY e.year, e.parent_organization
-ORDER BY e.parent_organization, e.year
+  star_year as year,
+  parent_org,
+  SUM(enrollment) as total_enrollment,
+  SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) as four_star_enrollment,
+  ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+FROM stars_enrollment_unified
+WHERE star_year BETWEEN 2015 AND 2026
+GROUP BY star_year, parent_org
+HAVING SUM(enrollment) > 100000
+ORDER BY parent_org, star_year
 ```
 
-**Year-over-Year Star Rating Changes:**
+**Find Major 4+ Star Drops (>20 point drop year-over-year):**
 ```sql
+WITH yearly AS (
+  SELECT 
+    star_year,
+    parent_org,
+    SUM(enrollment) as enrollment,
+    ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+  FROM stars_enrollment_unified
+  GROUP BY star_year, parent_org
+  HAVING SUM(enrollment) > 100000
+)
 SELECT 
-  curr.parent_organization,
-  curr.year,
+  curr.parent_org,
+  curr.star_year as year,
   prev.pct_four_star as prev_pct,
   curr.pct_four_star as curr_pct,
-  curr.pct_four_star - prev.pct_four_star as change
-FROM (
-  SELECT year, parent_organization, 
-    ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / SUM(enrollment), 1) as pct_four_star
-  FROM fact_enrollment_all_years e JOIN summary_all_years s USING(contract_id, year)
-  WHERE month = 12 GROUP BY year, parent_organization
-) curr
-JOIN (
-  SELECT year, parent_organization, 
-    ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / SUM(enrollment), 1) as pct_four_star
-  FROM fact_enrollment_all_years e JOIN summary_all_years s USING(contract_id, year)
-  WHERE month = 12 GROUP BY year, parent_organization
-) prev ON curr.parent_organization = prev.parent_organization AND curr.year = prev.year + 1
-WHERE ABS(curr.pct_four_star - prev.pct_four_star) > 20
-ORDER BY change
+  ROUND(curr.pct_four_star - prev.pct_four_star, 1) as change
+FROM yearly curr
+JOIN yearly prev ON curr.parent_org = prev.parent_org AND curr.star_year = prev.star_year + 1
+WHERE curr.pct_four_star - prev.pct_four_star < -20
+ORDER BY change ASC
+```
+
+**Single Company Star Rating History (e.g., Humana):**
+```sql
+SELECT 
+  star_year as year,
+  parent_org,
+  SUM(enrollment) as enrollment,
+  ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+FROM stars_enrollment_unified
+WHERE parent_org LIKE '%Humana%'
+GROUP BY star_year, parent_org
+ORDER BY star_year
 ```
 
 **Enrollment Trends by Organization:**
 ```sql
-SELECT year, parent_organization, SUM(enrollment) as enrollment
-FROM fact_enrollment_all_years 
-WHERE month = 12 AND parent_organization IN ('Humana', 'UnitedHealth', 'CVS Health')
-GROUP BY year, parent_organization ORDER BY parent_organization, year
+SELECT star_year as year, parent_org, SUM(enrollment) as enrollment
+FROM stars_enrollment_unified 
+WHERE parent_org IN ('Humana', 'UnitedHealth Group', 'CVS Health')
+GROUP BY star_year, parent_org ORDER BY parent_org, star_year
 ```
 
 === OUTPUT FORMAT ===
