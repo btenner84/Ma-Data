@@ -480,11 +480,15 @@ LINKING COMPATIBILITY:
 - Enrollment National + Stars: ⚠️ Enrollment is aggregated by parent_org (no contract_id) - can only join on year
 - Stars + Risk Scores: Join on contract_id + year ✅
 
-RESPONSE FORMAT:
-1. Briefly confirm which files are selected
-2. Explain how they link (or note if they can't link directly)
-3. Note that Excel downloads will be generated
-4. Keep it SHORT - the user wants the files, not a long explanation
+RESPONSE FORMATTING RULES:
+- Keep responses concise and well-organized
+- Use markdown headers (##) to separate major sections
+- Use bullet points for lists, not run-on sentences
+- Add blank lines between sections for readability
+- Don't repeat information unnecessarily
+- When listing files, use a clean format like:
+  - **File Name** - brief description
+- Keep the tone professional but conversational
 """
         
         return f"""You are an expert Medicare Advantage data analyst with access to comprehensive MA data.
@@ -500,12 +504,15 @@ YOUR ROLE:
 - When document context is provided, use it to answer document-specific questions
 - When raw data context is provided (tutorial mode), explain how to work with the data step-by-step
 
-RESPONSE FORMAT:
-1. Start with a brief, direct answer to the question
-2. Support with specific data points from tool results or document context
-3. Suggest relevant visualizations (charts/tables) when appropriate
-4. Note any caveats or data limitations
-5. In tutorial mode, show SQL queries and explain the logic
+RESPONSE FORMATTING RULES:
+- Be concise - don't over-explain
+- Use markdown headers (## or ###) to organize sections
+- Use bullet points for lists, not long paragraphs
+- Add blank lines between sections for visual breathing room
+- Bold (**text**) for emphasis on key terms or numbers
+- Keep a professional but conversational tone
+- When showing data: use clean tables or organized lists
+- Don't repeat information the user already knows
 
 TOOL USAGE:
 - Call tools to get real data - don't guess

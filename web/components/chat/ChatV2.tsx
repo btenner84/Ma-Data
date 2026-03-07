@@ -1263,13 +1263,19 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
               <ThinkingDisplayV3 thinking={v3Response.thinking} />
             )}
             
-            {/* Main narrative */}
-            <div className="prose prose-base dark:prose-invert max-w-none 
-                          prose-p:my-3 prose-p:leading-relaxed
-                          prose-strong:text-blue-600 dark:prose-strong:text-blue-400
-                          prose-headings:mt-5 prose-headings:mb-3
-                          prose-li:my-1
-                          prose-ul:my-3">
+            {/* Main narrative - Clean, spacious formatting */}
+            <div className="prose prose-slate dark:prose-invert max-w-none
+                          prose-p:my-4 prose-p:leading-7 prose-p:text-gray-700 dark:prose-p:text-gray-300
+                          prose-strong:text-gray-900 dark:prose-strong:text-white prose-strong:font-semibold
+                          prose-h1:text-xl prose-h1:font-bold prose-h1:mt-8 prose-h1:mb-4 prose-h1:text-gray-900 dark:prose-h1:text-white prose-h1:border-b prose-h1:border-gray-200 dark:prose-h1:border-gray-700 prose-h1:pb-2
+                          prose-h2:text-lg prose-h2:font-semibold prose-h2:mt-6 prose-h2:mb-3 prose-h2:text-gray-800 dark:prose-h2:text-gray-100
+                          prose-h3:text-base prose-h3:font-semibold prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-gray-800 dark:prose-h3:text-gray-200
+                          prose-ul:my-4 prose-ul:space-y-2
+                          prose-ol:my-4 prose-ol:space-y-2
+                          prose-li:my-1 prose-li:leading-7 prose-li:text-gray-700 dark:prose-li:text-gray-300
+                          prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono prose-code:text-purple-600 dark:prose-code:text-purple-400
+                          prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline
+                          [&>*:first-child]:mt-0">
               <ReactMarkdown>{v3Response.response}</ReactMarkdown>
             </div>
 
@@ -1323,12 +1329,12 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
           // V2 Response Layout (legacy)
           <div className="space-y-6">
             {/* Main narrative */}
-            <div className="prose prose-base dark:prose-invert max-w-none 
-                          prose-p:my-3 prose-p:leading-relaxed
-                          prose-strong:text-blue-600 dark:prose-strong:text-blue-400
-                          prose-headings:mt-5 prose-headings:mb-3
-                          prose-li:my-1
-                          prose-ul:my-3">
+            <div className="prose prose-slate dark:prose-invert max-w-none
+                          prose-p:my-4 prose-p:leading-7 prose-p:text-gray-700 dark:prose-p:text-gray-300
+                          prose-strong:text-gray-900 dark:prose-strong:text-white prose-strong:font-semibold
+                          prose-h2:text-lg prose-h2:font-semibold prose-h2:mt-6 prose-h2:mb-3
+                          prose-ul:my-4 prose-li:my-1 prose-li:leading-7
+                          [&>*:first-child]:mt-0">
               <ReactMarkdown>{message.content}</ReactMarkdown>
             </div>
 
@@ -1360,7 +1366,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
           </div>
         ) : (
           // Fallback - just show content
-          <div className="prose prose-base dark:prose-invert max-w-none">
+          <div className="prose prose-slate dark:prose-invert max-w-none prose-p:my-4 prose-p:leading-7 [&>*:first-child]:mt-0">
             <ReactMarkdown>{message.content}</ReactMarkdown>
           </div>
         )}
