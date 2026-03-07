@@ -201,8 +201,8 @@ function DataTableDisplay({ table }: { table: DataTable }) {
     const rows = validRows.map(row => 
       columns.map(col => {
         const val = (row as Record<string, unknown>)[col];
-        const formatted = formatCellValue(val);
-        return formatted.includes(',') ? `"${formatted}"` : formatted;
+        const { text } = formatCellValue(val, col);
+        return text.includes(',') ? `"${text}"` : text;
       }).join(',')
     );
     const csv = [headers, ...rows].join('\n');
@@ -587,44 +587,57 @@ function AuditPanel({ response }: { response: AgentResponse }) {
 }
 
 function AssistantMessage({ message }: { message: ChatMessage }) {
+  const chartCount = message.response?.charts?.length || 0;
+  const tableCount = message.response?.data_tables?.length || 0;
+  
   return (
-    <div className="flex items-start gap-3">
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-lg">
-        <Sparkles className="w-4 h-4 text-white" />
+    <div className="flex items-start gap-4">
+      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-lg">
+        <Sparkles className="w-5 h-5 text-white" />
       </div>
       <div className="flex-1 min-w-0">
         {message.isLoading ? (
           <LoadingIndicator phase={message.loadingPhase} step={message.loadingStep} />
         ) : (
-          <>
-            {/* Main answer */}
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2">
+          <div className="space-y-6">
+            {/* Main narrative */}
+            <div className="prose prose-base dark:prose-invert max-w-none 
+                          prose-p:my-3 prose-p:leading-relaxed
+                          prose-strong:text-blue-600 dark:prose-strong:text-blue-400
+                          prose-headings:mt-5 prose-headings:mb-3
+                          prose-li:my-1
+                          prose-ul:my-3">
               <ReactMarkdown>{message.content}</ReactMarkdown>
             </div>
 
-            {/* Charts */}
-            {message.response?.charts && message.response.charts.length > 0 && (
-              <div className="mt-4">
-                {message.response.charts.map((chart, i) => (
-                  <ChartDisplay key={i} chart={chart} />
-                ))}
+            {/* Visualizations section */}
+            {(chartCount > 0 || tableCount > 0) && (
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+                {/* Charts - use grid for multiple */}
+                {chartCount > 0 && (
+                  <div className={chartCount >= 2 ? 'grid grid-cols-1 lg:grid-cols-2 gap-4' : ''}>
+                    {message.response!.charts!.map((chart, i) => (
+                      <ChartDisplay key={i} chart={chart} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Tables */}
+                {tableCount > 0 && (
+                  <div className="mt-6 space-y-4">
+                    {message.response!.data_tables!.map((table, i) => (
+                      <DataTableDisplay key={i} table={table} />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Data tables */}
-            {message.response?.data_tables && message.response.data_tables.length > 0 && (
-              <div className="mt-4">
-                {message.response.data_tables.map((table, i) => (
-                  <DataTableDisplay key={i} table={table} />
-                ))}
-              </div>
-            )}
-
-            {/* Audit panel */}
+            {/* Audit panel - more subtle */}
             {message.response && (
               <AuditPanel response={message.response} />
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
