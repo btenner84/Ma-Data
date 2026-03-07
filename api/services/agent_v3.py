@@ -536,7 +536,6 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
             if "timeseries" in tool_name:
                 # Line chart for timeseries
                 if isinstance(data, dict) and 'years' in data and 'series' in data:
-                    # Format for multi-series line chart
                     chart_data = []
                     years = data['years']
                     series = data.get('series', {})
@@ -557,7 +556,6 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                         'colors': self._get_colors(len(series))
                     }
                 elif isinstance(data, list):
-                    # Simple list format
                     return {
                         'type': 'line',
                         'title': self._get_chart_title(tool_name, params),
@@ -570,8 +568,7 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
             elif "by_payer" in tool_name or "by_parent" in tool_name:
                 # Bar chart for rankings
                 if isinstance(data, list) and len(data) > 0:
-                    # Limit to top 10
-                    chart_data = data[:10]
+                    chart_data = data[:15]  # Top 15 for better visibility
                     metric = 'total_enrollment' if 'enrollment' in tool_name else 'fourplus_pct' if 'stars' in tool_name else 'wavg_risk_score'
                     
                     return {
@@ -584,14 +581,31 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                     }
             
             elif "compare" in tool_name:
-                # Multi-metric comparison
-                if isinstance(data, dict) and 'metrics' in data:
-                    # Build table for comparison
-                    return {
-                        'type': 'table',
-                        'title': 'Payer Comparison',
-                        'data': data
-                    }
+                # Multi-metric comparison - flatten for table display
+                if isinstance(data, dict):
+                    table_rows = []
+                    payers = data.get('payers', [])
+                    metrics = data.get('metrics', {})
+                    
+                    for payer in payers:
+                        row = {'parent_org': payer}
+                        for metric_name, payer_data in metrics.items():
+                            if payer in payer_data:
+                                val = payer_data[payer]
+                                if isinstance(val, dict):
+                                    for k, v in val.items():
+                                        row[f"{metric_name}_{k}"] = self._format_value(v, metric_name)
+                                else:
+                                    row[metric_name] = self._format_value(val, metric_name)
+                        table_rows.append(row)
+                    
+                    if table_rows:
+                        return {
+                            'type': 'table',
+                            'title': 'Payer Comparison',
+                            'data': table_rows,
+                            'columns': list(table_rows[0].keys()) if table_rows else []
+                        }
             
             elif "distribution" in tool_name and "stars" in tool_name:
                 # Stars distribution - line chart
@@ -617,37 +631,90 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                     }
             
             elif "analyze_star_drops" in tool_name:
-                # Table of drop events
+                # Table of drop events with clean columns
                 if isinstance(data, list):
+                    clean_data = []
+                    for d in data[:15]:
+                        clean_data.append({
+                            'Payer': d.get('parent_org', ''),
+                            'Drop Year': d.get('drop_year', ''),
+                            'Before': f"{d.get('pre_drop_pct', 0):.1f}%",
+                            'After': f"{d.get('post_drop_pct', 0):.1f}%",
+                            'Change': f"-{d.get('drop_magnitude', 0):.1f}pp",
+                            'Recovered': d.get('recovery_status', 'Unknown')
+                        })
+                    
                     return {
                         'type': 'table',
-                        'title': 'Major Star Rating Drops',
-                        'columns': ['parent_org', 'drop_year', 'pre_drop_pct', 'post_drop_pct', 'drop_magnitude'],
-                        'data': [
-                            {
-                                'parent_org': d['parent_org'],
-                                'drop_year': d['drop_year'],
-                                'pre_drop_pct': f"{d['pre_drop_pct']:.1f}%",
-                                'post_drop_pct': f"{d['post_drop_pct']:.1f}%",
-                                'drop_magnitude': f"-{d['drop_magnitude']:.1f}pp"
-                            }
-                            for d in data[:15]
-                        ]
+                        'title': 'Major Star Rating Drops & Recovery',
+                        'columns': ['Payer', 'Drop Year', 'Before', 'After', 'Change', 'Recovered'],
+                        'data': clean_data
                     }
             
-            # Default: return as table if list
+            elif "market_concentration" in tool_name:
+                # Market concentration - bar chart
+                if isinstance(data, dict) and 'top_payers' in data:
+                    return {
+                        'type': 'bar',
+                        'title': f"Market Concentration ({params.get('year', 2026)})",
+                        'data': data['top_payers'][:10],
+                        'xKey': 'parent_org',
+                        'yKeys': ['market_share_pct'],
+                        'colors': ['#16a34a']
+                    }
+            
+            # Default: return as table if list with flat data
             if isinstance(data, list) and len(data) > 0:
-                return {
-                    'type': 'table',
-                    'title': self._get_chart_title(tool_name, params),
-                    'data': data[:20]  # Limit rows
-                }
+                # Clean the data - flatten any nested dicts and format numbers
+                clean_data = []
+                for row in data[:25]:
+                    clean_row = {}
+                    if isinstance(row, dict):
+                        for k, v in row.items():
+                            if isinstance(v, dict):
+                                # Skip nested dicts or flatten one level
+                                for nk, nv in v.items():
+                                    clean_row[f"{k}_{nk}"] = self._format_value(nv, k)
+                            elif isinstance(v, list):
+                                clean_row[k] = f"[{len(v)} items]"
+                            else:
+                                clean_row[k] = self._format_value(v, k)
+                        clean_data.append(clean_row)
+                
+                if clean_data:
+                    return {
+                        'type': 'table',
+                        'title': self._get_chart_title(tool_name, params),
+                        'data': clean_data,
+                        'columns': list(clean_data[0].keys()) if clean_data else []
+                    }
             
             return None
             
         except Exception as e:
             print(f"Visualization error: {e}")
+            traceback.print_exc()
             return None
+    
+    def _format_value(self, val: Any, context: str = "") -> Any:
+        """Format a value for display."""
+        if val is None:
+            return "-"
+        if isinstance(val, float):
+            if "pct" in context.lower() or "share" in context.lower() or "percent" in context.lower():
+                return f"{val:.1f}%"
+            if abs(val) >= 1000000:
+                return f"{val/1000000:.1f}M"
+            if abs(val) >= 1000:
+                return f"{val/1000:.1f}K"
+            return round(val, 2)
+        if isinstance(val, int):
+            if abs(val) >= 1000000:
+                return f"{val/1000000:.1f}M"
+            if abs(val) >= 1000:
+                return f"{val:,}"
+            return val
+        return val
     
     def _get_chart_title(self, tool_name: str, params: Dict) -> str:
         """Generate appropriate chart title."""

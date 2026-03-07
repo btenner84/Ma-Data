@@ -5,7 +5,7 @@ import {
   Send, Sparkles, User, ChevronDown, ChevronRight, 
   DollarSign, Clock, Database, Brain, CheckCircle, 
   XCircle, Activity, Loader2, Zap, Table, BarChart3, Download,
-  Search, FileText, Calculator
+  Search, FileText, Calculator, TrendingUp
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -23,6 +23,7 @@ import {
   AreaChart,
   Area
 } from 'recharts';
+import { SharedChart, SharedTable } from '@/components/charts';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -945,138 +946,59 @@ function ThinkingDisplayV3({ thinking }: { thinking: ThinkingProcessV3 }) {
   );
 }
 
-// V3 Chart Display
+// V3 Chart Display - Uses SharedChart for consistent styling
 function ChartDisplayV3({ chart }: { chart: ChartSpecV3 }) {
-  const [collapsed, setCollapsed] = useState(false);
-  
   if (!chart.data || chart.data.length === 0) {
     return null;
   }
   
   const xKey = chart.xKey || 'year';
-  const yKeys = chart.yKeys || Object.keys(chart.data[0]).filter(k => k !== xKey);
-  const colors = chart.colors || CHART_COLORS;
+  const yKeys = chart.yKeys || Object.keys(chart.data[0] as Record<string, unknown>).filter(k => k !== xKey);
   
-  const chartHeight = chart.type === 'bar' ? Math.max(300, Math.min(chart.data.length * 35, 500)) : 350;
+  // Determine if horizontal bar chart based on data (ranking = horizontal)
+  const isRanking = chart.title?.toLowerCase().includes('ranking') ||
+                    chart.title?.toLowerCase().includes('top') ||
+                    chart.title?.toLowerCase().includes('by payer') ||
+                    chart.title?.toLowerCase().includes('market share');
   
   return (
-    <div className="my-6 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
-      <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-800/80 border-b border-gray-200 dark:border-gray-700">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="w-full flex items-center gap-3 font-semibold text-gray-800 dark:text-gray-200 text-left"
-        >
-          {collapsed ? <ChevronRight className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
-          <BarChart3 className="w-5 h-5 text-blue-500" />
-          <span className="text-base">{chart.title}</span>
-        </button>
-      </div>
-      
-      {!collapsed && (
-        <div className="p-6 bg-white dark:bg-gray-900">
-          <ResponsiveContainer width="100%" height={chartHeight}>
-            {chart.type === 'bar' ? (
-              <BarChart data={chart.data} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.2} />
-                <XAxis type="number" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickFormatter={formatLargeNumber} />
-                <YAxis 
-                  type="category" 
-                  dataKey={xKey} 
-                  tick={{ fill: '#6B7280', fontSize: 11 }} 
-                  width={180}
-                  tickFormatter={(v) => typeof v === 'string' && v.length > 25 ? v.slice(0, 22) + '...' : v}
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }}
-                  formatter={(value) => [formatDisplayNumber(value as number), '']}
-                />
-                {yKeys.map((key, i) => (
-                  <Bar key={key} dataKey={key} fill={colors[i % colors.length]} radius={[0, 4, 4, 0]} />
-                ))}
-              </BarChart>
-            ) : (
-              <LineChart data={chart.data} margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-                <XAxis dataKey={xKey} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} tickFormatter={formatLargeNumber} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }}
-                  formatter={(value) => [formatDisplayNumber(value as number), '']}
-                />
-                {yKeys.length > 1 && <Legend />}
-                {yKeys.map((key, i) => (
-                  <Line 
-                    key={key} 
-                    type="monotone" 
-                    dataKey={key} 
-                    stroke={colors[i % colors.length]} 
-                    strokeWidth={2}
-                    dot={{ fill: colors[i % colors.length], r: 4 }}
-                  />
-                ))}
-              </LineChart>
-            )}
-          </ResponsiveContainer>
-        </div>
-      )}
-    </div>
+    <SharedChart
+      title={chart.title}
+      data={chart.data as Record<string, string | number | null | undefined>[]}
+      type={chart.type === 'bar' ? 'bar' : 'line'}
+      xKey={xKey}
+      yKeys={yKeys}
+      colors={chart.colors}
+      orientation={chart.type === 'bar' && isRanking ? 'horizontal' : 'vertical'}
+      collapsible={true}
+      defaultCollapsed={false}
+    />
   );
 }
 
-// V3 Table Display
+// V3 Table Display - Uses SharedTable for consistent styling
 function TableDisplayV3({ table }: { table: DataTableV3 }) {
-  const [collapsed, setCollapsed] = useState(false);
-  
   if (!table.data || table.data.length === 0) {
     return null;
   }
   
-  const columns = table.columns || Object.keys(table.data[0]);
+  const columns = table.columns || Object.keys(table.data[0] as Record<string, unknown>);
+  
+  // Determine if first column should have color indicators
+  const hasOrgColumn = columns[0]?.toLowerCase().includes('org') ||
+                       columns[0]?.toLowerCase().includes('payer') ||
+                       columns[0]?.toLowerCase().includes('company');
   
   return (
-    <div className="my-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800/50">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center gap-2 font-medium text-gray-700 dark:text-gray-300"
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          <Table className="w-4 h-4 text-blue-500" />
-          {table.title}
-          <span className="text-xs text-gray-400 ml-2">({table.data.length} rows)</span>
-        </button>
-      </div>
-      
-      {!collapsed && (
-        <div className="overflow-x-auto max-h-80">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-100 dark:bg-gray-800 sticky top-0">
-              <tr>
-                {columns.map((col, i) => (
-                  <th key={i} className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {table.data.slice(0, 50).map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
-                  {columns.map((col, j) => {
-                    const { text, className } = formatCellValue(row[col], col);
-                    return (
-                      <td key={j} className={`px-3 py-2 whitespace-nowrap ${className || 'text-gray-700 dark:text-gray-300'}`}>
-                        {text}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    <SharedTable
+      title={table.title}
+      data={table.data as Record<string, string | number | null | undefined>[]}
+      columns={columns}
+      showRowNumbers={false}
+      collapsible={true}
+      defaultCollapsed={false}
+      colorColumn={hasOrgColumn ? columns[0] : undefined}
+    />
   );
 }
 
