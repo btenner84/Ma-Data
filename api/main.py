@@ -6174,6 +6174,37 @@ async def list_available_data_schemas():
                 "has_month": False,
                 "key_columns": ["contract_id", "plan_id", "snp_type", "enrollment"],
                 "join_keys": ["contract_id", "plan_id"]
+            },
+            # CROSSWALK / REFERENCE FILES
+            {
+                "id": "crosswalk_contract",
+                "name": "Contract Crosswalk",
+                "description": "Contract to Parent Org mapping (org name, type, predecessor)",
+                "table": "gold_dim_entity",
+                "has_month": False,
+                "is_crosswalk": True,
+                "key_columns": ["contract_id", "parent_org", "organization_name", "organization_type", "predecessor_contract_id"],
+                "join_keys": ["contract_id"]
+            },
+            {
+                "id": "crosswalk_plan",
+                "name": "Plan Crosswalk",
+                "description": "Plan details (name, type, SNP type, product type)",
+                "table": "gold_dim_plan",
+                "has_month": False,
+                "is_crosswalk": True,
+                "key_columns": ["contract_id", "plan_id", "plan_name", "plan_type", "snp_type", "product_type"],
+                "join_keys": ["contract_id", "plan_id"]
+            },
+            {
+                "id": "crosswalk_geography",
+                "name": "Geography Crosswalk",
+                "description": "State, county, FIPS, SSA codes",
+                "table": "gold_dim_geography",
+                "has_month": False,
+                "is_crosswalk": True,
+                "key_columns": ["state_code", "state_name", "county_name", "fips_code", "ssa_code"],
+                "join_keys": ["fips_code", "ssa_code"]
             }
         ]
         

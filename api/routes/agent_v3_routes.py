@@ -162,7 +162,11 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
             "enrollment": {"table": "gold_fact_enrollment_national", "has_month": True, "display_name": "Enrollment"},
             "stars": {"table": "summary_all_years", "has_month": False, "display_name": "Stars"},
             "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False, "display_name": "RiskScores"},
-            "snp": {"table": "fact_snp_historical", "has_month": False, "display_name": "SNP"}
+            "snp": {"table": "fact_snp_historical", "has_month": False, "display_name": "SNP"},
+            # Crosswalks
+            "crosswalk_contract": {"table": "gold_dim_entity", "has_month": False, "is_crosswalk": True, "display_name": "ContractXwalk"},
+            "crosswalk_plan": {"table": "gold_dim_plan", "has_month": False, "is_crosswalk": True, "display_name": "PlanXwalk"},
+            "crosswalk_geography": {"table": "gold_dim_geography", "has_month": False, "is_crosswalk": True, "display_name": "GeoXwalk"}
         }
         
         # Fetch each data source
@@ -170,7 +174,7 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
         
         for ds in data_sources:
             src_id = ds["type"]
-            year = ds["year"]
+            year = ds.get("year")  # May be None for crosswalks
             
             if src_id not in table_config:
                 print(f"[DATA EXPORT] Unknown source: {src_id}")
@@ -178,32 +182,54 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
             
             config = table_config[src_id]
             table = config["table"]
+            is_crosswalk = config.get("is_crosswalk", False)
             
-            # Build query with month filter if applicable
-            month_filter = ""
+            # Build query
             month_label = ""
-            if config["has_month"]:
+            
+            if is_crosswalk:
+                # Crosswalks: get all data (or filter by year if provided and table has year column)
+                if year:
+                    # Check if table has year column
+                    try:
+                        sql = f"SELECT * FROM {table} WHERE year = {year} LIMIT 50000"
+                        df = engine.query(sql)
+                    except:
+                        # Table doesn't have year column, get all
+                        sql = f"SELECT * FROM {table} LIMIT 50000"
+                        df = engine.query(sql)
+                else:
+                    sql = f"SELECT * FROM {table} LIMIT 50000"
+                    df = engine.query(sql)
+                sheet_name = config['display_name'][:31]
+                display_name = config['display_name']
+            elif config.get("has_month"):
+                # Monthly data: get latest month
                 month_sql = f"SELECT MAX(month) as m FROM {table} WHERE year = {year}"
                 month_result = engine.query(month_sql)
                 latest_month = int(month_result.iloc[0]['m']) if not month_result.empty else 12
                 month_filter = f" AND month = {latest_month}"
                 month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                 month_label = f"_{month_names[latest_month]}"
+                sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 50000"
+                df = engine.query(sql)
+                sheet_name = f"{config['display_name']}_{year}{month_label}"[:31]
+                display_name = f"{config['display_name']} {year}{month_label}"
+            else:
+                # Yearly data
+                sql = f"SELECT * FROM {table} WHERE year = {year} LIMIT 50000"
+                df = engine.query(sql)
+                sheet_name = f"{config['display_name']}_{year}"[:31]
+                display_name = f"{config['display_name']} {year}"
             
-            # Fetch data (limit rows for Excel size - 50k rows per sheet is reasonable)
-            sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 50000"
             print(f"[DATA EXPORT] Fetching {src_id}: {sql[:100]}...")
-            df = engine.query(sql)
             print(f"[DATA EXPORT] Got {len(df)} rows for {src_id}")
-            
-            # Sheet name (max 31 chars for Excel)
-            sheet_name = f"{config['display_name']}_{year}{month_label}"[:31]
             
             worksheets.append({
                 "sheet_name": sheet_name,
                 "source_id": src_id,
                 "year": year,
-                "display_name": f"{config['display_name']} {year}{month_label}",
+                "display_name": display_name,
                 "row_count": len(df),
                 "columns": list(df.columns),
                 "df": df
