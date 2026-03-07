@@ -48,6 +48,23 @@ class AskRequest(BaseModel):
         }
 
 
+class ThoughtStep(BaseModel):
+    """A single thought in the reasoning chain."""
+    step: str
+    reasoning: str
+    conclusion: str
+    confidence: float = 0.0
+
+
+class SQLQuery(BaseModel):
+    """A SQL query that was executed."""
+    sql: str
+    description: str
+    rows_returned: int
+    success: bool
+    error: Optional[str] = None
+
+
 class AskResponse(BaseModel):
     """Response from asking the agent."""
     answer: str = Field(..., description="The agent's response")
@@ -65,6 +82,10 @@ class AskResponse(BaseModel):
     data_tables: List[dict] = Field(default=[], description="Data tables from analysis")
     charts: List[dict] = Field(default=[], description="Chart specifications")
     sources: List[str] = Field(default=[], description="Sources used")
+    
+    # Thought process - WHY the agent made decisions
+    thought_process: List[dict] = Field(default=[], description="Agent's reasoning chain")
+    sql_queries: List[dict] = Field(default=[], description="SQL queries executed")
     
     # Optional full audit
     audit: Optional[dict] = Field(default=None, description="Full audit trail if requested")
@@ -134,6 +155,20 @@ async def ask_agent(request: AskRequest):
         # Record in metrics
         get_agent_metrics().record_run(audit)
         
+        # Extract thought process for response
+        thought_process = [
+            {
+                "step": t.step,
+                "reasoning": t.reasoning,
+                "conclusion": t.conclusion,
+                "confidence": t.confidence
+            }
+            for t in audit.thought_process
+        ] if hasattr(audit, 'thought_process') else []
+        
+        # Extract SQL queries for response
+        sql_queries = audit.sql_queries_executed if hasattr(audit, 'sql_queries_executed') else []
+        
         return AskResponse(
             answer=answer,
             run_id=audit.run_id,
@@ -146,6 +181,8 @@ async def ask_agent(request: AskRequest):
             data_tables=audit.data_tables,
             charts=audit.charts,
             sources=audit.sources,
+            thought_process=thought_process,
+            sql_queries=sql_queries,
             audit=audit.to_dict() if request.include_full_audit else None,
         )
         

@@ -56,7 +56,25 @@ interface AgentStep {
   llm_calls: LLMCall[];
   tool_calls: ToolCall[];
   decision?: string;
+  reasoning?: string;
+  sql_generated?: string;
+  sql_validation?: string;
   timestamp: string;
+}
+
+interface ThoughtStep {
+  step: string;
+  reasoning: string;
+  conclusion: string;
+  confidence: number;
+}
+
+interface SQLQuery {
+  sql: string;
+  description: string;
+  rows_returned: number;
+  success: boolean;
+  error?: string;
 }
 
 interface ChartSpec {
@@ -94,6 +112,8 @@ interface AgentResponse {
   data_tables: DataTable[];
   charts: ChartSpec[];
   sources: string[];
+  thought_process?: ThoughtStep[];
+  sql_queries?: SQLQuery[];
   audit?: {
     steps: AgentStep[];
   };
@@ -621,8 +641,87 @@ function TokenUsageBar({ response }: { response: AgentResponse }) {
   );
 }
 
+function ThoughtProcessDisplay({ thoughts }: { thoughts: ThoughtStep[] }) {
+  return (
+    <div className="space-y-2">
+      {thoughts.map((thought, i) => (
+        <div key={i} className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 text-sm">
+          <div className="flex items-center gap-2 mb-1">
+            <Brain className="w-4 h-4 text-blue-500" />
+            <span className="font-medium text-blue-700 dark:text-blue-300 capitalize">
+              {thought.step.replace(/_/g, ' ')}
+            </span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              thought.confidence >= 0.7 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+              thought.confidence >= 0.4 ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' :
+              'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+            }`}>
+              {Math.round(thought.confidence * 100)}% confidence
+            </span>
+          </div>
+          <p className="text-gray-600 dark:text-gray-300 text-xs mb-1">{thought.reasoning}</p>
+          <p className="text-blue-600 dark:text-blue-400 text-xs font-medium">→ {thought.conclusion}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SQLQueriesDisplay({ queries }: { queries: SQLQuery[] }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+  
+  return (
+    <div className="space-y-2">
+      {queries.map((query, i) => (
+        <div key={i} className={`rounded-lg p-3 text-sm ${
+          query.success ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'
+        }`}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-gray-500" />
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                {query.description}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {query.success ? (
+                <span className="text-xs text-green-600 dark:text-green-400">
+                  ✓ {query.rows_returned} rows
+                </span>
+              ) : (
+                <span className="text-xs text-red-600 dark:text-red-400">
+                  ✗ Failed
+                </span>
+              )}
+              <button
+                onClick={() => setExpanded(expanded === i ? null : i)}
+                className="text-xs text-blue-500 hover:text-blue-700"
+              >
+                {expanded === i ? 'Hide SQL' : 'Show SQL'}
+              </button>
+            </div>
+          </div>
+          {expanded === i && (
+            <pre className="mt-2 p-2 bg-gray-900 text-gray-100 rounded text-xs overflow-x-auto">
+              {query.sql}
+            </pre>
+          )}
+          {query.error && (
+            <p className="mt-1 text-xs text-red-600">{query.error}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AuditPanel({ response }: { response: AgentResponse }) {
   const [showSteps, setShowSteps] = useState(false);
+  const [showThoughts, setShowThoughts] = useState(false);
+  const [showSQL, setShowSQL] = useState(false);
+
+  const hasThoughts = response.thought_process && response.thought_process.length > 0;
+  const hasSQL = response.sql_queries && response.sql_queries.length > 0;
 
   return (
     <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
@@ -635,6 +734,46 @@ function AuditPanel({ response }: { response: AgentResponse }) {
           <span className="font-medium">Sources: </span>
           {response.sources.join(' • ')}
         </div>
+      )}
+
+      {/* Thought Process toggle - NEW */}
+      {hasThoughts && (
+        <>
+          <button
+            onClick={() => setShowThoughts(!showThoughts)}
+            className="w-full px-3 py-2 flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-t border-gray-200 dark:border-gray-700"
+          >
+            {showThoughts ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            <Brain className="w-3 h-3" />
+            {showThoughts ? 'Hide' : 'Show'} reasoning chain ({response.thought_process!.length} thoughts)
+          </button>
+
+          {showThoughts && (
+            <div className="p-3 border-t border-gray-200 dark:border-gray-700 max-h-96 overflow-y-auto">
+              <ThoughtProcessDisplay thoughts={response.thought_process!} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* SQL Queries toggle - NEW */}
+      {hasSQL && (
+        <>
+          <button
+            onClick={() => setShowSQL(!showSQL)}
+            className="w-full px-3 py-2 flex items-center gap-2 text-xs text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 border-t border-gray-200 dark:border-gray-700"
+          >
+            {showSQL ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            <Database className="w-3 h-3" />
+            {showSQL ? 'Hide' : 'Show'} SQL queries ({response.sql_queries!.length})
+          </button>
+
+          {showSQL && (
+            <div className="p-3 border-t border-gray-200 dark:border-gray-700 max-h-96 overflow-y-auto">
+              <SQLQueriesDisplay queries={response.sql_queries!} />
+            </div>
+          )}
+        </>
       )}
 
       {/* Steps toggle */}

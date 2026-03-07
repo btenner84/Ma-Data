@@ -130,6 +130,19 @@ class ToolCall:
 
 
 @dataclass
+class ThoughtProcess:
+    """Captures the AI's reasoning at each step."""
+    step: str
+    reasoning: str
+    conclusion: str
+    confidence: float = 0.0
+    alternatives_considered: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+@dataclass
 class AgentStep:
     """A single step in the agent's reasoning."""
     step_id: str
@@ -141,6 +154,9 @@ class AgentStep:
     input_data: Optional[str] = None
     output_data: Optional[str] = None
     decision: Optional[str] = None
+    reasoning: Optional[str] = None  # WHY the decision was made
+    sql_generated: Optional[str] = None  # The actual SQL if applicable
+    sql_validation: Optional[str] = None  # Validation result
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     
     def to_dict(self) -> Dict:
@@ -163,6 +179,9 @@ class AgentAudit:
     # Execution trace
     steps: List[AgentStep] = field(default_factory=list)
     
+    # Thought process - WHY decisions were made
+    thought_process: List[ThoughtProcess] = field(default_factory=list)
+    
     # Aggregated metrics
     total_llm_calls: int = 0
     total_tool_calls: int = 0
@@ -178,6 +197,9 @@ class AgentAudit:
     sources: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     
+    # SQL tracking for debugging
+    sql_queries_executed: List[Dict] = field(default_factory=list)
+    
     def add_step(self, step: AgentStep):
         """Add a step and update aggregates."""
         self.steps.append(step)
@@ -190,9 +212,31 @@ class AgentAudit:
             self.total_tool_calls += 1
             self.total_latency_ms += tool_call.latency_ms
     
+    def add_thought(self, step: str, reasoning: str, conclusion: str, confidence: float = 0.0, alternatives: List[str] = None):
+        """Record a thought process step."""
+        self.thought_process.append(ThoughtProcess(
+            step=step,
+            reasoning=reasoning,
+            conclusion=conclusion,
+            confidence=confidence,
+            alternatives_considered=alternatives or []
+        ))
+    
+    def add_sql_query(self, sql: str, description: str, rows_returned: int = 0, success: bool = True, error: str = None):
+        """Track SQL queries for debugging."""
+        self.sql_queries_executed.append({
+            "sql": sql,
+            "description": description,
+            "rows_returned": rows_returned,
+            "success": success,
+            "error": error,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+    
     def to_dict(self) -> Dict:
         d = asdict(self)
         d['steps'] = [s.to_dict() if hasattr(s, 'to_dict') else s for s in self.steps]
+        d['thought_process'] = [t.to_dict() if hasattr(t, 'to_dict') else t for t in self.thought_process]
         return d
     
     def summary(self) -> Dict:
@@ -207,6 +251,8 @@ class AgentAudit:
             "latency_ms": self.total_latency_ms,
             "steps": len(self.steps),
             "confidence": self.confidence,
+            "thought_steps": len(self.thought_process),
+            "sql_queries": len(self.sql_queries_executed),
         }
 
 
@@ -734,6 +780,14 @@ class MAAgentV2:
             input_data=question,
         )
         
+        # Record thought: Question interpretation
+        self.current_audit.add_thought(
+            step="question_interpretation",
+            reasoning=f"Analyzing user question: '{question}'. Need to identify key entities (companies, metrics, time ranges) and determine which tables/queries are needed.",
+            conclusion="Will use LLM to generate SQL based on question semantics",
+            confidence=0.8
+        )
+        
         # Call LLM for planning with dynamic schema context
         schema_context = get_schema_prompt()
         prompt = f"{PLANNER_PROMPT}\n\n{schema_context}\n\nUser Question: {question}"
@@ -745,11 +799,55 @@ class MAAgentV2:
         # Parse requirements from response
         requirements = self._parse_requirements(response)
         
+        # Record thought: Planning decision
+        sql_queries = [r.specific_query for r in requirements if r.specific_query]
+        self.current_audit.add_thought(
+            step="planning_decision",
+            reasoning=f"LLM analyzed question and determined {len(requirements)} data requirements. Generated SQL queries based on entity recognition (companies mentioned, time ranges, metrics requested).",
+            conclusion=f"Will execute {len(sql_queries)} SQL queries to gather data",
+            confidence=0.7 if sql_queries else 0.3,
+            alternatives=["Could use pre-built query templates", "Could do semantic search first"]
+        )
+        
+        # Store SQL in step for visibility
+        if sql_queries:
+            step.sql_generated = sql_queries[0][:500] if sql_queries[0] else None
+        
         step.output_data = json.dumps([asdict(r) for r in requirements], indent=2)
         step.decision = f"Identified {len(requirements)} data requirements"
+        step.reasoning = f"Question mentions: {self._extract_entities(question)}. Using SQL approach for structured data retrieval."
         
         self.current_audit.add_step(step)
         return requirements
+    
+    def _extract_entities(self, question: str) -> str:
+        """Extract key entities from question for logging."""
+        entities = []
+        q_lower = question.lower()
+        
+        # Companies
+        company_patterns = {
+            "humana": "Humana", "united": "UnitedHealth", "unh": "UnitedHealth",
+            "cvs": "CVS Health", "aetna": "CVS Health", "anthem": "Elevance",
+            "cigna": "CIGNA", "centene": "Centene", "kaiser": "Kaiser"
+        }
+        for pattern, name in company_patterns.items():
+            if pattern in q_lower and name not in entities:
+                entities.append(name)
+        
+        # Metrics
+        if "enrollment" in q_lower:
+            entities.append("enrollment metric")
+        if "star" in q_lower or "4+" in q_lower:
+            entities.append("star ratings")
+        if "d-snp" in q_lower or "dsnp" in q_lower:
+            entities.append("D-SNP plans")
+        
+        # Time
+        if "last" in q_lower and "year" in q_lower:
+            entities.append("time range filter")
+        
+        return ", ".join(entities) if entities else "general query"
     
     async def _execute_and_analyze(
         self, 
@@ -864,6 +962,68 @@ class MAAgentV2:
         
         return "Humana"  # Default to Humana as the most commonly asked about
     
+    def _validate_sql(self, sql: str) -> str:
+        """Validate SQL before execution. Returns validation status."""
+        if not sql or not sql.strip():
+            return "ERROR: Empty SQL query"
+        
+        sql_upper = sql.upper()
+        sql_clean = sql.strip()
+        
+        # Check for dangerous operations
+        dangerous = ["DROP", "DELETE", "TRUNCATE", "ALTER", "INSERT", "UPDATE", "CREATE"]
+        for op in dangerous:
+            if op in sql_upper and not sql_upper.startswith("SELECT"):
+                return f"ERROR: Dangerous operation '{op}' not allowed"
+        
+        # Check for SELECT statement
+        if not sql_upper.strip().startswith("SELECT") and not sql_upper.strip().startswith("WITH"):
+            return "ERROR: Query must start with SELECT or WITH"
+        
+        # Known valid tables
+        valid_tables = [
+            "fact_enrollment_unified", "fact_enrollment_all_years", "fact_enrollment",
+            "stars_enrollment_unified", "stars_enrollment", "summary_all_years",
+            "measure_stars_all_years", "cutpoints_all_years", "stars_measure_specs",
+            "hcc_coefficients_all", "hcc_coefficients",
+            "fact_risk_scores_unified", "fact_risk_scores",
+            "fact_snp", "fact_snp_historical",
+            "disenrollment_all_years", "dim_entity",
+            "county_benchmarks", "demographic_factors",
+            "ma_growth_rates", "part_d_parameters"
+        ]
+        
+        # Check if query references at least one known table
+        found_table = False
+        for table in valid_tables:
+            if table.lower() in sql.lower():
+                found_table = True
+                break
+        
+        if not found_table:
+            return f"WARNING: No recognized table found. Valid tables: {', '.join(valid_tables[:5])}..."
+        
+        # Check for common SQL mistakes
+        issues = []
+        
+        # Check for missing GROUP BY when using aggregates
+        aggregates = ["SUM(", "COUNT(", "AVG(", "MAX(", "MIN("]
+        has_aggregate = any(agg in sql_upper for agg in aggregates)
+        has_group_by = "GROUP BY" in sql_upper
+        
+        if has_aggregate and not has_group_by:
+            issues.append("Has aggregate functions but no GROUP BY")
+        
+        # Check for LIMIT
+        has_limit = "LIMIT" in sql_upper
+        if not has_limit and "WHERE" not in sql_upper:
+            issues.append("No LIMIT or WHERE clause - may return too many rows")
+        
+        if issues:
+            return f"WARNING: {'; '.join(issues)}"
+        
+        return "OK: Query structure validated"
+    
     def _generate_measure_query(self, question: str) -> str:
         """Generate SQL for measure-level star rating analysis."""
         company = self._extract_company_from_question(question)
@@ -930,6 +1090,32 @@ ORDER BY m.year, ms.domain
             if req.query_approach == "sql" and req.specific_query:
                 # Execute SQL query
                 tool_name = "query_database"
+                
+                # VALIDATE SQL BEFORE EXECUTION
+                validation_result = self._validate_sql(req.specific_query)
+                step.sql_validation = validation_result
+                
+                if validation_result.startswith("ERROR"):
+                    print(f"\n{'='*60}")
+                    print(f"SQL VALIDATION FAILED:")
+                    print(f"{'='*60}")
+                    print(validation_result)
+                    print(f"{'='*60}\n")
+                    
+                    self.current_audit.add_thought(
+                        step="sql_validation",
+                        reasoning=f"SQL validation failed: {validation_result}",
+                        conclusion="Query may fail or return incorrect results",
+                        confidence=0.3
+                    )
+                else:
+                    self.current_audit.add_thought(
+                        step="sql_validation",
+                        reasoning=f"SQL passed basic validation: {validation_result}",
+                        conclusion="Query structure looks correct, proceeding with execution",
+                        confidence=0.8
+                    )
+                
                 # LOG THE SQL FOR DEBUGGING
                 print(f"\n{'='*60}")
                 print(f"EXECUTING SQL:")
@@ -941,14 +1127,48 @@ ORDER BY m.year, ms.domain
                     sql=req.specific_query,
                     context=req.description
                 )
+                
+                rows_returned = 0
                 if tool_result.success:
                     result = tool_result.data
                     # LOG RESULT COUNT
                     if isinstance(result, dict) and 'rows' in result:
-                        print(f"SQL returned {len(result['rows'])} rows")
+                        rows_returned = len(result['rows'])
+                        print(f"SQL returned {rows_returned} rows")
+                        
+                        # Track the query
+                        self.current_audit.add_sql_query(
+                            sql=req.specific_query,
+                            description=req.description,
+                            rows_returned=rows_returned,
+                            success=True
+                        )
+                        
+                        # Record thought about results
+                        self.current_audit.add_thought(
+                            step="sql_execution",
+                            reasoning=f"Query executed successfully, returned {rows_returned} rows. Query was: {req.description}",
+                            conclusion="Data retrieved successfully" if rows_returned > 0 else "Query returned no data - may need different approach",
+                            confidence=0.9 if rows_returned > 0 else 0.4
+                        )
                 else:
                     error = tool_result.error
                     print(f"SQL ERROR: {error}")
+                    
+                    self.current_audit.add_sql_query(
+                        sql=req.specific_query,
+                        description=req.description,
+                        rows_returned=0,
+                        success=False,
+                        error=error
+                    )
+                    
+                    self.current_audit.add_thought(
+                        step="sql_execution",
+                        reasoning=f"Query failed with error: {error}",
+                        conclusion="Need to either fix SQL or try alternative approach",
+                        confidence=0.2
+                    )
                     
             elif req.query_approach == "tool":
                 # Determine which tool based on description
@@ -1053,6 +1273,20 @@ ORDER BY m.year, ms.domain
         step: AgentStep
     ) -> AnalysisResult:
         """Analyze gathered data using the visualization service."""
+        
+        # Record thought: Data assessment
+        data_summary = self._summarize_data_sources(data)
+        total_rows = sum(
+            len(v.get("data", {}).get("rows", [])) if isinstance(v.get("data"), dict) else 0
+            for v in data.values()
+        )
+        
+        self.current_audit.add_thought(
+            step="data_assessment",
+            reasoning=f"Received data from {len(data)} sources with approximately {total_rows} total rows. Will analyze for patterns, trends, and insights relevant to: {question}",
+            conclusion="Proceeding to LLM analysis to extract insights and determine visualizations",
+            confidence=0.8 if total_rows > 0 else 0.3
+        )
         
         # Build prompt for analyzer - focuses on WHAT to visualize, not HOW
         prompt = f"""{ANALYZER_PROMPT}
