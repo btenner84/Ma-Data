@@ -67,6 +67,9 @@ from api.services.visualization_service import (
     parse_viz_intents,
 )
 
+# Import schema context service
+from api.services.schema_context import get_schema_prompt
+
 # LLM costs (approximate, per 1M tokens)
 LLM_COSTS = {
     "claude-sonnet-4": {"input": 3.00, "output": 15.00},
@@ -248,6 +251,15 @@ class ChartSpec:
 # =============================================================================
 
 PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS to comprehensive MA data.
+
+=== CRITICAL: USE THE ACTUAL DATABASE VALUES PROVIDED BELOW ===
+
+After this prompt, you will see "ACTUAL DATABASE VALUES" with exact parent_org names,
+plan_types, and interpretation rules. USE THESE to map user queries to correct SQL.
+
+When user says "united" → match to UnitedHealth Group, Inc.
+When user says "traditional MA" → use TOTAL enrollment (no such plan_type exists!)
+When user says "last 10 years" → year >= 2016
 
 === CRITICAL: TABLE SELECTION GUIDE ===
 
@@ -1091,8 +1103,9 @@ class MAAgentV2:
             input_data=question,
         )
         
-        # Call LLM for planning
-        prompt = f"{PLANNER_PROMPT}\n\nUser Question: {question}"
+        # Call LLM for planning with dynamic schema context
+        schema_context = get_schema_prompt()
+        prompt = f"{PLANNER_PROMPT}\n\n{schema_context}\n\nUser Question: {question}"
         
         start_time = time.time()
         response = await self._call_llm(prompt, step)
