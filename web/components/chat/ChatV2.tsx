@@ -1473,14 +1473,17 @@ export function ChatV2() {
 
     try {
       // Use V3 agent API with optional document context
+      const requestBody = {
+        question: userMessage.content,
+        include_thinking: true,
+        document_context: selectedDocs.length > 0 ? selectedDocs : undefined,
+      };
+      console.log('[Chat] Sending request:', requestBody);
+      
       const response = await fetch(`${API_BASE}/api/v3/agent/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: userMessage.content,
-          include_thinking: true,
-          document_context: selectedDocs.length > 0 ? selectedDocs : undefined,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       // Clear phase simulation
@@ -1491,6 +1494,11 @@ export function ChatV2() {
       }
 
       const data: AgentResponseV3 = await response.json();
+      console.log('[Chat] Response received:', {
+        hasDataLinkResult: !!data.data_link_result,
+        dataLinkResult: data.data_link_result,
+        responseLength: data.response?.length,
+      });
 
       setMessages((prev) =>
         prev.map((msg) =>
