@@ -152,18 +152,18 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
         from db import get_engine
         engine = get_engine()
         
-        # Table config with join keys
+        # Table config with ACTUAL join keys based on real schema
         table_config = {
             "cpsc": {
                 "table": "fact_enrollment_all_years", 
                 "has_month": True,
-                "join_keys": ["contract_id", "plan_id", "year"],
+                "join_keys": ["contract_id", "year"],  # CPSC has contract_id
                 "display_name": "CPSC Enrollment"
             },
             "enrollment": {
                 "table": "fact_enrollment_national", 
                 "has_month": True,
-                "join_keys": ["contract_id", "plan_id", "year"],
+                "join_keys": ["year", "parent_org"],  # NO contract_id - only parent_org
                 "display_name": "Monthly Enrollment"
             },
             "stars": {
@@ -175,13 +175,13 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
             "risk_scores": {
                 "table": "fact_risk_scores_unified", 
                 "has_month": False,
-                "join_keys": ["contract_id", "plan_id", "year"],
+                "join_keys": ["contract_id", "year"],
                 "display_name": "Risk Scores"
             },
             "snp": {
                 "table": "fact_snp_historical", 
                 "has_month": False,
-                "join_keys": ["contract_id", "plan_id", "year"],
+                "join_keys": ["contract_id", "year"],
                 "display_name": "SNP Classification"
             }
         }

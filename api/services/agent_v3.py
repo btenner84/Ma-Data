@@ -297,15 +297,16 @@ KEY JOIN COLUMNS:
             },
             "enrollment": {
                 "name": "Monthly Enrollment (National)",
-                "description": "Contract-plan level enrollment with parent organization - shows WHO owns the plans",
-                "key_columns": ["contract_id", "plan_id", "year", "month", "enrollment", "parent_org"],
-                "granularity": "Contract + Plan + Month",
-                "primary_key": ["contract_id", "plan_id", "year", "month"],
+                "description": "AGGREGATED enrollment by parent organization - already summarized, NOT plan-level",
+                "key_columns": ["year", "month", "parent_org", "plan_type", "product_type", "enrollment"],
+                "granularity": "Parent Org + Plan Type + Month (NO contract_id)",
+                "primary_key": ["year", "month", "parent_org", "plan_type"],
                 "foreign_keys": {
-                    "contract_id": "Links to Stars at contract level",
-                    "contract_id + plan_id": "Links to CPSC, SNP, Risk Scores at plan level"
+                    "year": "Can join to other tables on year only",
+                    "NOTE": "This table has NO contract_id - use CPSC for contract-level data"
                 },
-                "use_cases": ["Parent org market share", "Plan-level trends", "Organization comparisons"]
+                "important_note": "⚠️ This is PRE-AGGREGATED data. Does NOT have contract_id. To link enrollment with Stars, use CPSC instead.",
+                "use_cases": ["Parent org market share", "Plan type trends", "Organization comparisons"]
             },
             "stars": {
                 "name": "Star Ratings",
@@ -369,9 +370,10 @@ KEY JOIN COLUMNS:
                 lines.append("  - Example: % of enrollment in 5-star plans by state")
             
             if "enrollment" in selected_sources and "stars" in selected_sources:
-                lines.append("• Enrollment → Stars: Join on contract_id + year")
-                lines.append("  - Enrollment has parent_org, so you can see 'Humana enrollment by star rating'")
-                lines.append("  - Aggregate plans to contract level before joining to stars")
+                lines.append("• ⚠️ Enrollment National → Stars: LIMITED LINKING")
+                lines.append("  - Enrollment National has NO contract_id (it's pre-aggregated)")
+                lines.append("  - Can only join on year (not very useful)")
+                lines.append("  - RECOMMENDATION: Use CPSC instead if you need contract-level enrollment with stars")
             
             if "cpsc" in selected_sources and "enrollment" in selected_sources:
                 lines.append("• CPSC → Enrollment: Join on contract_id + plan_id + year")
@@ -458,20 +460,32 @@ SELECTED DATA:
 
 {linking_knowledge}
 
-YOUR CAPABILITIES WITH THIS DATA:
-1. **Explain the data**: Describe what each file contains and its key fields
-2. **Show linking logic**: Explain exactly which columns connect these files
-3. **Generate linked Excel files**: When asked, the system creates:
-   - Individual source files (each data source as separate Excel)
-   - Combined/linked file (all sources joined on the correct keys)
-4. **Calculate metrics**: Show how to compute things like "% in 5-star plans"
-5. **Write SQL**: Provide actual SQL queries using the real column names
+CRITICAL BEHAVIOR WHEN DATA FILES ARE SELECTED:
+When the user has selected raw data files (like they have now), your PRIMARY job is to work with THOSE files:
 
-RESPONSE APPROACH:
-- Be proactive: If the user selected enrollment + stars, you KNOW they probably want to analyze enrollment by star rating
-- Explain the link: "CPSC links to Stars via contract_id - CPSC has plan-level enrollment, Stars has contract-level ratings"
-- Suggest analyses: "With these files combined, you can calculate market share by star rating, geographic distribution of 5-star plans, etc."
-- When they ask to link/combine: Confirm the join keys and mention the Excel downloads will be available
+1. **DO NOT run other analysis queries** - Work with the selected files only
+2. **When asked to "link" or "combine"**: The system will automatically generate Excel downloads
+3. **Explain the linking logic**: Show which columns connect the files
+4. **Keep responses focused**: Don't generate charts from other data sources
+
+WHAT YOU CAN DO WITH SELECTED FILES:
+- Explain what each file contains
+- Show the join keys (contract_id, year, etc.)
+- The system auto-generates: individual Excel files + combined linked file
+- Describe what analysis is possible with the combined data
+
+LINKING COMPATIBILITY:
+- CPSC + Stars: Join on contract_id + year ✅
+- CPSC + SNP: Join on contract_id + year ✅  
+- CPSC + Risk Scores: Join on contract_id + year ✅
+- Enrollment National + Stars: ⚠️ Enrollment is aggregated by parent_org (no contract_id) - can only join on year
+- Stars + Risk Scores: Join on contract_id + year ✅
+
+RESPONSE FORMAT:
+1. Briefly confirm which files are selected
+2. Explain how they link (or note if they can't link directly)
+3. Note that Excel downloads will be generated
+4. Keep it SHORT - the user wants the files, not a long explanation
 """
         
         return f"""You are an expert Medicare Advantage data analyst with access to comprehensive MA data.
