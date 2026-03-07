@@ -330,10 +330,81 @@ PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS t
 
 **RATE/BENCHMARK TABLES:**
 - uspcc_projections: year, aged_uspcc, disabled_uspcc, esrd_uspcc
-- hcc_coefficients_all: year, model_version, hcc_code, coefficient, description
+- hcc_coefficients_all: model_year, model_version, hcc_code, hcc_label, segment, coefficient, source_document
+  * IMPORTANT: model_version is often NULL, use model_year instead!
+  * model_year=2024 = V24 model, model_year=2027 = V28 model
+  * Segments include: 'Community, NonDual, Aged', 'Community, FBDual, Aged', 'Institutional', etc.
+  * Has both Part C (HCC) and Part D (RXHCC) coefficients
 - county_benchmarks: year, state, county, fips, benchmark_rate
+- demographic_factors: year, notice_type, factor_type, factor_name, value
 
 === EXAMPLE QUERIES ===
+
+=== RISK MODEL / HCC QUERIES ===
+
+**V24 vs V28 HCC Coefficient Comparison (use model_year NOT model_version!):**
+```sql
+WITH v24 AS (
+    SELECT hcc_code, hcc_label, coefficient
+    FROM hcc_coefficients_all
+    WHERE model_year = 2024 
+    AND hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
+    AND segment = 'Community, NonDual, Aged'
+),
+v28 AS (
+    SELECT hcc_code, hcc_label, coefficient
+    FROM hcc_coefficients_all
+    WHERE model_year = 2027 
+    AND hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
+    AND segment = 'Community, NonDual, Aged'
+)
+SELECT 
+    COALESCE(a.hcc_code, b.hcc_code) as hcc,
+    COALESCE(a.hcc_label, b.hcc_label) as label,
+    ROUND(a.coefficient, 3) as v24_coef,
+    ROUND(b.coefficient, 3) as v28_coef,
+    ROUND(b.coefficient - a.coefficient, 3) as change,
+    CASE 
+        WHEN a.coefficient IS NULL THEN 'NEW in V28'
+        WHEN b.coefficient IS NULL THEN 'DROPPED in V28'
+        ELSE 'CHANGED'
+    END as status
+FROM v24 a
+FULL OUTER JOIN v28 b ON a.hcc_code = b.hcc_code
+ORDER BY ABS(COALESCE(b.coefficient, 0) - COALESCE(a.coefficient, 0)) DESC
+```
+
+**HCCs Dropped/Added in V28:**
+```sql
+-- New HCCs in V28
+SELECT DISTINCT b.hcc_code, b.hcc_label
+FROM hcc_coefficients_all b
+LEFT JOIN hcc_coefficients_all a ON b.hcc_code = a.hcc_code AND a.model_year = 2024
+WHERE b.model_year = 2027 AND a.hcc_code IS NULL
+AND b.hcc_code LIKE 'HCC%' AND b.hcc_code NOT LIKE 'RXHCC%'
+
+-- HCCs dropped from V28
+SELECT DISTINCT a.hcc_code, a.hcc_label
+FROM hcc_coefficients_all a
+LEFT JOIN hcc_coefficients_all b ON a.hcc_code = b.hcc_code AND b.model_year = 2027
+WHERE a.model_year = 2024 AND b.hcc_code IS NULL
+AND a.hcc_code LIKE 'HCC%' AND a.hcc_code NOT LIKE 'RXHCC%'
+```
+
+**Model Summary (HCC counts by version):**
+```sql
+SELECT 
+    model_year,
+    COUNT(DISTINCT hcc_code) as total_hccs,
+    COUNT(DISTINCT segment) as segments,
+    ROUND(AVG(coefficient), 3) as avg_coefficient
+FROM hcc_coefficients_all
+WHERE hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
+AND model_year IN (2024, 2027)
+GROUP BY model_year
+```
+
+=== STAR RATING QUERIES ===
 
 **4+ Star Enrollment by Parent Org (THE MAIN QUERY for star rating analysis):**
 ```sql
