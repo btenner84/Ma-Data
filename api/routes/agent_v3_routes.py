@@ -252,50 +252,94 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
         
         print(f"[DATA LINK] Using join keys: {join_keys}")
         
-        # Smart linking: If we have enrollment + stars, aggregate enrollment by contract first
-        keys = list(dataframes.keys())
-        processed_dfs = {}
+        # Smart linking strategy:
+        # 1. Stars should be the BASE (one row per contract) 
+        # 2. Enrollment-type data gets AGGREGATED and added as columns to Stars
         
-        for key, df in dataframes.items():
-            info = next(s for s in source_info if s["key"] == key)
-            src_id = info["source_id"]
+        source_ids = [s["source_id"] for s in source_info]
+        has_stars = "stars" in source_ids
+        has_enrollment = "enrollment" in source_ids
+        has_cpsc = "cpsc" in source_ids
+        
+        if has_stars and (has_enrollment or has_cpsc):
+            # STAR-CENTRIC OUTPUT: Stars as base, add aggregated enrollment column
+            print(f"[DATA LINK] Star-centric linking: Stars as base with enrollment aggregated")
             
-            if src_id == "cpsc" and "stars" in [s["source_id"] for s in source_info]:
-                # Aggregate CPSC enrollment to contract level for joining with stars
-                print(f"[DATA LINK] Aggregating CPSC to contract level for stars join...")
-                agg_df = df.groupby(['contract_id', 'year']).agg({
-                    'enrollment': 'sum',
-                    'state': lambda x: x.mode().iloc[0] if len(x) > 0 else None,  # Most common state
-                    'parent_org': 'first',
-                    'plan_type': lambda x: ', '.join(x.unique()[:3]),  # Plan types
+            # Get stars dataframe (this is the base)
+            stars_key = next(k for k in dataframes.keys() if k.startswith("stars"))
+            stars_df = dataframes[stars_key].copy()
+            stars_year = next(s["year"] for s in source_info if s["source_id"] == "stars")
+            print(f"[DATA LINK] Stars base: {len(stars_df)} contracts")
+            
+            # Aggregate enrollment by contract
+            if has_enrollment:
+                enroll_key = next(k for k in dataframes.keys() if k.startswith("enrollment"))
+                enroll_df = dataframes[enroll_key]
+                
+                # Aggregate to contract level - sum enrollment
+                enroll_agg = enroll_df.groupby('contract_id').agg({
+                    'enrollment': 'sum'
                 }).reset_index()
-                agg_df = agg_df.rename(columns={
-                    'enrollment': 'total_enrollment',
-                    'state': 'primary_state',
-                    'plan_type': 'plan_types'
-                })
-                processed_dfs[key] = agg_df
-                print(f"[DATA LINK] Aggregated {len(df)} rows to {len(agg_df)} contracts")
-            else:
-                processed_dfs[key] = df
-        
-        # Perform the join
-        combined_df = processed_dfs[keys[0]].copy()
-        
-        for i, key in enumerate(keys[1:], 1):
-            right_df = processed_dfs[key]
-            suffix = f"_{source_info[i]['source_id']}"
+                enroll_agg = enroll_agg.rename(columns={'enrollment': 'total_enrollment'})
+                print(f"[DATA LINK] Enrollment aggregated: {len(enroll_agg)} contracts, total enrollment: {enroll_agg['total_enrollment'].sum():,.0f}")
+                
+                # Left join: Stars + enrollment column
+                combined_df = pd.merge(
+                    stars_df,
+                    enroll_agg[['contract_id', 'total_enrollment']],
+                    on='contract_id',
+                    how='left'
+                )
+                # Fill NaN enrollment with 0
+                combined_df['total_enrollment'] = combined_df['total_enrollment'].fillna(0).astype(int)
+                
+            elif has_cpsc:
+                cpsc_key = next(k for k in dataframes.keys() if k.startswith("cpsc"))
+                cpsc_df = dataframes[cpsc_key]
+                
+                # Aggregate CPSC to contract level
+                cpsc_agg = cpsc_df.groupby('contract_id').agg({
+                    'enrollment': 'sum'
+                }).reset_index()
+                cpsc_agg = cpsc_agg.rename(columns={'enrollment': 'total_enrollment'})
+                print(f"[DATA LINK] CPSC aggregated: {len(cpsc_agg)} contracts, total enrollment: {cpsc_agg['total_enrollment'].sum():,.0f}")
+                
+                # Left join: Stars + enrollment column
+                combined_df = pd.merge(
+                    stars_df,
+                    cpsc_agg[['contract_id', 'total_enrollment']],
+                    on='contract_id',
+                    how='left'
+                )
+                combined_df['total_enrollment'] = combined_df['total_enrollment'].fillna(0).astype(int)
             
-            # Perform LEFT join (keep all from first source, add matching from second)
-            combined_df = pd.merge(
-                combined_df, 
-                right_df, 
-                on=join_keys, 
-                how='left',
-                suffixes=('', suffix)
-            )
-        
-        print(f"[DATA LINK] Combined: {len(combined_df)} rows")
+            print(f"[DATA LINK] Combined: {len(combined_df)} rows (same as Stars base)")
+            
+        else:
+            # Generic linking for other combinations
+            keys = list(dataframes.keys())
+            processed_dfs = {}
+            
+            for key, df in dataframes.items():
+                processed_dfs[key] = df
+            
+            # Perform the join
+            combined_df = processed_dfs[keys[0]].copy()
+            
+            for i, key in enumerate(keys[1:], 1):
+                right_df = processed_dfs[key]
+                suffix = f"_{source_info[i]['source_id']}"
+                
+                # Perform LEFT join
+                combined_df = pd.merge(
+                    combined_df, 
+                    right_df, 
+                    on=join_keys, 
+                    how='left',
+                    suffixes=('', suffix)
+                )
+            
+            print(f"[DATA LINK] Combined: {len(combined_df)} rows")
         
         # Create Excel files as base64
         def df_to_excel_base64(df, sheet_name="Data"):
@@ -326,12 +370,22 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
         
         # Build join logic explanation
         source_names = [s["display_name"] for s in source_info]
-        join_logic = {
-            "sources_linked": source_names,
-            "join_keys_used": join_keys,
-            "join_type": "OUTER JOIN (keeps all records from both sources)",
-            "explanation": f"Linked {' + '.join(source_names)} using columns: {', '.join(join_keys)}",
-        }
+        
+        if has_stars and (has_enrollment or has_cpsc):
+            enroll_type = "Monthly Enrollment by Plan" if has_enrollment else "CPSC Enrollment"
+            join_logic = {
+                "sources_linked": source_names,
+                "join_keys_used": ["contract_id"],
+                "join_type": "LEFT JOIN (Stars as base + aggregated enrollment)",
+                "explanation": f"Stars data with total_enrollment column added. Enrollment was aggregated (SUM) by contract_id from {enroll_type}.",
+            }
+        else:
+            join_logic = {
+                "sources_linked": source_names,
+                "join_keys_used": join_keys,
+                "join_type": "LEFT JOIN",
+                "explanation": f"Linked {' + '.join(source_names)} using columns: {', '.join(join_keys)}",
+            }
         
         print(f"[DATA LINK] Success! Generated {len(source_files)} source files + combined file")
         
