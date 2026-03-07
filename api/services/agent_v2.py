@@ -780,13 +780,16 @@ class MAAgentV2:
             input_data=question,
         )
         
-        # Record thought: Question interpretation
-        self.current_audit.add_thought(
-            step="question_interpretation",
-            reasoning=f"Analyzing user question: '{question}'. Need to identify key entities (companies, metrics, time ranges) and determine which tables/queries are needed.",
-            conclusion="Will use LLM to generate SQL based on question semantics",
-            confidence=0.8
-        )
+        # Record thought: Question interpretation (wrapped for safety)
+        try:
+            self.current_audit.add_thought(
+                step="question_interpretation",
+                reasoning=f"Analyzing user question: '{question}'. Need to identify key entities (companies, metrics, time ranges) and determine which tables/queries are needed.",
+                conclusion="Will use LLM to generate SQL based on question semantics",
+                confidence=0.8
+            )
+        except Exception as e:
+            print(f"Warning: Failed to record thought: {e}")
         
         # Call LLM for planning with dynamic schema context
         schema_context = get_schema_prompt()
@@ -799,15 +802,18 @@ class MAAgentV2:
         # Parse requirements from response
         requirements = self._parse_requirements(response)
         
-        # Record thought: Planning decision
+        # Record thought: Planning decision (wrapped in try-except for safety)
         sql_queries = [r.specific_query for r in requirements if r.specific_query]
-        self.current_audit.add_thought(
-            step="planning_decision",
-            reasoning=f"LLM analyzed question and determined {len(requirements)} data requirements. Generated SQL queries based on entity recognition (companies mentioned, time ranges, metrics requested).",
-            conclusion=f"Will execute {len(sql_queries)} SQL queries to gather data",
-            confidence=0.7 if sql_queries else 0.3,
-            alternatives=["Could use pre-built query templates", "Could do semantic search first"]
-        )
+        try:
+            self.current_audit.add_thought(
+                step="planning_decision",
+                reasoning=f"LLM analyzed question and determined {len(requirements)} data requirements. Generated SQL queries based on entity recognition (companies mentioned, time ranges, metrics requested).",
+                conclusion=f"Will execute {len(sql_queries)} SQL queries to gather data",
+                confidence=0.7 if sql_queries else 0.3,
+                alternatives=["Could use pre-built query templates", "Could do semantic search first"]
+            )
+        except Exception as e:
+            print(f"Warning: Failed to record thought: {e}")
         
         # Store SQL in step for visibility
         if sql_queries:
@@ -1102,19 +1108,25 @@ ORDER BY m.year, ms.domain
                     print(validation_result)
                     print(f"{'='*60}\n")
                     
-                    self.current_audit.add_thought(
-                        step="sql_validation",
-                        reasoning=f"SQL validation failed: {validation_result}",
-                        conclusion="Query may fail or return incorrect results",
-                        confidence=0.3
-                    )
+                    try:
+                        self.current_audit.add_thought(
+                            step="sql_validation",
+                            reasoning=f"SQL validation failed: {validation_result}",
+                            conclusion="Query may fail or return incorrect results",
+                            confidence=0.3
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to record thought: {e}")
                 else:
-                    self.current_audit.add_thought(
-                        step="sql_validation",
-                        reasoning=f"SQL passed basic validation: {validation_result}",
-                        conclusion="Query structure looks correct, proceeding with execution",
-                        confidence=0.8
-                    )
+                    try:
+                        self.current_audit.add_thought(
+                            step="sql_validation",
+                            reasoning=f"SQL passed basic validation: {validation_result}",
+                            conclusion="Query structure looks correct, proceeding with execution",
+                            confidence=0.8
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to record thought: {e}")
                 
                 # LOG THE SQL FOR DEBUGGING
                 print(f"\n{'='*60}")
@@ -1137,38 +1149,50 @@ ORDER BY m.year, ms.domain
                         print(f"SQL returned {rows_returned} rows")
                         
                         # Track the query
-                        self.current_audit.add_sql_query(
-                            sql=req.specific_query,
-                            description=req.description,
-                            rows_returned=rows_returned,
-                            success=True
-                        )
+                        try:
+                            self.current_audit.add_sql_query(
+                                sql=req.specific_query,
+                                description=req.description,
+                                rows_returned=rows_returned,
+                                success=True
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to record SQL query: {e}")
                         
                         # Record thought about results
-                        self.current_audit.add_thought(
-                            step="sql_execution",
-                            reasoning=f"Query executed successfully, returned {rows_returned} rows. Query was: {req.description}",
-                            conclusion="Data retrieved successfully" if rows_returned > 0 else "Query returned no data - may need different approach",
-                            confidence=0.9 if rows_returned > 0 else 0.4
-                        )
+                        try:
+                            self.current_audit.add_thought(
+                                step="sql_execution",
+                                reasoning=f"Query executed successfully, returned {rows_returned} rows. Query was: {req.description}",
+                                conclusion="Data retrieved successfully" if rows_returned > 0 else "Query returned no data - may need different approach",
+                                confidence=0.9 if rows_returned > 0 else 0.4
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to record thought: {e}")
                 else:
                     error = tool_result.error
                     print(f"SQL ERROR: {error}")
                     
-                    self.current_audit.add_sql_query(
-                        sql=req.specific_query,
-                        description=req.description,
-                        rows_returned=0,
-                        success=False,
-                        error=error
-                    )
+                    try:
+                        self.current_audit.add_sql_query(
+                            sql=req.specific_query,
+                            description=req.description,
+                            rows_returned=0,
+                            success=False,
+                            error=error
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to record SQL query: {e}")
                     
-                    self.current_audit.add_thought(
-                        step="sql_execution",
-                        reasoning=f"Query failed with error: {error}",
-                        conclusion="Need to either fix SQL or try alternative approach",
-                        confidence=0.2
-                    )
+                    try:
+                        self.current_audit.add_thought(
+                            step="sql_execution",
+                            reasoning=f"Query failed with error: {error}",
+                            conclusion="Need to either fix SQL or try alternative approach",
+                            confidence=0.2
+                        )
+                    except Exception as e:
+                        print(f"Warning: Failed to record thought: {e}")
                     
             elif req.query_approach == "tool":
                 # Determine which tool based on description
@@ -1284,12 +1308,15 @@ ORDER BY m.year, ms.domain
         except Exception:
             total_rows = 0
         
-        self.current_audit.add_thought(
-            step="data_assessment",
-            reasoning=f"Received data from {len(data)} sources with approximately {total_rows} total rows. Will analyze for patterns, trends, and insights relevant to: {question}",
-            conclusion="Proceeding to LLM analysis to extract insights and determine visualizations",
-            confidence=0.8 if total_rows > 0 else 0.3
-        )
+        try:
+            self.current_audit.add_thought(
+                step="data_assessment",
+                reasoning=f"Received data from {len(data)} sources with approximately {total_rows} total rows. Will analyze for patterns, trends, and insights relevant to: {question}",
+                conclusion="Proceeding to LLM analysis to extract insights and determine visualizations",
+                confidence=0.8 if total_rows > 0 else 0.3
+            )
+        except Exception as e:
+            print(f"Warning: Failed to record thought: {e}")
         
         # Build prompt for analyzer - focuses on WHAT to visualize, not HOW
         prompt = f"""{ANALYZER_PROMPT}

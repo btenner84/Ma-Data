@@ -26,6 +26,30 @@ import {
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
+// Format large numbers with abbreviations (1.4M, 2.5B, etc.)
+function formatLargeNumber(value: number | string): string {
+  if (typeof value !== 'number') return String(value);
+  
+  const absValue = Math.abs(value);
+  
+  if (absValue >= 1_000_000_000) {
+    return (value / 1_000_000_000).toFixed(1).replace(/\.0$/, '') + 'B';
+  }
+  if (absValue >= 1_000_000) {
+    return (value / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+  if (absValue >= 1_000) {
+    return (value / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+  }
+  return value.toLocaleString();
+}
+
+// Format numbers for display (full precision with commas)
+function formatDisplayNumber(value: number | string): string {
+  if (typeof value !== 'number') return String(value);
+  return value.toLocaleString();
+}
+
 interface LLMCall {
   call_id: string;
   phase: string;
@@ -378,7 +402,7 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 <XAxis 
                   type="number" 
                   tick={{ fill: '#9CA3AF', fontSize: 11 }} 
-                  tickFormatter={(v) => typeof v === 'number' ? v.toLocaleString() : v}
+                  tickFormatter={formatLargeNumber}
                   domain={chart.y_domain || ['auto', 'auto']}
                   label={chart.x_label ? { value: chart.x_label, position: 'bottom', fill: '#6B7280', fontSize: 12 } : undefined}
                 />
@@ -392,7 +416,7 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
-                  formatter={(value) => [(typeof value === 'number' ? value.toLocaleString() : value), '']}
+                  formatter={(value) => [formatDisplayNumber(value as number), '']}
                   labelFormatter={(label) => label}
                 />
                 {series.map((s) => (
@@ -417,11 +441,11 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 <YAxis 
                   tick={{ fill: '#9CA3AF', fontSize: 11 }} 
                   domain={chart.y_domain || ['auto', 'auto']}
-                  tickFormatter={(v) => typeof v === 'number' ? v.toLocaleString() : v}
+                  tickFormatter={formatLargeNumber}
                 />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
-                  formatter={(value) => [(typeof value === 'number' ? value.toLocaleString() : value), '']}
+                  formatter={(value) => [formatDisplayNumber(value as number), '']}
                 />
                 {chart.show_legend !== false && <Legend />}
                 {series.map((s, i) => (
@@ -441,8 +465,12 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 <YAxis 
                   tick={{ fill: '#9CA3AF', fontSize: 12 }}
                   domain={chart.y_domain || ['auto', 'auto']}
+                  tickFormatter={formatLargeNumber}
                 />
-                <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }}
+                  formatter={(value) => [formatDisplayNumber(value as number), '']}
+                />
                 {chart.show_legend !== false && <Legend />}
                 {series.map((s, i) => (
                   <Area 
@@ -465,11 +493,12 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 <YAxis 
                   tick={{ fill: '#9CA3AF', fontSize: 12 }}
                   domain={chart.y_domain || ['auto', 'auto']}
+                  tickFormatter={formatLargeNumber}
                   label={chart.y_label ? { value: chart.y_label, angle: -90, position: 'insideLeft', fill: '#6B7280', fontSize: 12 } : undefined}
                 />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
-                  formatter={(value) => [(typeof value === 'number' ? value.toFixed(1) : value), '']}
+                  formatter={(value) => [formatDisplayNumber(value as number), '']}
                 />
                 {chart.show_legend !== false && series.length > 1 && <Legend />}
                 {series.map((s, i) => (
