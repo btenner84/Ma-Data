@@ -317,8 +317,11 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                         "content": json.dumps(res['result'].data if res['result'] and res['result'].success else {"error": res['result'].error if res['result'] else "Failed"}, default=str)
                     })
                 
+                # Convert response.content to serializable format for message history
+                assistant_content = self._serialize_content(response.content)
+                
                 # Continue conversation with tool results
-                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "assistant", "content": assistant_content})
                 messages.append({"role": "user", "content": tool_results})
                 
                 final_response = self.client.messages.create(
@@ -384,7 +387,9 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                             "content": json.dumps(res['result'].data if res['result'] and res['result'].success else {"error": res['result'].error if res['result'] else "Failed"}, default=str)
                         })
                     
-                    messages.append({"role": "assistant", "content": final_response.content})
+                    # Convert to serializable format
+                    assistant_content2 = self._serialize_content(final_response.content)
+                    messages.append({"role": "assistant", "content": assistant_content2})
                     messages.append({"role": "user", "content": tool_results2})
                     
                     final_response = self.client.messages.create(
@@ -497,6 +502,27 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                 error=str(e),
                 confidence="low"
             )
+    
+    def _serialize_content(self, content: list) -> list:
+        """
+        Convert Anthropic ContentBlock objects to serializable dicts.
+        This fixes the 'by_alias' error when passing content to messages.
+        """
+        serialized = []
+        for block in content:
+            if block.type == "text":
+                serialized.append({
+                    "type": "text",
+                    "text": block.text
+                })
+            elif block.type == "tool_use":
+                serialized.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input
+                })
+        return serialized
     
     def _execute_tool(self, tool_name: str, params: Dict) -> Optional[ToolResult]:
         """Execute a tool by name with given parameters."""
