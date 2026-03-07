@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight, BookOpen, FileSearch, ScrollText } from "lucide-react";
+import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight, BookOpen, FileSearch, ScrollText, DollarSign, Activity, Cog } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -24,7 +24,14 @@ interface DocumentsResponse {
     technical_notes: {
       stars: CMSDocument[];
     };
-    call_letters: CMSDocument[];
+    stars_docs: {
+      rate_announcements: CMSDocument[];
+      cai_supplements: CMSDocument[];
+      fact_sheets: CMSDocument[];
+    };
+    hcc_docs: {
+      model: CMSDocument[];
+    };
   };
   total_count: number;
 }
@@ -148,6 +155,23 @@ const dataSources: DataSourceConfig[] = [
     years: generateYears(2006, 2025),
     fileType: "ZIP (Excel + TXT)",
   },
+  {
+    id: "ratebook",
+    name: "County Ratebook",
+    shortName: "Ratebook",
+    description: "County-level MA benchmark payment rates",
+    details: [
+      "$/month payment rates by county",
+      "Aged, disabled, ESRD rates",
+      "Benchmark quartiles",
+      "Quality bonus eligible rates"
+    ],
+    icon: <DollarSign className="w-7 h-7" />,
+    color: "teal",
+    table: "ratebook",
+    years: generateYears(2016, 2026),
+    fileType: "ZIP (Excel)",
+  },
 ];
 
 const colorConfig: Record<string, { 
@@ -165,6 +189,7 @@ const colorConfig: Record<string, {
   yellow: { bg: "bg-amber-500", bgHover: "hover:bg-amber-600", border: "border-amber-200", text: "text-amber-600", light: "bg-amber-50", icon: "bg-amber-100", ring: "ring-amber-500" },
   red: { bg: "bg-red-500", bgHover: "hover:bg-red-600", border: "border-red-200", text: "text-red-600", light: "bg-red-50", icon: "bg-red-100", ring: "ring-red-500" },
   slate: { bg: "bg-slate-500", bgHover: "hover:bg-slate-600", border: "border-slate-200", text: "text-slate-600", light: "bg-slate-50", icon: "bg-slate-100", ring: "ring-slate-500" },
+  teal: { bg: "bg-teal-500", bgHover: "hover:bg-teal-600", border: "border-teal-200", text: "text-teal-600", light: "bg-teal-50", icon: "bg-teal-100", ring: "ring-teal-500" },
 };
 
 function getDownloadUrl(table: string, year: number): string {
@@ -181,6 +206,8 @@ function getDownloadUrl(table: string, year: number): string {
       return `${API_BASE}/api/data-sources/risk-scores?year=${year}&format=raw`;
     case "crosswalk":
       return `${API_BASE}/api/data-sources/crosswalk?year=${year}&format=raw`;
+    case "ratebook":
+      return `${API_BASE}/api/data-sources/ratebook?year=${year}&format=raw`;
     default:
       return "#";
   }
@@ -277,7 +304,7 @@ export default function DataSourcesPage() {
         <div className="mt-16 mb-10">
           <h2 className="text-2xl font-bold text-slate-900 mb-2">CMS Policy Documents</h2>
           <p className="text-slate-500">
-            Official CMS publications including rate notices and technical specifications.
+            Official CMS publications including rate notices, technical specifications, and methodology documents.
           </p>
         </div>
 
@@ -331,6 +358,78 @@ export default function DataSourcesPage() {
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-600">
                 {documentsData?.documents.technical_notes.stars.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
+
+          {/* Rate Announcements */}
+          <button
+            onClick={() => setSelectedDocCategory('rate_announcement')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2"
+          >
+            <div className="bg-violet-100 text-violet-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <FileSearch className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Rate Announcements</h3>
+            <p className="text-sm text-slate-500 mb-4">Annual MA rate change announcements</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-violet-50 text-violet-600">
+                {documentsData?.documents.stars_docs?.rate_announcements?.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
+
+          {/* CAI Supplements */}
+          <button
+            onClick={() => setSelectedDocCategory('cai_supplement')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2"
+          >
+            <div className="bg-pink-100 text-pink-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <Activity className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">CAI Supplements</h3>
+            <p className="text-sm text-slate-500 mb-4">Categorical Adjustment Index methodology</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-pink-50 text-pink-600">
+                {documentsData?.documents.stars_docs?.cai_supplements?.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
+
+          {/* Star Fact Sheets */}
+          <button
+            onClick={() => setSelectedDocCategory('star_fact_sheet')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+          >
+            <div className="bg-orange-100 text-orange-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <Star className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Star Fact Sheets</h3>
+            <p className="text-sm text-slate-500 mb-4">Summary overview documents</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-orange-50 text-orange-600">
+                {documentsData?.documents.stars_docs?.fact_sheets?.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
+
+          {/* HCC Model Documentation */}
+          <button
+            onClick={() => setSelectedDocCategory('hcc_model')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2"
+          >
+            <div className="bg-cyan-100 text-cyan-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <Cog className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">HCC Model Documentation</h3>
+            <p className="text-sm text-slate-500 mb-4">Risk adjustment model specifications</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-cyan-50 text-cyan-600">
+                {documentsData?.documents.hcc_docs?.model?.length || 0} years
               </span>
               <ArrowRight className="w-4 h-4 text-slate-300" />
             </div>
@@ -459,23 +558,43 @@ export default function DataSourcesPage() {
             {/* Modal Header */}
             <div className={`px-6 py-5 border-b border-slate-100 ${
               selectedDocCategory === 'rate_notice_advance' ? 'bg-emerald-50' :
-              selectedDocCategory === 'rate_notice_final' ? 'bg-blue-50' : 'bg-amber-50'
+              selectedDocCategory === 'rate_notice_final' ? 'bg-blue-50' :
+              selectedDocCategory === 'tech_notes_stars' ? 'bg-amber-50' :
+              selectedDocCategory === 'rate_announcement' ? 'bg-violet-50' :
+              selectedDocCategory === 'cai_supplement' ? 'bg-pink-50' :
+              selectedDocCategory === 'star_fact_sheet' ? 'bg-orange-50' :
+              selectedDocCategory === 'hcc_model' ? 'bg-cyan-50' : 'bg-slate-50'
             }`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
                     selectedDocCategory === 'rate_notice_advance' ? 'bg-emerald-100 text-emerald-600' :
-                    selectedDocCategory === 'rate_notice_final' ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-600'
+                    selectedDocCategory === 'rate_notice_final' ? 'bg-blue-100 text-blue-600' :
+                    selectedDocCategory === 'tech_notes_stars' ? 'bg-amber-100 text-amber-600' :
+                    selectedDocCategory === 'rate_announcement' ? 'bg-violet-100 text-violet-600' :
+                    selectedDocCategory === 'cai_supplement' ? 'bg-pink-100 text-pink-600' :
+                    selectedDocCategory === 'star_fact_sheet' ? 'bg-orange-100 text-orange-600' :
+                    selectedDocCategory === 'hcc_model' ? 'bg-cyan-100 text-cyan-600' : 'bg-slate-100 text-slate-600'
                   }`}>
                     {selectedDocCategory === 'rate_notice_advance' ? <ScrollText className="w-6 h-6" /> :
                      selectedDocCategory === 'rate_notice_final' ? <FileText className="w-6 h-6" /> :
-                     <BookOpen className="w-6 h-6" />}
+                     selectedDocCategory === 'tech_notes_stars' ? <BookOpen className="w-6 h-6" /> :
+                     selectedDocCategory === 'rate_announcement' ? <FileSearch className="w-6 h-6" /> :
+                     selectedDocCategory === 'cai_supplement' ? <Activity className="w-6 h-6" /> :
+                     selectedDocCategory === 'star_fact_sheet' ? <Star className="w-6 h-6" /> :
+                     selectedDocCategory === 'hcc_model' ? <Cog className="w-6 h-6" /> :
+                     <FileText className="w-6 h-6" />}
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900">
                       {selectedDocCategory === 'rate_notice_advance' ? 'Advance Rate Notices' :
                        selectedDocCategory === 'rate_notice_final' ? 'Final Rate Notices' :
-                       'Star Ratings Technical Notes'}
+                       selectedDocCategory === 'tech_notes_stars' ? 'Star Ratings Technical Notes' :
+                       selectedDocCategory === 'rate_announcement' ? 'Rate Announcements' :
+                       selectedDocCategory === 'cai_supplement' ? 'CAI Supplements' :
+                       selectedDocCategory === 'star_fact_sheet' ? 'Star Fact Sheets' :
+                       selectedDocCategory === 'hcc_model' ? 'HCC Model Documentation' :
+                       'Documents'}
                     </h3>
                     <p className="text-sm text-slate-500">PDF Documents</p>
                   </div>
@@ -518,6 +637,35 @@ export default function DataSourcesPage() {
                       <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-amber-500" />Data source details</li>
                     </>
                   )}
+                  {selectedDocCategory === 'rate_announcement' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-violet-500" />Annual rate change summary</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-violet-500" />Growth rate highlights</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-violet-500" />Policy impact overview</li>
+                    </>
+                  )}
+                  {selectedDocCategory === 'cai_supplement' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-pink-500" />CAI methodology</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-pink-500" />Adjustment calculations</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-pink-500" />Star rating impacts</li>
+                    </>
+                  )}
+                  {selectedDocCategory === 'star_fact_sheet' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-orange-500" />Key rating highlights</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-orange-500" />Industry summary</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-orange-500" />Year-over-year changes</li>
+                    </>
+                  )}
+                  {selectedDocCategory === 'hcc_model' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500" />HCC coefficients</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500" />Model specifications</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500" />Risk adjustment factors</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500" />Normalization factors</li>
+                    </>
+                  )}
                 </ul>
               </div>
 
@@ -529,7 +677,17 @@ export default function DataSourcesPage() {
                     ? documentsData.documents.rate_notices.advance
                     : selectedDocCategory === 'rate_notice_final'
                     ? documentsData.documents.rate_notices.final
-                    : documentsData.documents.technical_notes.stars
+                    : selectedDocCategory === 'tech_notes_stars'
+                    ? documentsData.documents.technical_notes.stars
+                    : selectedDocCategory === 'rate_announcement'
+                    ? documentsData.documents.stars_docs?.rate_announcements || []
+                    : selectedDocCategory === 'cai_supplement'
+                    ? documentsData.documents.stars_docs?.cai_supplements || []
+                    : selectedDocCategory === 'star_fact_sheet'
+                    ? documentsData.documents.stars_docs?.fact_sheets || []
+                    : selectedDocCategory === 'hcc_model'
+                    ? documentsData.documents.hcc_docs?.model || []
+                    : []
                   ).map((doc) => {
                     const isDownloading = downloading === `${doc.type}-${doc.year}`;
                     

@@ -5975,6 +5975,46 @@ async def download_risk_scores_raw(
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
+@app.get("/api/data-sources/ratebook")
+async def download_ratebook_raw(
+    year: int = 2026,
+    format: str = "raw"
+):
+    """
+    Download RAW Ratebook (County Benchmark Rates) file from CMS.
+    Returns the original ZIP file from S3.
+    
+    Ratebook contains county-level MA payment rates - the actual $/month
+    CMS pays plans per beneficiary by county.
+    """
+    try:
+        import boto3
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        s3_key = f"raw/rates/ratebook/ratebook_{year}.zip"
+        
+        # Check if file exists
+        try:
+            s3.head_object(Bucket=bucket, Key=s3_key)
+        except:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Ratebook file not found for {year}. Available years: 2016-2026"
+            )
+        
+        filename = f"ratebook_{year}.zip"
+        url = get_s3_presigned_url(s3_key, filename)
+        
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
 @app.get("/api/data-sources/list")
 async def list_available_raw_files():
     """
@@ -6080,9 +6120,10 @@ async def health_check():
 async def list_cms_documents():
     """
     List all available CMS documents organized by category.
-    Returns rate notices, technical notes, call letters with years available.
+    Returns rate notices, technical notes, stars docs, HCC docs.
     """
     import boto3
+    import re
     
     try:
         s3 = boto3.client('s3')
@@ -6096,8 +6137,20 @@ async def list_cms_documents():
             "technical_notes": {
                 "stars": []
             },
-            "call_letters": []
+            "stars_docs": {
+                "rate_announcements": [],
+                "cai_supplements": [],
+                "fact_sheets": []
+            },
+            "hcc_docs": {
+                "model": []
+            }
         }
+        
+        # Helper to extract year from filename
+        def extract_year(filename):
+            match = re.search(r'(\d{4})', filename)
+            return int(match.group(1)) if match else None
         
         # Rate Notice - Advance
         response = s3.list_objects_v2(Bucket=bucket, Prefix='documents/pdf/rate_notice_advance/', MaxKeys=100)
@@ -6144,18 +6197,88 @@ async def list_cms_documents():
                         "size_mb": round(obj['Size'] / 1024 / 1024, 1)
                     })
         
+        # Rate Announcements (from docs/stars/)
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='docs/stars/rate_announcements/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = extract_year(filename)
+                if year:
+                    documents["stars_docs"]["rate_announcements"].append({
+                        "year": year,
+                        "name": f"{year} Rate Announcement",
+                        "type": "rate_announcement",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
+        # CAI Supplements (from docs/stars/)
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='docs/stars/cai/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = extract_year(filename)
+                if year:
+                    documents["stars_docs"]["cai_supplements"].append({
+                        "year": year,
+                        "name": f"{year} CAI Supplement",
+                        "type": "cai_supplement",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
+        # Star Fact Sheets (from docs/stars/)
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='docs/stars/fact_sheets/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = extract_year(filename)
+                if year:
+                    documents["stars_docs"]["fact_sheets"].append({
+                        "year": year,
+                        "name": f"{year} Star Ratings Fact Sheet",
+                        "type": "star_fact_sheet",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
+        # HCC Model Documentation
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='documents/pdf/hcc_model/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = filename.replace('.pdf', '')
+                if year.isdigit():
+                    documents["hcc_docs"]["model"].append({
+                        "year": int(year),
+                        "name": f"{year} HCC Model Documentation",
+                        "type": "hcc_model",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
         # Sort all lists by year descending
         documents["rate_notices"]["advance"].sort(key=lambda x: x["year"], reverse=True)
         documents["rate_notices"]["final"].sort(key=lambda x: x["year"], reverse=True)
         documents["technical_notes"]["stars"].sort(key=lambda x: x["year"], reverse=True)
+        documents["stars_docs"]["rate_announcements"].sort(key=lambda x: x["year"], reverse=True)
+        documents["stars_docs"]["cai_supplements"].sort(key=lambda x: x["year"], reverse=True)
+        documents["stars_docs"]["fact_sheets"].sort(key=lambda x: x["year"], reverse=True)
+        documents["hcc_docs"]["model"].sort(key=lambda x: x["year"], reverse=True)
+        
+        total = sum([
+            len(documents["rate_notices"]["advance"]),
+            len(documents["rate_notices"]["final"]),
+            len(documents["technical_notes"]["stars"]),
+            len(documents["stars_docs"]["rate_announcements"]),
+            len(documents["stars_docs"]["cai_supplements"]),
+            len(documents["stars_docs"]["fact_sheets"]),
+            len(documents["hcc_docs"]["model"]),
+        ])
         
         return {
             "documents": documents,
-            "total_count": (
-                len(documents["rate_notices"]["advance"]) +
-                len(documents["rate_notices"]["final"]) +
-                len(documents["technical_notes"]["stars"])
-            )
+            "total_count": total
         }
         
     except Exception as e:
@@ -6166,25 +6289,32 @@ async def list_cms_documents():
 async def download_cms_document(doc_type: str, year: int):
     """
     Download a specific CMS document PDF.
-    doc_type: rate_notice_advance, rate_notice_final, tech_notes_stars
+    Supports: rate_notice_advance, rate_notice_final, tech_notes_stars,
+              rate_announcement, cai_supplement, star_fact_sheet, hcc_model
     """
     import boto3
     from fastapi.responses import StreamingResponse
     from io import BytesIO
     
-    type_to_prefix = {
-        "rate_notice_advance": "documents/pdf/rate_notice_advance",
-        "rate_notice_final": "documents/pdf/rate_notice_final",
-        "tech_notes_stars": "documents/pdf/tech_notes",
+    # Map doc_type to S3 path pattern
+    type_to_config = {
+        "rate_notice_advance": ("documents/pdf/rate_notice_advance", "{year}.pdf"),
+        "rate_notice_final": ("documents/pdf/rate_notice_final", "{year}.pdf"),
+        "tech_notes_stars": ("documents/pdf/tech_notes", "{year}.pdf"),
+        "rate_announcement": ("docs/stars/rate_announcements", "{year}_rate_announcement.pdf"),
+        "cai_supplement": ("docs/stars/cai", "{year}_cai_supplement.pdf"),
+        "star_fact_sheet": ("docs/stars/fact_sheets", "{year}_fact_sheet.pdf"),
+        "hcc_model": ("documents/pdf/hcc_model", "{year}.pdf"),
     }
     
-    if doc_type not in type_to_prefix:
-        raise HTTPException(status_code=400, detail=f"Invalid document type. Use: {list(type_to_prefix.keys())}")
+    if doc_type not in type_to_config:
+        raise HTTPException(status_code=400, detail=f"Invalid document type. Use: {list(type_to_config.keys())}")
     
     try:
         s3 = boto3.client('s3')
         bucket = 'ma-data123'
-        key = f"{type_to_prefix[doc_type]}/{year}.pdf"
+        prefix, pattern = type_to_config[doc_type]
+        key = f"{prefix}/{pattern.format(year=year)}"
         
         response = s3.get_object(Bucket=bucket, Key=key)
         content = response['Body'].read()
@@ -6215,6 +6345,7 @@ async def get_document_content(doc_type: str, year: int, section: Optional[str] 
         "rate_notice_advance": "documents/text/rate_notice_advance",
         "rate_notice_final": "documents/text/rate_notice_final",
         "tech_notes_stars": "documents/text/tech_notes",
+        "hcc_model": "documents/text/hcc_model",
     }
     
     if doc_type not in type_to_prefix:
