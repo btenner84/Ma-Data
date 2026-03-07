@@ -348,7 +348,17 @@ GROUP BY year, group_type, parent_org
 ORDER BY year, parent_org
 ```
 
-6. STAR RATINGS - % IN 4+ STARS BY PAYER:
+6. TOP PAYERS BY CURRENT ENROLLMENT (use latest year!):
+```sql
+SELECT parent_org, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE year = 2026  -- ALWAYS use latest year for "current" or "top" rankings
+GROUP BY parent_org
+ORDER BY enrollment DESC
+LIMIT 10
+```
+
+8. STAR RATINGS - % IN 4+ STARS BY PAYER:
 ```sql
 SELECT 
   star_year as year,
@@ -363,7 +373,7 @@ HAVING SUM(enrollment) > 50000
 ORDER BY parent_org, star_year
 ```
 
-7. FIND MAJOR STAR RATING DROPS:
+9. FIND MAJOR STAR RATING DROPS:
 ```sql
 WITH yearly AS (
   SELECT star_year, parent_org, 
@@ -385,7 +395,7 @@ WHERE curr.pct_fourplus - prev.pct_fourplus < -20
 ORDER BY drop_amount
 ```
 
-8. HCC COEFFICIENTS V24 vs V28:
+10. HCC COEFFICIENTS V24 vs V28:
 ```sql
 SELECT hcc_code, hcc_label, 
        MAX(CASE WHEN model_year = 2024 THEN coefficient END) as v24,
@@ -472,7 +482,14 @@ IMPORTANT RULES:
 • ALWAYS use GROUP BY when aggregating enrollment
 • ALWAYS use SUM(enrollment) not just enrollment
 • Use LIKE '%name%' for fuzzy matching, exact names for IN clauses
-• Include ORDER BY for consistent results"""
+• Include ORDER BY for consistent results
+
+CRITICAL DATA SANITY (enrollment sizes):
+• For "top payers", "current enrollment", "market share" → ALWAYS filter to year = 2026 (or latest year)
+• Total MA market is ~30-35 million members (not billions!)
+• UnitedHealth has ~8-9M, Humana ~5-6M, CVS/Aetna ~3-4M
+• If summing across all years, numbers will be 10x too high - THIS IS WRONG
+• For time series queries (enrollment "over time"), include all years but don't aggregate them"""
 
 ANALYZER_PROMPT = """You are a Medicare Advantage data analyst. Analyze the query results and specify WHAT visualizations would best tell the story.
 
