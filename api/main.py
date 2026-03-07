@@ -6168,12 +6168,12 @@ async def list_available_data_schemas():
             },
             {
                 "id": "snp",
-                "name": "SNP Classification",
-                "description": "Special Needs Plan types",
-                "table": "fact_snp_historical",
+                "name": "SNP Enrollment (by Parent Org)",
+                "description": "SNP enrollment aggregated by parent org and type (C-SNP, D-SNP, I-SNP)",
+                "table": "fact_snp_combined",  # Virtual - we'll union fact_snp + fact_snp_historical
                 "has_month": False,
-                "key_columns": ["contract_id", "plan_id", "snp_type", "enrollment"],
-                "join_keys": ["contract_id", "plan_id"]
+                "key_columns": ["parent_org", "snp_type", "enrollment", "year"],
+                "join_keys": ["parent_org", "year"]
             },
             # CROSSWALK / REFERENCE FILES
             {
@@ -6211,7 +6211,19 @@ async def list_available_data_schemas():
         data_sources = []
         for config in sources_config:
             try:
-                if config.get("has_month"):
+                # Special handling for combined SNP table
+                if config['table'] == 'fact_snp_combined':
+                    years_sql = """
+                        SELECT DISTINCT year FROM (
+                            SELECT year FROM fact_snp
+                            UNION ALL
+                            SELECT year FROM fact_snp_historical
+                        ) ORDER BY year
+                    """
+                    result = engine.query(years_sql)
+                    years = [int(row['year']) for _, row in result.iterrows()]
+                    years_data = [{"year": y, "month": None} for y in years]
+                elif config.get("has_month"):
                     # Get years with their latest month (Dec for past years, Feb for 2026)
                     years_sql = f"""
                         SELECT year, MAX(month) as latest_month 

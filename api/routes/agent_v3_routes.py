@@ -162,7 +162,7 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
             "enrollment": {"table": "gold_fact_enrollment_national", "has_month": True, "display_name": "Enrollment"},
             "stars": {"table": "summary_all_years", "has_month": False, "display_name": "Stars"},
             "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False, "display_name": "RiskScores"},
-            "snp": {"table": "fact_snp_historical", "has_month": False, "display_name": "SNP"},
+            "snp": {"table": "fact_snp_combined", "has_month": False, "display_name": "SNP"},  # Virtual table
             # Crosswalks
             "crosswalk_contract": {"table": "gold_dim_entity", "has_month": False, "is_crosswalk": True, "display_name": "ContractXwalk"},
             "crosswalk_plan": {"table": "gold_dim_plan", "has_month": False, "is_crosswalk": True, "display_name": "PlanXwalk"},
@@ -187,7 +187,19 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
             # Build query
             month_label = ""
             
-            if is_crosswalk:
+            if table == "fact_snp_combined":
+                # Special handling: union of fact_snp + fact_snp_historical
+                sql = f"""
+                    SELECT * FROM (
+                        SELECT * FROM fact_snp WHERE year = {year}
+                        UNION ALL
+                        SELECT * FROM fact_snp_historical WHERE year = {year}
+                    ) LIMIT 50000
+                """
+                df = engine.query(sql)
+                sheet_name = f"{config['display_name']}_{year}"[:31]
+                display_name = f"{config['display_name']} {year}"
+            elif is_crosswalk:
                 # Crosswalks: get all data (or filter by year if provided and table has year column)
                 if year:
                     # Check if table has year column
