@@ -278,6 +278,128 @@ KEY JOIN COLUMNS:
             traceback.print_exc()
             return None
     
+    def _get_linking_knowledge(self, selected_sources: List[str]) -> str:
+        """Generate comprehensive knowledge about how selected data sources link together."""
+        
+        # Complete knowledge base about each data source
+        source_knowledge = {
+            "cpsc": {
+                "name": "CPSC (County-Plan-State-Contract) Enrollment",
+                "description": "Monthly enrollment at the county level - shows WHERE members are enrolled geographically",
+                "key_columns": ["contract_id", "plan_id", "year", "month", "state", "county", "enrollment"],
+                "granularity": "Contract + Plan + State + County + Month",
+                "primary_key": ["contract_id", "plan_id", "state", "county", "year", "month"],
+                "foreign_keys": {
+                    "contract_id": "Links to Stars, Risk Scores at contract level",
+                    "contract_id + plan_id": "Links to Monthly Enrollment, SNP at plan level"
+                },
+                "use_cases": ["Geographic market share", "State/county analysis", "Plan footprint mapping"]
+            },
+            "enrollment": {
+                "name": "Monthly Enrollment (National)",
+                "description": "Contract-plan level enrollment with parent organization - shows WHO owns the plans",
+                "key_columns": ["contract_id", "plan_id", "year", "month", "enrollment", "parent_org"],
+                "granularity": "Contract + Plan + Month",
+                "primary_key": ["contract_id", "plan_id", "year", "month"],
+                "foreign_keys": {
+                    "contract_id": "Links to Stars at contract level",
+                    "contract_id + plan_id": "Links to CPSC, SNP, Risk Scores at plan level"
+                },
+                "use_cases": ["Parent org market share", "Plan-level trends", "Organization comparisons"]
+            },
+            "stars": {
+                "name": "Star Ratings",
+                "description": "Quality ratings at CONTRACT level - overall, Part C, Part D ratings plus measures",
+                "key_columns": ["contract_id", "year", "overall_rating", "part_c_rating", "part_d_rating"],
+                "granularity": "Contract + Year (annual, not monthly)",
+                "primary_key": ["contract_id", "year"],
+                "foreign_keys": {
+                    "contract_id": "Links to Enrollment, CPSC, Risk Scores"
+                },
+                "important_note": "Stars are at CONTRACT level, enrollment is at PLAN level. When joining, you aggregate plan enrollment up to contract.",
+                "use_cases": ["Quality analysis", "% enrollment in 4+ star", "Rating trends"]
+            },
+            "risk_scores": {
+                "name": "Risk Scores",
+                "description": "Risk adjustment scores showing member health status - Part C and Part D",
+                "key_columns": ["contract_id", "plan_id", "year", "risk_score_partc", "risk_score_partd"],
+                "granularity": "Contract + Plan + Year",
+                "primary_key": ["contract_id", "plan_id", "year"],
+                "foreign_keys": {
+                    "contract_id + plan_id": "Links to Enrollment, CPSC, SNP"
+                },
+                "use_cases": ["Risk adjustment analysis", "Population health", "Revenue impact"]
+            },
+            "snp": {
+                "name": "SNP (Special Needs Plan) Classification",
+                "description": "Identifies D-SNP, C-SNP, I-SNP plans with enrollment",
+                "key_columns": ["contract_id", "plan_id", "year", "snp_type", "enrollment"],
+                "granularity": "Contract + Plan + Year",
+                "primary_key": ["contract_id", "plan_id", "year"],
+                "foreign_keys": {
+                    "contract_id + plan_id": "Links to Enrollment, CPSC, Risk Scores"
+                },
+                "use_cases": ["SNP market analysis", "D-SNP growth trends", "Special population focus"]
+            }
+        }
+        
+        # Build knowledge section
+        lines = ["FILE KNOWLEDGE & LINKING LOGIC:"]
+        
+        # Describe each selected source
+        for src_id in selected_sources:
+            if src_id in source_knowledge:
+                info = source_knowledge[src_id]
+                lines.append(f"\n**{info['name']}**")
+                lines.append(f"- What it is: {info['description']}")
+                lines.append(f"- Granularity: {info['granularity']}")
+                lines.append(f"- Key columns: {', '.join(info['key_columns'])}")
+                if 'important_note' in info:
+                    lines.append(f"- ⚠️ IMPORTANT: {info['important_note']}")
+        
+        # If multiple sources selected, explain how they link
+        if len(selected_sources) >= 2:
+            lines.append("\n**HOW THESE FILES LINK:**")
+            
+            # Common linking patterns
+            if "cpsc" in selected_sources and "stars" in selected_sources:
+                lines.append("• CPSC → Stars: Join on contract_id + year")
+                lines.append("  - CPSC is plan-level, Stars is contract-level")
+                lines.append("  - To get 'enrollment by star rating': SUM enrollment by contract, then join to stars")
+                lines.append("  - Example: % of enrollment in 5-star plans by state")
+            
+            if "enrollment" in selected_sources and "stars" in selected_sources:
+                lines.append("• Enrollment → Stars: Join on contract_id + year")
+                lines.append("  - Enrollment has parent_org, so you can see 'Humana enrollment by star rating'")
+                lines.append("  - Aggregate plans to contract level before joining to stars")
+            
+            if "cpsc" in selected_sources and "enrollment" in selected_sources:
+                lines.append("• CPSC → Enrollment: Join on contract_id + plan_id + year")
+                lines.append("  - CPSC adds geographic detail (state, county)")
+                lines.append("  - Enrollment adds parent_org")
+                lines.append("  - Combined: Geographic enrollment by parent organization")
+            
+            if "risk_scores" in selected_sources:
+                lines.append("• Risk Scores: Join on contract_id + plan_id + year")
+                lines.append("  - Add risk scores to understand population health")
+            
+            if "snp" in selected_sources:
+                lines.append("• SNP: Join on contract_id + plan_id + year")
+                lines.append("  - Filter or segment by SNP type (D-SNP, C-SNP, I-SNP)")
+            
+            lines.append("\n**COMMON ANALYSES WITH THESE FILES:**")
+            if {"cpsc", "stars"}.issubset(set(selected_sources)):
+                lines.append("- % of enrollment in 4+ star plans by state/county")
+                lines.append("- Geographic distribution of high-quality plans")
+            if {"enrollment", "stars"}.issubset(set(selected_sources)):
+                lines.append("- Parent org performance by star rating")
+                lines.append("- Market share of 5-star contracts")
+            if "risk_scores" in selected_sources:
+                lines.append("- Risk score distribution by star rating")
+                lines.append("- High-risk populations by geography")
+        
+        return "\n".join(lines)
+    
     def _get_system_prompt(self, document_context: Optional[List[Dict]] = None) -> str:
         """Build system prompt with context."""
         context = self.tool_defs.get_system_prompt_context()
@@ -322,26 +444,34 @@ DOCUMENT USAGE GUIDELINES:
 """
             
             if data_contents:
+                # Build linking knowledge based on selected sources
+                selected_source_ids = [doc['type'] for doc in document_context if doc.get('isDataSource')]
+                
+                linking_knowledge = self._get_linking_knowledge(selected_source_ids)
+                
                 data_context_section = f"""
-RAW DATA CONTEXT (DATA LINKING MODE):
-The user has selected raw CMS data sources to link/combine. They have selected:
+RAW CMS DATA CONTEXT:
+The user has selected the following raw CMS data files. You have full knowledge of their schemas and how they connect.
+
+SELECTED DATA:
 {''.join(data_contents)}
 
-DATA LINKING CAPABILITIES:
-When the user asks to "link", "join", "combine", or "merge" the selected data sources:
-1. The system can generate downloadable Excel files with:
-   - Individual source files (each data source as separate Excel)
-   - Combined/linked file (all sources joined together)
-2. Explain the join logic used (which columns link the tables)
-3. Show what the combined data looks like
+{linking_knowledge}
 
-RESPONSE GUIDELINES:
-- If user asks to link/combine the data, explain how the join works
-- Mention they can download: individual files + combined linked file
-- Explain the join keys used (contract_id, plan_id, year)
-- Describe what columns are in the combined output
-- If they ask for analysis on the linked data, explain how to calculate metrics
-- Format any SQL examples in code blocks
+YOUR CAPABILITIES WITH THIS DATA:
+1. **Explain the data**: Describe what each file contains and its key fields
+2. **Show linking logic**: Explain exactly which columns connect these files
+3. **Generate linked Excel files**: When asked, the system creates:
+   - Individual source files (each data source as separate Excel)
+   - Combined/linked file (all sources joined on the correct keys)
+4. **Calculate metrics**: Show how to compute things like "% in 5-star plans"
+5. **Write SQL**: Provide actual SQL queries using the real column names
+
+RESPONSE APPROACH:
+- Be proactive: If the user selected enrollment + stars, you KNOW they probably want to analyze enrollment by star rating
+- Explain the link: "CPSC links to Stars via contract_id - CPSC has plan-level enrollment, Stars has contract-level ratings"
+- Suggest analyses: "With these files combined, you can calculate market share by star rating, geographic distribution of 5-star plans, etc."
+- When they ask to link/combine: Confirm the join keys and mention the Excel downloads will be available
 """
         
         return f"""You are an expert Medicare Advantage data analyst with access to comprehensive MA data.
