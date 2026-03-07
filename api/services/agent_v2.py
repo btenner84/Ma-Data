@@ -59,6 +59,14 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 import asyncio
 
+# Import visualization service
+from api.services.visualization_service import (
+    VisualizationService,
+    VizIntent,
+    VizType,
+    parse_viz_intents,
+)
+
 # LLM costs (approximate, per 1M tokens)
 LLM_COSTS = {
     "claude-sonnet-4": {"input": 3.00, "output": 15.00},
@@ -777,147 +785,116 @@ IMPORTANT:
 - For DEFINITIONS: Use knowledge lookup
 - ALWAYS write complete, executable SQL queries when using sql approach"""
 
-ANALYZER_PROMPT = """You are a Medicare Advantage analyst creating BEAUTIFUL, INSIGHTFUL visualizations.
+ANALYZER_PROMPT = """You are a Medicare Advantage data analyst. Analyze the query results and specify WHAT visualizations would best tell the story.
 
-You have REAL query results. Your job is to create visualizations that tell a clear story.
+IMPORTANT: You specify WHAT to visualize. A separate system handles HOW to render it properly.
 
-=== VISUALIZATION PHILOSOPHY ===
+=== YOUR RESPONSIBILITIES ===
 
-1. **ONE INSIGHT PER CHART** - Don't cram everything into one chart
-2. **MULTIPLE CHARTS ARE GOOD** - Create 2-4 charts to tell different parts of the story
-3. **TABLES FOR DETAILS** - Use tables for rankings, comparisons, detailed breakdowns
-4. **CLEAN AND FOCUSED** - Each visualization should have a clear purpose
+1. Extract KEY FINDINGS from the data (specific numbers, patterns)
+2. Decide WHAT visualizations would tell the story best
+3. Specify visualization INTENTS (type, focus, metric) - NOT raw chart specs
 
-=== CHART GUIDELINES ===
+=== VISUALIZATION TYPES ===
 
-**Line Charts** - Use for:
-- Time series / trends over years
-- Comparing trajectories of multiple companies
-- Showing recovery patterns
+| Type        | Use For                                    | Example                              |
+|-------------|--------------------------------------------|-----------------------------------------|
+| trajectory  | Time series by company/entity              | Recovery patterns over years            |
+| ranking     | Top/bottom N by a metric                   | Biggest enrollment gainers              |
+| change      | Gains vs losses (diverging)                | D-SNP enrollment changes                |
+| comparison  | Before/after, A vs B                       | Pre-drop vs post-drop                   |
+| trend       | Simple time series (single line)           | Total enrollment over time              |
+| table       | Detailed breakdown                         | Full list with all metrics              |
 
-**Bar Charts** - Use for:
-- Rankings (top 10, biggest gainers/losers)
-- Categorical comparisons
-- Single-point-in-time comparisons
+=== MULTIPLE VISUALIZATIONS ===
 
-**Create MULTIPLE charts when the question involves:**
-- Gainers AND losers (2 separate bar charts)
-- Trends AND rankings (line chart + bar chart)
-- Before/After comparisons
-
-=== TABLE GUIDELINES ===
-
-- MAX 6 columns per table (focus on key metrics)
-- Use clear, human-readable column names
-- Include calculated columns (change, % change)
-- Limit to 15-20 rows max
-
-=== DEEP ANALYSIS REQUIREMENTS ===
-
-For star rating / enrollment questions:
-1. WHO: List specific organizations with exact numbers
-2. WHEN: Which years, magnitude of change
-3. COMPARISON: Winners vs losers
-4. CONTEXT: Market share, relative size
-
-If data is missing, set "needs_more_data": true.
+For complex questions, specify 2-4 visualizations:
+- Star rating drops/recovery → trajectory + ranking + table
+- D-SNP gainers/losers → ranking (gainers) + ranking (losers) + table
+- V24 vs V28 → comparison + ranking (increases) + ranking (decreases)
 
 === REQUIRED OUTPUT FORMAT ===
 ```json
 {
   "findings": [
-    "Humana gained +141K D-SNP members (+18.6%) - largest absolute gain",
-    "UnitedHealth lost -96K D-SNP members (-4.0%) despite being market leader",
-    "CareSource nearly tripled: +178% growth from 27K to 74K"
+    "Humana had the largest 4+ star drop: -56.1 points in 2025, affecting 6.8M members",
+    "Blue Cross Michigan recovered fully (15.3% → 100%) within 1 year",
+    "67% of companies with major drops (>50 points) never recovered"
   ],
-  "data_tables": [
+  
+  "viz_intents": [
     {
-      "title": "D-SNP Market Leaders (Feb 2026)",
-      "summary": "Shows each major drop, the year it occurred, and whether company recovered",
-      "columns": ["Organization", "Drop Year", "Before", "After", "Drop", "Recovered?", "Years to Recover"],
-      "rows": [
-        {"Organization": "CVS Health", "Drop Year": 2023, "Before": 89.0, "After": 57.1, "Drop": -31.9, "Recovered?": "Yes", "Years to Recover": 1},
-        {"Organization": "Humana", "Drop Year": 2025, "Before": 96.9, "After": 40.8, "Drop": -56.1, "Recovered?": "Ongoing", "Years to Recover": null}
-      ]
+      "viz_type": "trajectory",
+      "title": "Recovery Trajectories: Companies with Major 4+ Star Drops",
+      "description": "Shows year-over-year 4+ star percentage for companies that experienced drops",
+      "metric": "pct_four_star",
+      "time_field": "star_year",
+      "group_by": "parent_org",
+      "limit": 8
+    },
+    {
+      "viz_type": "ranking",
+      "title": "Largest 4+ Star Enrollment Drops",
+      "description": "Companies ranked by magnitude of drop",
+      "metric": "drop_amount",
+      "dimension": "parent_org",
+      "sort_order": "asc",
+      "limit": 10
+    },
+    {
+      "viz_type": "table",
+      "title": "Drop and Recovery Details"
     }
   ],
-  "charts": [
-    {
-      "chart_type": "line",
-      "title": "Recovery Trajectories After Major Drops",
-      "x_axis": "year",
-      "y_axis": "pct_four_star",
-      "data": [
-        {"year": 2022, "CVS": 89.0, "Humana": 96.9},
-        {"year": 2023, "CVS": 57.1, "Humana": 96.5},
-        {"year": 2024, "CVS": 92.3, "Humana": 40.8}
-      ],
-      "series": [
-        {"key": "CVS", "label": "CVS Health", "color": "#3B82F6"},
-        {"key": "Humana", "label": "Humana", "color": "#EF4444"}
-      ]
-    }
-  ],
-  "needs_more_data": true,
-  "additional_data_needed": [
-    "Measure-level stars from measure_stars_all_years to identify which measures drove Humana's drop",
-    "Domain-level breakdown to see if drop was concentrated in Experience, Outcomes, or Process measures"
-  ],
+  
+  "needs_more_data": false,
+  "additional_data_needed": [],
   "confidence": 0.85,
-  "caveats": ["Recovery analysis limited to overall rating - measure-level recovery patterns not analyzed"]
+  "caveats": ["Recovery analysis limited to overall rating"]
 }
 ```
 
-=== CREATE MULTIPLE CHARTS - Examples ===
+=== VIZ_INTENT FIELDS ===
 
-**For "D-SNP changes Dec 2025 to Feb 2026" - create 3 visualizations:**
+Required:
+- viz_type: "trajectory" | "ranking" | "change" | "comparison" | "trend" | "table"
+- title: Descriptive title that tells the story
 
-1. BAR CHART - "Top D-SNP Gainers (Dec 2025 → Feb 2026)"
-   Show top 8 companies that gained the most members
+For trajectory/trend:
+- metric: The y-axis value (e.g., "pct_four_star", "enrollment")
+- time_field: The x-axis (e.g., "year", "star_year")
+- group_by: Field to create multiple lines (e.g., "parent_org")
 
-2. BAR CHART - "Top D-SNP Losers (Dec 2025 → Feb 2026)"  
-   Show companies that lost the most (use red/orange colors)
+For ranking/change:
+- metric: What to rank by (e.g., "enrollment_change", "drop_amount")
+- dimension: What entities to rank (e.g., "parent_org")
+- sort_order: "asc" or "desc"
+- limit: Number of items to show (default 10)
 
-3. TABLE - "D-SNP Market Summary"
-   Compact table with: Payer, Dec 2025, Feb 2026, Change, % Change
+=== EXAMPLES ===
 
-**For "V24 vs V28 comparison" - create 3 visualizations:**
+**Question: "Star rating drops and recovery patterns"**
 
-1. BAR CHART - "HCCs with Largest Coefficient Increases (V28 vs V24)"
-   Top 10 HCCs that pay MORE in V28
+viz_intents:
+1. {viz_type: "trajectory", title: "Recovery Trajectories After Major Drops", metric: "pct_four_star", time_field: "star_year", group_by: "parent_org"}
+2. {viz_type: "ranking", title: "Largest Star Rating Drops", metric: "drop_amount", dimension: "parent_org", sort_order: "asc", limit: 10}
+3. {viz_type: "table", title: "Complete Drop and Recovery Data"}
 
-2. BAR CHART - "HCCs with Largest Coefficient Decreases"
-   Top 10 HCCs that pay LESS in V28
+**Question: "D-SNP changes Dec 2025 to Feb 2026"**
 
-3. TABLE - "V24 to V28 Transition Summary"
-   Key stats: HCCs added, removed, increased, decreased
+viz_intents:
+1. {viz_type: "ranking", title: "Top D-SNP Gainers", metric: "enrollment_change", dimension: "parent_org", sort_order: "desc", limit: 10}
+2. {viz_type: "ranking", title: "Top D-SNP Losers", metric: "enrollment_change", dimension: "parent_org", sort_order: "asc", limit: 10}
+3. {viz_type: "table", title: "D-SNP Market Changes Summary"}
 
-**For "Star rating drops and recovery" - create 4 visualizations:**
+=== ANALYSIS REQUIREMENTS ===
 
-1. LINE CHART - "Recovery Trajectories"
-   Multiple lines showing how different companies recovered over time
+1. BE SPECIFIC: Include actual numbers from the data in findings
+2. IDENTIFY PATTERNS: Who are the outliers? What's the trend?
+3. PROVIDE CONTEXT: Compare to benchmarks, industry norms
+4. ACKNOWLEDGE GAPS: Set needs_more_data if analysis is incomplete
 
-2. BAR CHART - "Major Star Rating Drops (>25 points)"
-   Bar chart of the biggest drops
-
-3. TABLE - "Drop and Recovery Details"
-   Who dropped, when, by how much, did they recover
-
-4. BAR CHART - "Time to Recovery"
-   How many years it took each company to recover
-
-=== CHART FORMATTING ===
-- Use DESCRIPTIVE TITLES that tell the story
-- x_axis and y_axis must match keys in data array
-- Include 2-4 colors for multi-series charts
-- Limit bar charts to 10-12 bars for readability
-
-=== COLORS TO USE ===
-- Gains/Positive: "#10B981" (green), "#3B82F6" (blue)
-- Losses/Negative: "#EF4444" (red), "#F59E0B" (orange)
-- Neutral: "#6B7280" (gray), "#8B5CF6" (purple)
-
-YOU MUST CREATE MULTIPLE CHARTS AND TABLES. Single-chart responses are not acceptable for complex questions."""
+DO NOT create raw chart data - just specify what you want to visualize."""
 
 VALIDATOR_PROMPT = """You are a quality checker for Medicare Advantage analysis.
 
@@ -1420,40 +1397,30 @@ ORDER BY m.year, ms.domain
         data: Dict, 
         step: AgentStep
     ) -> AnalysisResult:
-        """Analyze gathered data."""
-        # Determine what visualizations would be helpful
-        question_lower = question.lower()
-        viz_hints = []
-        if any(w in question_lower for w in ["trend", "over time", "history", "year", "growth"]):
-            viz_hints.append("Create a LINE chart showing the trend over time")
-        if any(w in question_lower for w in ["compare", "vs", "versus", "rank", "top"]):
-            viz_hints.append("Create a BAR chart or table comparing the entities")
-        if any(w in question_lower for w in ["drop", "decrease", "increase", "change"]):
-            viz_hints.append("Show the change magnitude in a table with before/after values")
+        """Analyze gathered data using the visualization service."""
         
-        viz_instruction = "\n".join(viz_hints) if viz_hints else "Create appropriate visualizations"
-        
+        # Build prompt for analyzer - focuses on WHAT to visualize, not HOW
         prompt = f"""{ANALYZER_PROMPT}
 
 User Question: {question}
 
-Visualization Hints: {viz_instruction}
+Available Data Sources:
+{self._summarize_data_sources(data)}
 
-Gathered Data:
-{json.dumps(data, default=str, indent=2)[:6000]}
+Full Data:
+{json.dumps(data, default=str, indent=2)[:8000]}
 
-Analyze this data and provide your findings with structured charts and tables."""
+Analyze this data and specify what visualizations would best tell the story."""
 
         response = await self._call_llm(prompt, step)
         
         # Parse analysis response
-        data_tables = []
-        charts = []
         findings = []
         confidence = 0.7
         needs_more_data = False
-        
         additional_requirements = []
+        
+        viz_intents = []
         
         try:
             # Try to extract JSON from response
@@ -1475,20 +1442,31 @@ Analyze this data and provide your findings with structured charts and tables.""
                 if end_idx > 0:
                     parsed = json.loads(json_str[:end_idx])
                     findings = parsed.get("findings", [])
-                    data_tables = parsed.get("data_tables", [])
-                    charts = parsed.get("charts", [])
                     needs_more_data = parsed.get("needs_more_data", False)
                     confidence = parsed.get("confidence", 0.7)
+                    
+                    # Parse viz_intents from the new format
+                    viz_intents_raw = parsed.get("viz_intents", [])
+                    for viz in viz_intents_raw:
+                        viz_intents.append(VizIntent(
+                            viz_type=viz.get("viz_type", "auto"),
+                            title=viz.get("title", "Chart"),
+                            description=viz.get("description", ""),
+                            metric=viz.get("metric", ""),
+                            dimension=viz.get("dimension"),
+                            group_by=viz.get("group_by"),
+                            time_field=viz.get("time_field"),
+                            sort_order=viz.get("sort_order", "desc"),
+                            limit=viz.get("limit"),
+                        ))
                     
                     # Parse additional_data_needed into actual requirements
                     additional_data_needed = parsed.get("additional_data_needed", [])
                     for desc in additional_data_needed:
                         if isinstance(desc, str):
-                            # Try to determine if this is a SQL or tool request
                             desc_lower = desc.lower()
                             
                             if "measure" in desc_lower and "stars" in desc_lower:
-                                # Measure-level query needed
                                 additional_requirements.append(DataRequirement(
                                     requirement_id=str(uuid.uuid4()),
                                     description=desc,
@@ -1498,7 +1476,6 @@ Analyze this data and provide your findings with structured charts and tables.""
                                     priority=1,
                                 ))
                             elif "domain" in desc_lower:
-                                # Domain-level breakdown
                                 additional_requirements.append(DataRequirement(
                                     requirement_id=str(uuid.uuid4()),
                                     description=desc,
@@ -1507,23 +1484,19 @@ Analyze this data and provide your findings with structured charts and tables.""
                                     specific_query=self._generate_domain_query(question),
                                     priority=1,
                                 ))
-                            else:
-                                # Generic additional requirement
-                                additional_requirements.append(DataRequirement(
-                                    requirement_id=str(uuid.uuid4()),
-                                    description=desc,
-                                    data_type="unknown",
-                                    query_approach="sql",
-                                    priority=2,
-                                ))
                                 
         except Exception as e:
-            # Log but continue
             print(f"Error parsing analysis JSON: {e}")
         
-        # If no structured output, try to build from raw data
-        if not data_tables and not charts and data:
-            data_tables, charts = self._build_visualizations_from_data(question, data)
+        # Use VisualizationService to build charts and tables
+        viz_service = VisualizationService()
+        
+        if viz_intents:
+            # LLM specified what to visualize - use intents
+            charts, data_tables = viz_service.build_from_intents(viz_intents, data)
+        else:
+            # Fallback to auto-generation based on question and data
+            charts, data_tables = viz_service.auto_generate(question, data)
         
         # If still no findings, use raw response
         if not findings:
@@ -1538,134 +1511,31 @@ Analyze this data and provide your findings with structured charts and tables.""
             confidence=confidence,
         )
     
-    def _build_visualizations_from_data(
-        self, 
-        question: str, 
-        data: Dict
-    ) -> Tuple[List[Dict], List[Dict]]:
-        """Build visualizations directly from gathered data."""
-        tables = []
-        charts = []
-        
-        for req_id, req_data in data.items():
-            if not isinstance(req_data, dict):
-                continue
-                
-            raw_data = req_data.get("data", {})
-            desc = req_data.get("description", "Data")
-            
-            # Handle SQL result format: {"rows": [...], "columns": [...], "row_count": N}
-            if isinstance(raw_data, dict) and "rows" in raw_data and "columns" in raw_data:
-                rows = raw_data.get("rows", [])
-                columns = raw_data.get("columns", [])
-                
-                if rows and columns:
-                    # Use the actual columns from the query result
-                    display_columns = columns[:10]  # Limit to 10 columns
-                    
-                    tables.append({
-                        "title": desc[:50],
-                        "summary": f"{len(rows)} rows returned",
-                        "columns": display_columns,
-                        "rows": rows[:100],  # Limit to 100 rows for display
-                    })
-                    
-                    # Analyze data for chart creation
-                    first = rows[0] if rows else {}
-                    time_cols = [c for c in display_columns if any(t in c.lower() for t in ["year", "date", "month", "period", "star_year"])]
-                    numeric_cols = [c for c in display_columns if isinstance(first.get(c), (int, float)) and c.lower() not in ["rank", "row_num"]]
-                    name_cols = [c for c in display_columns if any(n in c.lower() for n in ["name", "org", "payer", "plan", "parent"])]
-                    
-                    # Check if time column has actual variation
-                    time_has_variation = False
-                    if time_cols and len(rows) > 1:
-                        time_values = set(r.get(time_cols[0]) for r in rows if r.get(time_cols[0]) is not None)
-                        time_has_variation = len(time_values) > 1
-                    
-                    if time_has_variation and numeric_cols:
-                        # Line chart for actual time series with variation
-                        charts.append({
-                            "chart_type": "line",
-                            "title": f"{desc[:40]} Over Time",
-                            "x_axis": time_cols[0],
-                            "y_axis": numeric_cols[0],
-                            "data": rows[:50],
-                            "series": [{"key": nc, "label": nc, "color": "#3B82F6"} for nc in numeric_cols[:3]]
-                        })
-                    elif name_cols and numeric_cols and 2 <= len(rows) <= 25:
-                        # Bar chart for ranked/categorical data (like "top payers by enrollment")
-                        charts.append({
-                            "chart_type": "bar",
-                            "title": f"{desc[:40]}",
-                            "x_axis": name_cols[0],
-                            "y_axis": numeric_cols[0],
-                            "data": rows[:20],  # Top 20 for readability
-                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
-                        })
-                    elif numeric_cols and 2 <= len(rows) <= 20:
-                        # Bar chart using first column as category
-                        name_col = display_columns[0] if display_columns[0] not in numeric_cols else display_columns[1] if len(display_columns) > 1 else display_columns[0]
-                        charts.append({
-                            "chart_type": "bar",
-                            "title": f"{desc[:40]}",
-                            "x_axis": name_col,
-                            "y_axis": numeric_cols[0],
-                            "data": rows[:20],
-                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
-                        })
+    def _summarize_data_sources(self, data: Dict) -> str:
+        """Create a summary of available data sources for the analyzer."""
+        summaries = []
+        for source_id, source_data in data.items():
+            if not isinstance(source_data, dict):
                 continue
             
-            # Handle direct list of records (e.g., from document search)
-            if isinstance(raw_data, list) and len(raw_data) > 0:
-                first = raw_data[0]
-                if isinstance(first, dict):
-                    columns = list(first.keys())[:8]  # Limit columns
-                    tables.append({
-                        "title": desc[:50],
-                        "summary": f"Data for: {desc}",
-                        "columns": columns,
-                        "rows": raw_data[:50],  # Limit rows
-                    })
-                    
-                    # Try to make a chart if there's a year/time column
-                    time_cols = [c for c in columns if any(t in c.lower() for t in ["year", "date", "month", "period"])]
-                    numeric_cols = [c for c in columns if isinstance(first.get(c), (int, float))]
-                    
-                    if time_cols and numeric_cols:
-                        charts.append({
-                            "chart_type": "line",
-                            "title": f"{desc[:40]} Over Time",
-                            "x_axis": time_cols[0],
-                            "y_axis": numeric_cols[0],
-                            "data": raw_data[:30],
-                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#3B82F6"}]
-                        })
-                    elif numeric_cols and len(raw_data) <= 15:
-                        # Bar chart for categorical comparison
-                        name_col = next((c for c in columns if any(n in c.lower() for n in ["name", "org", "payer", "plan"])), columns[0])
-                        charts.append({
-                            "chart_type": "bar",
-                            "title": f"{desc[:40]} Comparison",
-                            "x_axis": name_col,
-                            "y_axis": numeric_cols[0],
-                            "data": raw_data[:15],
-                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
-                        })
-                        
-            elif isinstance(raw_data, dict) and raw_data:
-                # Generic dict - convert to key-value table (but not SQL results)
-                columns = ["Metric", "Value"]
-                rows = [{"Metric": k, "Value": v} for k, v in list(raw_data.items())[:15] 
-                        if not isinstance(v, (list, dict))]  # Skip nested structures
-                if rows:
-                    tables.append({
-                        "title": desc[:50],
-                        "summary": f"Key metrics for: {desc}",
-                        "columns": columns,
-                        "rows": rows,
-                    })
+            desc = source_data.get("description", source_id)
+            raw = source_data.get("data", {})
+            
+            if isinstance(raw, dict) and "rows" in raw:
+                rows = raw.get("rows", [])
+                cols = raw.get("columns", [])
+                summaries.append(f"- {desc}: {len(rows)} rows, columns: {cols[:6]}")
+            elif isinstance(raw, list):
+                summaries.append(f"- {desc}: {len(raw)} items")
         
-        return tables, charts
+        return "\n".join(summaries) if summaries else "No data sources"
+    
+    # NOTE: _build_visualizations_from_data has been replaced by VisualizationService
+    # The new service provides:
+    # - Domain-aware chart building (knows MA data patterns)
+    # - Proper scale handling (percentages get 0-100 domain)
+    # - Chart validation before rendering
+    # - Separation of "what to show" (LLM) from "how to show" (code)
     
     async def _validate(
         self, 

@@ -62,10 +62,17 @@ interface AgentStep {
 interface ChartSpec {
   chart_type: 'bar' | 'line' | 'area' | 'pie';
   title: string;
+  subtitle?: string;
   x_axis: string;
+  x_label?: string;
   y_axis: string;
+  y_label?: string;
+  y_domain?: [number, number];
   data: Record<string, unknown>[];
   series?: { key: string; label: string; color?: string }[];
+  orientation?: 'vertical' | 'horizontal';
+  color_field?: string;
+  show_legend?: boolean;
 }
 
 interface DataTable {
@@ -305,47 +312,70 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
     );
   }
   
-  const series = chart.series || [{ key: chart.y_axis, label: chart.y_axis, color: CHART_COLORS[0] }];
+  const series = chart.series || [{ key: chart.y_axis, label: chart.y_label || chart.y_axis, color: CHART_COLORS[0] }];
+  const isHorizontal = chart.orientation === 'horizontal';
   
-  // Determine if this is a "losers" chart (negative values, red coloring)
+  // Determine colors based on chart context
   const isLosersChart = chart.title?.toLowerCase().includes('loser') || 
                         chart.title?.toLowerCase().includes('drop') ||
-                        chart.title?.toLowerCase().includes('decrease');
-  const defaultBarColor = isLosersChart ? '#EF4444' : '#10B981';
+                        chart.title?.toLowerCase().includes('decrease') ||
+                        chart.title?.toLowerCase().includes('loss');
+  const isGainersChart = chart.title?.toLowerCase().includes('gainer') ||
+                         chart.title?.toLowerCase().includes('growth') ||
+                         chart.title?.toLowerCase().includes('increase');
+  const defaultBarColor = isLosersChart ? '#EF4444' : isGainersChart ? '#10B981' : '#3B82F6';
+  const chartIcon = chart.chart_type === 'line' ? 'text-blue-500' : isLosersChart ? 'text-red-500' : 'text-green-500';
+
+  // Calculate chart height based on data
+  const chartHeight = isHorizontal ? Math.max(300, Math.min(validData.length * 35, 500)) : 350;
 
   return (
     <div className="my-6 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
-      {/* Chart title - more prominent */}
+      {/* Chart header */}
       <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-800/80 border-b border-gray-200 dark:border-gray-700">
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="w-full flex items-center gap-3 font-semibold text-gray-800 dark:text-gray-200"
+          className="w-full flex items-center gap-3 font-semibold text-gray-800 dark:text-gray-200 text-left"
         >
           {collapsed ? <ChevronRight className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
-          <BarChart3 className={`w-5 h-5 ${isLosersChart ? 'text-red-500' : 'text-green-500'}`} />
-          <span className="text-base">{chart.title}</span>
+          <BarChart3 className={`w-5 h-5 ${chartIcon}`} />
+          <div className="flex-1">
+            <span className="text-base">{chart.title}</span>
+            {chart.subtitle && (
+              <span className="block text-sm text-gray-500 font-normal">{chart.subtitle}</span>
+            )}
+          </div>
         </button>
       </div>
       
       {!collapsed && (
         <div className="p-6 bg-white dark:bg-gray-900">
-          <ResponsiveContainer width="100%" height={350}>
-            {chart.chart_type === 'bar' ? (
-              <BarChart data={validData} layout="vertical" margin={{ left: 20, right: 20 }}>
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            {chart.chart_type === 'bar' && isHorizontal ? (
+              // Horizontal bar chart (for rankings)
+              <BarChart data={validData} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.2} horizontal={true} vertical={false} />
-                <XAxis type="number" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickFormatter={(v) => v.toLocaleString()} />
+                <XAxis 
+                  type="number" 
+                  tick={{ fill: '#9CA3AF', fontSize: 11 }} 
+                  tickFormatter={(v) => typeof v === 'number' ? v.toLocaleString() : v}
+                  domain={chart.y_domain || ['auto', 'auto']}
+                  label={chart.x_label ? { value: chart.x_label, position: 'bottom', fill: '#6B7280', fontSize: 12 } : undefined}
+                />
                 <YAxis 
                   type="category" 
-                  dataKey={chart.x_axis} 
-                  tick={{ fill: '#6B7280', fontSize: 12 }} 
-                  width={150}
+                  dataKey={chart.y_axis} 
+                  tick={{ fill: '#6B7280', fontSize: 11 }} 
+                  width={180}
                   tickLine={false}
+                  tickFormatter={(v) => typeof v === 'string' && v.length > 25 ? v.slice(0, 22) + '...' : v}
                 />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
-                  formatter={(value) => [(value as number)?.toLocaleString() ?? '-', '']}
+                  formatter={(value) => [(typeof value === 'number' ? value.toLocaleString() : value), '']}
+                  labelFormatter={(label) => label}
                 />
-                {series.map((s, i) => (
+                {series.map((s) => (
                   <Bar 
                     key={s.key} 
                     dataKey={s.key} 
@@ -355,13 +385,45 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                   />
                 ))}
               </BarChart>
+            ) : chart.chart_type === 'bar' ? (
+              // Vertical bar chart
+              <BarChart data={validData} margin={{ left: 10, right: 30, top: 10, bottom: 30 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.2} />
+                <XAxis 
+                  dataKey={chart.x_axis} 
+                  tick={{ fill: '#6B7280', fontSize: 11 }} 
+                  tickFormatter={(v) => typeof v === 'string' && v.length > 15 ? v.slice(0, 12) + '...' : v}
+                />
+                <YAxis 
+                  tick={{ fill: '#9CA3AF', fontSize: 11 }} 
+                  domain={chart.y_domain || ['auto', 'auto']}
+                  tickFormatter={(v) => typeof v === 'number' ? v.toLocaleString() : v}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
+                  formatter={(value) => [(typeof value === 'number' ? value.toLocaleString() : value), '']}
+                />
+                {chart.show_legend !== false && <Legend />}
+                {series.map((s, i) => (
+                  <Bar 
+                    key={s.key} 
+                    dataKey={s.key} 
+                    name={s.label} 
+                    fill={s.color || CHART_COLORS[i % CHART_COLORS.length]}
+                    radius={[4, 4, 0, 0]}
+                  />
+                ))}
+              </BarChart>
             ) : chart.chart_type === 'area' ? (
-              <AreaChart data={validData}>
+              <AreaChart data={validData} margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
                 <XAxis dataKey={chart.x_axis} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} />
+                <YAxis 
+                  tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                  domain={chart.y_domain || ['auto', 'auto']}
+                />
                 <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} />
-                <Legend />
+                {chart.show_legend !== false && <Legend />}
                 {series.map((s, i) => (
                   <Area 
                     key={s.key} type="monotone" dataKey={s.key} name={s.label}
@@ -372,18 +434,31 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 ))}
               </AreaChart>
             ) : (
-              <LineChart data={validData}>
+              // Line chart
+              <LineChart data={validData} margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-                <XAxis dataKey={chart.x_axis} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} />
-                <Legend />
+                <XAxis 
+                  dataKey={chart.x_axis} 
+                  tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                  label={chart.x_label ? { value: chart.x_label, position: 'bottom', fill: '#6B7280', fontSize: 12, dy: 15 } : undefined}
+                />
+                <YAxis 
+                  tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                  domain={chart.y_domain || ['auto', 'auto']}
+                  label={chart.y_label ? { value: chart.y_label, angle: -90, position: 'insideLeft', fill: '#6B7280', fontSize: 12 } : undefined}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
+                  formatter={(value) => [(typeof value === 'number' ? value.toFixed(1) : value), '']}
+                />
+                {chart.show_legend !== false && series.length > 1 && <Legend />}
                 {series.map((s, i) => (
                   <Line 
                     key={s.key} type="monotone" dataKey={s.key} name={s.label}
                     stroke={s.color || CHART_COLORS[i % CHART_COLORS.length]} 
                     strokeWidth={2}
-                    dot={{ fill: s.color || CHART_COLORS[i % CHART_COLORS.length] }}
+                    dot={{ fill: s.color || CHART_COLORS[i % CHART_COLORS.length], r: 4 }}
+                    activeDot={{ r: 6 }}
                   />
                 ))}
               </LineChart>
