@@ -1264,21 +1264,33 @@ Validate this analysis."""
         
         prompt = f"""{SYNTHESIZER_PROMPT}
 
-User Question: {question}
+---BEGIN USER QUESTION---
+{question}
+---END USER QUESTION---
 
-Key Findings:
+---BEGIN KEY FINDINGS---
 {json.dumps(analysis.findings, indent=2)}
+---END KEY FINDINGS---
 
-VISUALIZATIONS THAT WILL BE SHOWN BELOW YOUR RESPONSE:
+---BEGIN VISUALS INFO---
 {visuals_info}
+---END VISUALS INFO---
 
-Validation Notes:
-{json.dumps(validation.get("suggestions", []), indent=2)}
-
-Write a conversational response that INTERPRETS and CONTEXTUALIZES the data. 
-Reference the charts/tables naturally but don't repeat all the numbers they contain."""
+---BEGIN INSTRUCTIONS---
+Write your response now. Do NOT include any of the above sections in your response.
+Only output your conversational analysis text.
+---END INSTRUCTIONS---"""
 
         response = await self._call_llm(prompt, step)
+        
+        # Clean response - strip any echoed prompt sections
+        import re
+        response = re.sub(r'---BEGIN.*?---END.*?---', '', response, flags=re.DOTALL)
+        response = re.sub(r'Key Findings:.*?\]', '', response, flags=re.DOTALL)
+        response = re.sub(r'VISUALIZATIONS THAT WILL BE SHOWN.*?None', '', response, flags=re.DOTALL)
+        response = re.sub(r'Validation Notes:.*?\]', '', response, flags=re.DOTALL)
+        response = re.sub(r'Write a conversational response.*?contain\.', '', response, flags=re.DOTALL)
+        response = response.strip()
         
         step.output_data = response[:500] + "..."
         self.current_audit.add_step(step)
@@ -1369,13 +1381,20 @@ Reference the charts/tables naturally but don't repeat all the numbers they cont
                 parsed = json.loads(json_str)
                 
                 for i, req in enumerate(parsed.get("requirements", [])):
+                    # Support both old format (specific_query) and new format (sql)
+                    sql_query = req.get("sql") or req.get("specific_query")
+                    # Support both old format (query_approach) and new format (tool)
+                    approach = req.get("query_approach", "sql")
+                    if req.get("tool") == "query_database":
+                        approach = "sql"
+                    
                     requirements.append(DataRequirement(
                         requirement_id=str(uuid.uuid4()),
                         description=req.get("description", ""),
-                        data_type=req.get("data_type", "unknown"),
-                        query_approach=req.get("query_approach", "sql"),
-                        specific_query=req.get("specific_query"),
-                        priority=req.get("priority", 2),
+                        data_type=req.get("data_type", "enrollment"),
+                        query_approach=approach,
+                        specific_query=sql_query,
+                        priority=req.get("priority", 1),
                     ))
                     
             if not requirements:
