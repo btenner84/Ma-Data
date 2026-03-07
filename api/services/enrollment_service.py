@@ -117,7 +117,7 @@ class EnrollmentService:
                 parent_org,
                 SUM(enrollment) as total_enrollment,
                 SUM(plan_count) as plan_count,
-                SUM(contract_count) as contract_count
+                COUNT(DISTINCT contract_id) as contract_count
             FROM fact_enrollment_unified
             WHERE year = {year}
             GROUP BY parent_org
