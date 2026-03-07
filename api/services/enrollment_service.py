@@ -107,11 +107,19 @@ class EnrollmentService:
         self,
         year: int,
         limit: int = 20,
+        product_type: str = "MAPD",  # Default to MA-only
         user_id: str = "api"
     ) -> Dict:
         """
         Get enrollment by parent organization.
+        Defaults to MA-only (MAPD). Set product_type=None for all.
         """
+        filters = [f"year = {year}"]
+        if product_type:
+            filters.append(f"product_type = '{product_type}'")
+        
+        where_clause = " AND ".join(filters)
+        
         sql = f"""
             SELECT
                 parent_org,
@@ -119,7 +127,7 @@ class EnrollmentService:
                 SUM(plan_count) as plan_count,
                 COUNT(DISTINCT contract_id) as contract_count
             FROM fact_enrollment_unified
-            WHERE year = {year}
+            WHERE {where_clause}
             GROUP BY parent_org
             ORDER BY total_enrollment DESC
             LIMIT {limit}

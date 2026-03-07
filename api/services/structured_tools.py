@@ -209,11 +209,13 @@ class StructuredTools:
         snp_types: Optional[List[str]] = None,
         group_types: Optional[List[str]] = None,
         states: Optional[List[str]] = None,
+        product_type: str = "MAPD",  # Default to MA-only, use "all" for MA+PDP
         start_year: int = 2013,
         end_year: int = 2026
     ) -> ToolResult:
         """
         Get enrollment timeseries with optional filters.
+        Defaults to MA-only (MAPD). Set product_type="all" for MA+PDP combined.
         Can filter by payers, plan types, SNP types, group types, states.
         """
         warnings = []
@@ -227,8 +229,11 @@ class StructuredTools:
                 missing = set(payers) - set([p.lower() for p in normalized_payers])
                 warnings.append(f"Some payers not found: {missing}")
         
-        # For now, get timeseries for first payer (service returns one at a time)
-        # TODO: Make service support multiple payers in one call
+        # Handle product_type filter - default to MA-only
+        product_types = None
+        if product_type and product_type.lower() != "all":
+            product_types = [product_type]
+        
         all_data = []
         
         if normalized_payers:
@@ -236,6 +241,7 @@ class StructuredTools:
                 result = self.enrollment_service.get_timeseries(
                     parent_org=payer,
                     plan_types=plan_types,
+                    product_types=product_types,  # Filter to MA-only by default
                     snp_types=snp_types,
                     group_types=group_types,
                     start_year=start_year,
@@ -248,6 +254,7 @@ class StructuredTools:
             # Industry total
             result = self.enrollment_service.get_timeseries(
                 plan_types=plan_types,
+                product_types=product_types,  # Filter to MA-only by default
                 snp_types=snp_types,
                 group_types=group_types,
                 start_year=start_year,
