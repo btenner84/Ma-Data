@@ -5,7 +5,7 @@ import {
   Send, Sparkles, User, ChevronDown, ChevronRight, 
   DollarSign, Clock, Database, Brain, CheckCircle, 
   XCircle, Activity, Loader2, Zap, Table, BarChart3, Download,
-  Search, FileText, Calculator, TrendingUp, Plus, X, BookOpen, ScrollText
+  Search, FileText, Calculator, TrendingUp, Plus, X, BookOpen, ScrollText, Layers
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -36,10 +36,20 @@ interface CMSDocument {
   size_mb: number;
 }
 
+interface DataSource {
+  id: string;
+  name: string;
+  description: string;
+  years: number[];
+  key_columns: string[];
+  join_keys: string[];
+}
+
 interface SelectedDocument {
   type: string;
   year: number;
   name: string;
+  isDataSource?: boolean;  // true for raw data, false for documents
 }
 
 // Format large numbers with abbreviations (1.4M, 2.5B, etc.) - v2
@@ -1257,21 +1267,30 @@ export function ChatV2() {
   const [availableDocs, setAvailableDocs] = useState<{
     rate_notices: { advance: CMSDocument[]; final: CMSDocument[] };
     technical_notes: { stars: CMSDocument[] };
+    stars_docs?: { rate_announcements: CMSDocument[]; cai_supplements: CMSDocument[]; fact_sheets: CMSDocument[] };
+    hcc_docs?: { model: CMSDocument[] };
   } | null>(null);
+  const [availableDataSources, setAvailableDataSources] = useState<DataSource[]>([]);
+  const [contextTab, setContextTab] = useState<'documents' | 'data'>('documents');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch available documents on mount
+  // Fetch available documents and data sources on mount
   useEffect(() => {
     fetch(`${API_BASE}/api/documents/list`)
       .then(res => res.json())
       .then(data => setAvailableDocs(data.documents))
       .catch(err => console.error('Failed to fetch documents:', err));
+    
+    fetch(`${API_BASE}/api/data-schema/list`)
+      .then(res => res.json())
+      .then(data => setAvailableDataSources(data.data_sources))
+      .catch(err => console.error('Failed to fetch data sources:', err));
   }, []);
 
-  const addDocument = (type: string, year: number, name: string) => {
+  const addDocument = (type: string, year: number, name: string, isDataSource: boolean = false) => {
     const exists = selectedDocs.some(d => d.type === type && d.year === year);
     if (!exists) {
-      setSelectedDocs(prev => [...prev, { type, year, name }]);
+      setSelectedDocs(prev => [...prev, { type, year, name, isDataSource }]);
     }
   };
 
@@ -1453,20 +1472,24 @@ export function ChatV2() {
 
       {/* Input area */}
       <div className="border-t border-gray-200 dark:border-gray-700 p-4">
-        {/* Selected documents chips */}
+        {/* Selected documents/data chips */}
         {selectedDocs.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
             {selectedDocs.map((doc) => (
               <span
                 key={`${doc.type}-${doc.year}`}
-                className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs rounded-full"
+                className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded-full ${
+                  doc.isDataSource 
+                    ? 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200'
+                    : 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200'
+                }`}
               >
-                <FileText className="w-3 h-3" />
+                {doc.isDataSource ? <Database className="w-3 h-3" /> : <FileText className="w-3 h-3" />}
                 {doc.name}
                 <button
                   type="button"
                   onClick={() => removeDocument(doc.type, doc.year)}
-                  className="ml-1 hover:text-blue-600"
+                  className={`ml-1 ${doc.isDataSource ? 'hover:text-purple-600' : 'hover:text-blue-600'}`}
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -1489,7 +1512,9 @@ export function ChatV2() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={selectedDocs.length > 0 
-              ? "Ask about the selected documents..." 
+              ? selectedDocs.some(d => d.isDataSource)
+                ? "Ask how to calculate metrics, join tables, analyze the data..."
+                : "Ask about the selected documents..."
               : "Ask about Medicare Advantage data..."}
             disabled={isLoading}
             className="flex-1 px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
@@ -1518,20 +1543,108 @@ export function ChatV2() {
             className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add Document Context</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Select documents to include in your question</p>
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add Context</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Select documents or data sources</p>
+                </div>
+                <button 
+                  onClick={() => setShowDocSelector(false)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                >
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
               </div>
-              <button 
-                onClick={() => setShowDocSelector(false)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-              >
-                <X className="w-5 h-5 text-gray-400" />
-              </button>
+              
+              {/* Tabs */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setContextTab('documents')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    contextTab === 'documents'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                      : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <FileText className="w-4 h-4 inline mr-2" />
+                  Policy Documents
+                </button>
+                <button
+                  onClick={() => setContextTab('data')}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                    contextTab === 'data'
+                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300'
+                      : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <Layers className="w-4 h-4 inline mr-2" />
+                  Raw Data (Tutorials)
+                </button>
+              </div>
             </div>
 
             <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+              {/* Data Sources Tab */}
+              {contextTab === 'data' && (
+                <div className="space-y-4">
+                  <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 mb-4">
+                    <p className="text-sm text-purple-800 dark:text-purple-200">
+                      <strong>Tutorial Mode:</strong> Select data sources to learn how to join tables, calculate metrics, and work with raw CMS data.
+                    </p>
+                  </div>
+                  
+                  {availableDataSources.map((source) => (
+                    <div key={source.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Database className="w-5 h-5 text-purple-500" />
+                          <h4 className="font-medium text-gray-900 dark:text-white">{source.name}</h4>
+                        </div>
+                      </div>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">{source.description}</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
+                        Key columns: {source.key_columns.slice(0, 4).join(', ')}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {source.years.slice(-8).reverse().map((year) => {
+                          const isSelected = selectedDocs.some(d => d.type === source.id && d.year === year);
+                          return (
+                            <button
+                              key={year}
+                              onClick={() => isSelected 
+                                ? removeDocument(source.id, year)
+                                : addDocument(source.id, year, `${source.name} ${year}`, true)
+                              }
+                              className={`px-2 py-1 text-xs rounded border transition-all ${
+                                isSelected
+                                  ? 'bg-purple-100 border-purple-300 text-purple-700 dark:bg-purple-900 dark:border-purple-700 dark:text-purple-300'
+                                  : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
+                              }`}
+                            >
+                              {year}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {/* Example queries */}
+                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Example Questions</h4>
+                    <div className="space-y-2 text-sm text-gray-500 dark:text-gray-400">
+                      <p>• "How do I join enrollment data with star ratings?"</p>
+                      <p>• "Show me how to calculate % of enrollment in 5-star plans"</p>
+                      <p>• "What columns do I need to link CPSC to Stars data?"</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Documents Tab */}
+              {contextTab === 'documents' && (
+                <>
               {/* Rate Notices - Advance */}
               {availableDocs?.rate_notices.advance && availableDocs.rate_notices.advance.length > 0 && (
                 <div>
@@ -1664,6 +1777,8 @@ export function ChatV2() {
                   </button>
                 </div>
               </div>
+              </>
+              )}
             </div>
 
             <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">

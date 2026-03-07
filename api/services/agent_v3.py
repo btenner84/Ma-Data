@@ -208,18 +208,82 @@ class MAAgentV3:
             print(f"Failed to fetch document {doc_type}/{year}: {e}")
             return None
     
+    def _fetch_data_schema(self, source_id: str, year: int) -> Optional[str]:
+        """Fetch schema and sample data for a raw data source."""
+        from db import get_engine
+        
+        table_map = {
+            "cpsc": "fact_enrollment_all_years",
+            "enrollment": "fact_enrollment_national",
+            "stars": "summary_all_years",
+            "risk_scores": "fact_risk_scores_unified",
+            "snp": "fact_snp_historical"
+        }
+        
+        if source_id not in table_map:
+            return None
+        
+        try:
+            engine = get_engine()
+            table = table_map[source_id]
+            
+            # Get schema
+            schema_sql = f"DESCRIBE {table}"
+            schema_result = engine.execute(schema_sql)
+            columns = [(row[0], row[1]) for row in schema_result]
+            
+            # Get sample rows
+            sample_sql = f"SELECT * FROM {table} WHERE year = {year} LIMIT 5"
+            sample_result = engine.execute(sample_sql)
+            sample_rows = [dict(row) for row in sample_result]
+            
+            # Format as context
+            schema_text = f"""
+=== {source_id.upper()} DATA ({year}) ===
+Table: {table}
+
+COLUMNS:
+{chr(10).join(f'  - {col[0]}: {col[1]}' for col in columns)}
+
+SAMPLE DATA (5 rows):
+{json.dumps(sample_rows, indent=2, default=str)[:3000]}
+
+KEY JOIN COLUMNS:
+- contract_id: Links to other tables by contract
+- plan_id: Links at plan level (where available)
+- year: Filter by year
+"""
+            return schema_text
+            
+        except Exception as e:
+            print(f"Failed to fetch schema {source_id}/{year}: {e}")
+            return None
+    
     def _get_system_prompt(self, document_context: Optional[List[Dict]] = None) -> str:
         """Build system prompt with context."""
         context = self.tool_defs.get_system_prompt_context()
         
         # Build document context section if provided
         doc_context_section = ""
+        data_context_section = ""
+        
         if document_context:
             doc_contents = []
+            data_contents = []
+            
             for doc in document_context:
-                content = self._fetch_document_content(doc['type'], doc['year'])
-                if content:
-                    doc_contents.append(f"""
+                is_data_source = doc.get('isDataSource', False)
+                
+                if is_data_source:
+                    # Fetch schema + sample for data source
+                    content = self._fetch_data_schema(doc['type'], doc['year'])
+                    if content:
+                        data_contents.append(content)
+                else:
+                    # Fetch document text
+                    content = self._fetch_document_content(doc['type'], doc['year'])
+                    if content:
+                        doc_contents.append(f"""
 === {doc['name']} ===
 {content}
 """)
@@ -237,29 +301,52 @@ DOCUMENT USAGE GUIDELINES:
 - Highlight any changes or differences between document versions
 - Reference the document year/type in your answers
 """
+            
+            if data_contents:
+                data_context_section = f"""
+RAW DATA CONTEXT (TUTORIAL MODE):
+The user wants to learn how to work with raw CMS data. They have selected the following data sources:
+{''.join(data_contents)}
+
+TUTORIAL MODE GUIDELINES:
+- Explain step-by-step how to join tables, calculate metrics, and analyze the data
+- Show actual SQL queries using the real column names from the schemas above
+- Explain which columns to use for joins (contract_id, plan_id, year)
+- Use the sample data to demonstrate calculations
+- Be specific about data types and potential gotchas
+- When showing how to calculate % of enrollment in X-star plans:
+  1. Explain the join between enrollment and star ratings tables
+  2. Show the filtering logic for star ratings
+  3. Demonstrate the aggregation/calculation
+- Format SQL queries in code blocks
+"""
         
         return f"""You are an expert Medicare Advantage data analyst with access to comprehensive MA data.
 
 {context}
 {doc_context_section}
+{data_context_section}
 
 YOUR ROLE:
 - Answer questions about MA enrollment, star ratings, and risk scores
 - Use the provided tools to fetch data - NEVER make up numbers
 - Provide clear, data-backed insights with visualizations when helpful
 - When document context is provided, use it to answer document-specific questions
+- When raw data context is provided (tutorial mode), explain how to work with the data step-by-step
 
 RESPONSE FORMAT:
 1. Start with a brief, direct answer to the question
 2. Support with specific data points from tool results or document context
 3. Suggest relevant visualizations (charts/tables) when appropriate
 4. Note any caveats or data limitations
+5. In tutorial mode, show SQL queries and explain the logic
 
 TOOL USAGE:
 - Call tools to get real data - don't guess
 - For comparisons, use compare_payers or multiple tool calls
 - For trends, use timeseries tools
 - For rankings, use by_payer tools with appropriate year
+- In tutorial mode, you can still call tools to demonstrate outputs
 
 BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
     

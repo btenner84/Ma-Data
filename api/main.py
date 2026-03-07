@@ -6113,6 +6113,115 @@ async def health_check():
 
 
 # ================================================================
+# RAW DATA SCHEMA API (For AI Tutorial Mode)
+# ================================================================
+
+@app.get("/api/data-schema/list")
+async def list_available_data_schemas():
+    """
+    List all raw data sources available for schema extraction.
+    Used by chat to let users select data sources for tutorials.
+    """
+    return {
+        "data_sources": [
+            {
+                "id": "cpsc",
+                "name": "CPSC Enrollment",
+                "description": "County-level enrollment with geographic detail",
+                "years": list(range(2013, 2026)),
+                "key_columns": ["contract_id", "plan_id", "state", "county", "enrollment"],
+                "join_keys": ["contract_id", "plan_id"]
+            },
+            {
+                "id": "enrollment",
+                "name": "Monthly Enrollment",
+                "description": "Contract-plan level enrollment",
+                "years": list(range(2007, 2026)),
+                "key_columns": ["contract_id", "plan_id", "enrollment", "parent_org"],
+                "join_keys": ["contract_id", "plan_id"]
+            },
+            {
+                "id": "stars",
+                "name": "Star Ratings",
+                "description": "Quality ratings and measures",
+                "years": list(range(2008, 2027)),
+                "key_columns": ["contract_id", "overall_rating", "part_c_rating", "part_d_rating"],
+                "join_keys": ["contract_id"]
+            },
+            {
+                "id": "risk_scores",
+                "name": "Risk Scores",
+                "description": "Plan risk adjustment data",
+                "years": list(range(2006, 2025)),
+                "key_columns": ["contract_id", "plan_id", "risk_score_partc", "risk_score_partd"],
+                "join_keys": ["contract_id", "plan_id"]
+            },
+            {
+                "id": "snp",
+                "name": "SNP Classification",
+                "description": "Special Needs Plan types",
+                "years": list(range(2007, 2025)),
+                "key_columns": ["contract_id", "plan_id", "snp_type", "enrollment"],
+                "join_keys": ["contract_id", "plan_id"]
+            }
+        ]
+    }
+
+
+@app.get("/api/data-schema/{source_id}/{year}")
+async def get_data_schema_and_sample(source_id: str, year: int):
+    """
+    Get schema and sample rows from a processed data source.
+    Returns column names, types, and 5 sample rows for AI context.
+    """
+    try:
+        from db import get_engine
+        engine = get_engine()
+        
+        # Map source_id to actual table
+        table_map = {
+            "cpsc": "fact_enrollment_all_years",
+            "enrollment": "fact_enrollment_national",
+            "stars": "summary_all_years",
+            "risk_scores": "fact_risk_scores_unified",
+            "snp": "fact_snp_historical"
+        }
+        
+        if source_id not in table_map:
+            raise HTTPException(status_code=400, detail=f"Unknown source: {source_id}")
+        
+        table = table_map[source_id]
+        
+        # Get schema
+        schema_sql = f"DESCRIBE {table}"
+        schema_result = engine.execute(schema_sql)
+        columns = [{"name": row[0], "type": row[1]} for row in schema_result]
+        
+        # Get sample rows
+        sample_sql = f"SELECT * FROM {table} WHERE year = {year} LIMIT 5"
+        sample_result = engine.execute(sample_sql)
+        sample_rows = [dict(row) for row in sample_result]
+        
+        # Get row count
+        count_sql = f"SELECT COUNT(*) as cnt FROM {table} WHERE year = {year}"
+        count_result = engine.execute(count_sql)
+        row_count = list(count_result)[0]['cnt']
+        
+        return {
+            "source_id": source_id,
+            "year": year,
+            "table": table,
+            "schema": columns,
+            "sample_rows": sample_rows,
+            "total_rows": row_count,
+            "description": f"Schema and sample data from {table} for year {year}"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get schema: {str(e)}")
+
+
+# ================================================================
 # CMS DOCUMENTS API (Technical Notes, Rate Notices, etc.)
 # ================================================================
 
