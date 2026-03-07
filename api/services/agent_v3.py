@@ -581,15 +581,47 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                         'yKeys': list(series.keys()),
                         'colors': self._get_colors(len(series))
                     }
-                elif isinstance(data, list):
-                    return {
-                        'type': 'line',
-                        'title': self._get_chart_title(tool_name, params),
-                        'data': data,
-                        'xKey': 'year',
-                        'yKeys': ['enrollment'] if 'enrollment' in tool_name else ['fourplus_pct'] if 'stars' in tool_name else ['wavg_risk_score'],
-                        'colors': ['#2563eb']
-                    }
+                elif isinstance(data, list) and len(data) > 0:
+                    # Check if this is multi-payer data (has parent_org field)
+                    if 'parent_org' in data[0]:
+                        # Transform flat list to multi-series format
+                        payers = list(set(row.get('parent_org') for row in data if row.get('parent_org')))
+                        years = sorted(set(row.get('year') for row in data if row.get('year')))
+                        
+                        # Determine the value field
+                        value_field = 'enrollment' if 'enrollment' in tool_name else 'fourplus_pct' if 'stars' in tool_name else 'wavg_risk_score'
+                        if value_field not in data[0]:
+                            value_field = 'total_enrollment' if 'total_enrollment' in data[0] else list(data[0].keys())[2]
+                        
+                        # Build pivoted data for chart
+                        chart_data = []
+                        for year in years:
+                            row = {'year': year}
+                            for payer in payers:
+                                # Find the value for this payer/year
+                                match = next((d for d in data if d.get('year') == year and d.get('parent_org') == payer), None)
+                                if match:
+                                    row[payer] = match.get(value_field) or match.get('enrollment') or match.get('total_enrollment')
+                            chart_data.append(row)
+                        
+                        return {
+                            'type': 'line',
+                            'title': self._get_chart_title(tool_name, params),
+                            'data': chart_data,
+                            'xKey': 'year',
+                            'yKeys': payers,
+                            'colors': self._get_colors(len(payers))
+                        }
+                    else:
+                        # Single series
+                        return {
+                            'type': 'line',
+                            'title': self._get_chart_title(tool_name, params),
+                            'data': data,
+                            'xKey': 'year',
+                            'yKeys': ['enrollment'] if 'enrollment' in tool_name else ['fourplus_pct'] if 'stars' in tool_name else ['wavg_risk_score'],
+                            'colors': ['#2563eb']
+                        }
             
             elif "by_payer" in tool_name or "by_parent" in tool_name:
                 # Bar chart for rankings
