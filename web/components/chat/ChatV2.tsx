@@ -343,7 +343,7 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
                 />
                 <Tooltip 
                   contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
-                  formatter={(value: number) => [value.toLocaleString(), '']}
+                  formatter={(value) => [(value as number)?.toLocaleString() ?? '-', '']}
                 />
                 {series.map((s, i) => (
                   <Bar 
