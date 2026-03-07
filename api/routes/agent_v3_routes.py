@@ -163,10 +163,8 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
             "stars": {"table": "summary_all_years", "has_month": False, "display_name": "Stars"},
             "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False, "display_name": "RiskScores"},
             "snp": {"table": "fact_snp_combined", "has_month": False, "display_name": "SNP"},  # Virtual table
-            # Crosswalks
-            "crosswalk_contract": {"table": "gold_dim_entity", "has_month": False, "is_crosswalk": True, "display_name": "ContractXwalk"},
-            "crosswalk_plan": {"table": "gold_dim_plan", "has_month": False, "is_crosswalk": True, "display_name": "PlanXwalk"},
-            "crosswalk_geography": {"table": "gold_dim_geography", "has_month": False, "is_crosswalk": True, "display_name": "GeoXwalk"}
+            # CMS Crosswalk (raw files from S3)
+            "crosswalk": {"table": "raw_crosswalk", "has_month": False, "is_raw_file": True, "display_name": "CMSCrosswalk"}
         }
         
         # Fetch each data source
@@ -199,6 +197,34 @@ async def _export_data_to_workbook(data_sources: List[Dict]) -> Optional[Dict]:
                 df = engine.query(sql)
                 sheet_name = f"{config['display_name']}_{year}"[:31]
                 display_name = f"{config['display_name']} {year}"
+            elif table == "raw_crosswalk":
+                # Load CMS crosswalk from S3 zip file
+                import boto3
+                import zipfile
+                s3 = boto3.client('s3')
+                zip_key = f"raw/crosswalks/crosswalk_{year}.zip"
+                print(f"[DATA EXPORT] Loading crosswalk from S3: {zip_key}")
+                
+                zip_obj = s3.get_object(Bucket='ma-data123', Key=zip_key)
+                zip_buffer = io.BytesIO(zip_obj['Body'].read())
+                
+                with zipfile.ZipFile(zip_buffer, 'r') as zf:
+                    # Find the .txt or .xlsx file (main data file)
+                    txt_files = [f for f in zf.namelist() if f.endswith('.txt')]
+                    xlsx_files = [f for f in zf.namelist() if f.endswith('.xlsx') and 'readme' not in f.lower()]
+                    
+                    if txt_files:
+                        with zf.open(txt_files[0]) as f:
+                            df = pd.read_csv(f, sep='\t', dtype=str)
+                    elif xlsx_files:
+                        with zf.open(xlsx_files[0]) as f:
+                            df = pd.read_excel(io.BytesIO(f.read()), dtype=str)
+                    else:
+                        df = pd.DataFrame()
+                
+                print(f"[DATA EXPORT] Loaded {len(df)} rows from crosswalk")
+                sheet_name = f"Crosswalk_{year}"[:31]
+                display_name = f"CMS Crosswalk {year}"
             elif is_crosswalk:
                 # Crosswalks: get all data (or filter by year if provided and table has year column)
                 if year:

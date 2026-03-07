@@ -1794,42 +1794,41 @@ export function ChatV2() {
                     </div>
                   ))}
                   
-                  {/* Crosswalk / Reference Files */}
-                  {availableDataSources.filter(s => s.id.startsWith('crosswalk')).length > 0 && (
+                  {/* CMS Crosswalk Files */}
+                  {availableDataSources.filter(s => s.id === 'crosswalk').length > 0 && (
                     <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
                       <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                         <Layers className="w-4 h-4 text-orange-500" />
-                        Crosswalk / Reference Files
+                        CMS Plan Crosswalk (Year-over-Year Transitions)
                       </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        {availableDataSources.filter(s => s.id.startsWith('crosswalk')).map((source) => {
-                          const isSelected = selectedDocs.some(d => d.type === source.id);
-                          return (
-                            <button
-                              key={source.id}
-                              onClick={() => isSelected 
-                                ? removeDocument(source.id, 0)
-                                : addDocument(source.id, 0, source.name, true)
-                              }
-                              className={`flex flex-col items-start p-3 rounded-lg border transition-all text-left ${
-                                isSelected
-                                  ? 'bg-orange-100 border-orange-300 dark:bg-orange-900 dark:border-orange-700'
-                                  : 'bg-gray-50 border-gray-200 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600'
-                              }`}
-                            >
-                              <span className={`font-medium text-sm ${isSelected ? 'text-orange-700 dark:text-orange-300' : 'text-gray-700 dark:text-gray-300'}`}>
-                                {source.name.replace('Crosswalk', 'Xwalk')}
-                              </span>
-                              <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                {source.key_columns.slice(0, 3).join(', ')}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">
-                        Use crosswalks to look up contract names, plan details, or geography codes
-                      </p>
+                      {availableDataSources.filter(s => s.id === 'crosswalk').map((source) => (
+                        <div key={source.id}>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            Shows plan transitions: previous→current contract/plan, status (Renewal, New, Consolidated), SNP changes
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {[...source.years].reverse().slice(0, 12).map((year) => {
+                              const isSelected = selectedDocs.some(d => d.type === source.id && d.year === year);
+                              return (
+                                <button
+                                  key={year}
+                                  onClick={() => isSelected 
+                                    ? removeDocument(source.id, year)
+                                    : addDocument(source.id, year, `CMS Crosswalk ${year}`, true)
+                                  }
+                                  className={`px-2 py-1 text-xs rounded border transition-all ${
+                                    isSelected
+                                      ? 'bg-orange-100 border-orange-300 text-orange-700 dark:bg-orange-900 dark:border-orange-700 dark:text-orange-300'
+                                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
+                                  }`}
+                                >
+                                  {year}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                     </>

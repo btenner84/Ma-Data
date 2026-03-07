@@ -6175,36 +6175,16 @@ async def list_available_data_schemas():
                 "key_columns": ["parent_org", "snp_type", "enrollment", "year"],
                 "join_keys": ["parent_org", "year"]
             },
-            # CROSSWALK / REFERENCE FILES
+            # CMS CROSSWALK FILES (raw from CMS - plan year-over-year transitions)
             {
-                "id": "crosswalk_contract",
-                "name": "Contract Crosswalk",
-                "description": "Contract to Parent Org mapping (org name, type, predecessor)",
-                "table": "gold_dim_entity",
+                "id": "crosswalk",
+                "name": "CMS Plan Crosswalk",
+                "description": "Year-over-year plan transitions (previous→current, status, SNP changes)",
+                "table": "raw_crosswalk",  # Special - loaded from S3 zip files
                 "has_month": False,
-                "is_crosswalk": True,
-                "key_columns": ["contract_id", "parent_org", "organization_name", "organization_type", "predecessor_contract_id"],
-                "join_keys": ["contract_id"]
-            },
-            {
-                "id": "crosswalk_plan",
-                "name": "Plan Crosswalk",
-                "description": "Plan details (name, type, SNP type, product type)",
-                "table": "gold_dim_plan",
-                "has_month": False,
-                "is_crosswalk": True,
-                "key_columns": ["contract_id", "plan_id", "plan_name", "plan_type", "snp_type", "product_type"],
-                "join_keys": ["contract_id", "plan_id"]
-            },
-            {
-                "id": "crosswalk_geography",
-                "name": "Geography Crosswalk",
-                "description": "State, county, FIPS, SSA codes",
-                "table": "gold_dim_geography",
-                "has_month": False,
-                "is_crosswalk": True,
-                "key_columns": ["state_code", "state_name", "county_name", "fips_code", "ssa_code"],
-                "join_keys": ["fips_code", "ssa_code"]
+                "is_raw_file": True,
+                "key_columns": ["PREVIOUS_CONTRACT_ID", "CURRENT_CONTRACT_ID", "PREVIOUS_PLAN_NAME", "CURRENT_PLAN_NAME", "STATUS"],
+                "join_keys": ["PREVIOUS_CONTRACT_ID", "CURRENT_CONTRACT_ID"]
             }
         ]
         
@@ -6222,6 +6202,23 @@ async def list_available_data_schemas():
                     """
                     result = engine.query(years_sql)
                     years = [int(row['year']) for _, row in result.iterrows()]
+                    years_data = [{"year": y, "month": None} for y in years]
+                elif config['table'] == 'raw_crosswalk':
+                    # List crosswalk years from S3
+                    import boto3
+                    s3 = boto3.client('s3')
+                    response = s3.list_objects_v2(Bucket='ma-data123', Prefix='raw/crosswalks/crosswalk_')
+                    years = []
+                    for obj in response.get('Contents', []):
+                        key = obj['Key']
+                        # Extract year from filename like crosswalk_2025.zip
+                        if '_to_' not in key:  # Skip transition files like crosswalk_2024_to_2025.zip
+                            try:
+                                year_str = key.split('crosswalk_')[1].split('.zip')[0]
+                                years.append(int(year_str))
+                            except:
+                                pass
+                    years = sorted(set(years))
                     years_data = [{"year": y, "month": None} for y in years]
                 elif config.get("has_month"):
                     # Get years with their latest month (Dec for past years, Feb for 2026)
