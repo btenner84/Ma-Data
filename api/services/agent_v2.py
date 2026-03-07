@@ -274,8 +274,10 @@ PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS t
 === DATABASE SCHEMA ===
 
 **ENROLLMENT TABLES:**
-- fact_enrollment_all_years: year, month, contract_id, plan_id, parent_organization, enrollment, state
-- enrollment_by_parent: year, parent_organization, total_enrollment (aggregated)
+- fact_enrollment_all_years: year, month, contract_id, state, parent_org, plan_type, product_type, group_type, snp_type, enrollment
+  * HAS MONTHLY DATA! Can filter by month (1-12), snp_type ('D-SNP', 'C-SNP', 'I-SNP', null)
+  * Use for month-over-month analysis, D-SNP monthly enrollment, etc.
+- enrollment_by_parent: year, parent_organization, total_enrollment (aggregated by year)
 - fact_enrollment_by_state: year, month, state, parent_organization, enrollment (state aggregates)
 - fact_enrollment_by_geography: year, month, state, county, fips, contract_id, enrollment (county-level!)
 
@@ -375,12 +377,70 @@ WHERE parent_org IN ('Humana', 'UnitedHealth Group', 'CVS Health')
 GROUP BY star_year, parent_org ORDER BY parent_org, star_year
 ```
 
-**D-SNP Growth by Parent Organization:**
+**D-SNP Growth by Parent Organization (Yearly):**
 ```sql
 SELECT year, parent_org, snp_type, enrollment
 FROM fact_snp_historical
 WHERE snp_type = 'D-SNP'
 ORDER BY parent_org, year
+```
+
+**MONTHLY D-SNP Enrollment Change (e.g., Dec 2025 to Feb 2026):**
+```sql
+WITH monthly AS (
+  SELECT 
+    year, month, parent_org,
+    SUM(enrollment) as enrollment
+  FROM fact_enrollment_all_years
+  WHERE snp_type = 'D-SNP'
+  AND ((year = 2025 AND month = 12) OR (year = 2026 AND month IN (1, 2)))
+  GROUP BY year, month, parent_org
+),
+pivoted AS (
+  SELECT 
+    parent_org,
+    MAX(CASE WHEN year = 2025 AND month = 12 THEN enrollment END) as dec_2025,
+    MAX(CASE WHEN year = 2026 AND month = 1 THEN enrollment END) as jan_2026,
+    MAX(CASE WHEN year = 2026 AND month = 2 THEN enrollment END) as feb_2026
+  FROM monthly
+  GROUP BY parent_org
+)
+SELECT 
+  parent_org,
+  dec_2025,
+  jan_2026,
+  feb_2026,
+  feb_2026 - dec_2025 as net_change,
+  ROUND(100.0 * (feb_2026 - dec_2025) / NULLIF(dec_2025, 0), 1) as pct_change
+FROM pivoted
+WHERE dec_2025 > 10000 OR feb_2026 > 10000  -- Filter to significant payers
+ORDER BY net_change DESC
+```
+
+**Top D-SNP Gainers/Losers (Month-over-Month):**
+```sql
+WITH curr AS (
+  SELECT parent_org, SUM(enrollment) as enrollment
+  FROM fact_enrollment_all_years
+  WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2
+  GROUP BY parent_org
+),
+prev AS (
+  SELECT parent_org, SUM(enrollment) as enrollment
+  FROM fact_enrollment_all_years
+  WHERE snp_type = 'D-SNP' AND year = 2025 AND month = 12
+  GROUP BY parent_org
+)
+SELECT 
+  COALESCE(c.parent_org, p.parent_org) as parent_org,
+  p.enrollment as dec_2025,
+  c.enrollment as feb_2026,
+  c.enrollment - p.enrollment as change,
+  ROUND(100.0 * (c.enrollment - p.enrollment) / NULLIF(p.enrollment, 0), 1) as pct_change
+FROM curr c
+FULL OUTER JOIN prev p ON c.parent_org = p.parent_org
+WHERE COALESCE(p.enrollment, 0) > 5000 OR COALESCE(c.enrollment, 0) > 5000
+ORDER BY change DESC
 ```
 
 **State-Level Market Share:**
@@ -1372,13 +1432,20 @@ Analyze this data and provide your findings with structured charts and tables.""
                         "rows": rows[:100],  # Limit to 100 rows for display
                     })
                     
-                    # Try to make a chart if there's a year/time column
+                    # Analyze data for chart creation
                     first = rows[0] if rows else {}
                     time_cols = [c for c in display_columns if any(t in c.lower() for t in ["year", "date", "month", "period", "star_year"])]
-                    numeric_cols = [c for c in display_columns if isinstance(first.get(c), (int, float))]
+                    numeric_cols = [c for c in display_columns if isinstance(first.get(c), (int, float)) and c.lower() not in ["rank", "row_num"]]
+                    name_cols = [c for c in display_columns if any(n in c.lower() for n in ["name", "org", "payer", "plan", "parent"])]
                     
-                    if time_cols and numeric_cols and len(rows) > 1:
-                        # Line chart for time series
+                    # Check if time column has actual variation
+                    time_has_variation = False
+                    if time_cols and len(rows) > 1:
+                        time_values = set(r.get(time_cols[0]) for r in rows if r.get(time_cols[0]) is not None)
+                        time_has_variation = len(time_values) > 1
+                    
+                    if time_has_variation and numeric_cols:
+                        # Line chart for actual time series with variation
                         charts.append({
                             "chart_type": "line",
                             "title": f"{desc[:40]} Over Time",
@@ -1387,9 +1454,19 @@ Analyze this data and provide your findings with structured charts and tables.""
                             "data": rows[:50],
                             "series": [{"key": nc, "label": nc, "color": "#3B82F6"} for nc in numeric_cols[:3]]
                         })
+                    elif name_cols and numeric_cols and 2 <= len(rows) <= 25:
+                        # Bar chart for ranked/categorical data (like "top payers by enrollment")
+                        charts.append({
+                            "chart_type": "bar",
+                            "title": f"{desc[:40]}",
+                            "x_axis": name_cols[0],
+                            "y_axis": numeric_cols[0],
+                            "data": rows[:20],  # Top 20 for readability
+                            "series": [{"key": numeric_cols[0], "label": numeric_cols[0], "color": "#10B981"}]
+                        })
                     elif numeric_cols and 2 <= len(rows) <= 20:
-                        # Bar chart for categorical comparison
-                        name_col = next((c for c in display_columns if any(n in c.lower() for n in ["name", "org", "payer", "plan", "parent"])), display_columns[0])
+                        # Bar chart using first column as category
+                        name_col = display_columns[0] if display_columns[0] not in numeric_cols else display_columns[1] if len(display_columns) > 1 else display_columns[0]
                         charts.append({
                             "chart_type": "bar",
                             "title": f"{desc[:40]}",
