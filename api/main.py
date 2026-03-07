@@ -6122,6 +6122,7 @@ async def list_available_data_schemas():
     List all raw data sources available for schema extraction.
     Used by chat to let users select data sources for tutorials.
     Dynamically checks what years are actually in the database.
+    Shows latest available month for each year.
     """
     try:
         from db import get_engine
@@ -6134,6 +6135,7 @@ async def list_available_data_schemas():
                 "name": "CPSC Enrollment",
                 "description": "County-level enrollment with geographic detail",
                 "table": "fact_enrollment_all_years",
+                "has_month": True,
                 "key_columns": ["contract_id", "plan_id", "state", "county", "enrollment"],
                 "join_keys": ["contract_id", "plan_id"]
             },
@@ -6142,6 +6144,7 @@ async def list_available_data_schemas():
                 "name": "Monthly Enrollment", 
                 "description": "Contract-plan level enrollment",
                 "table": "fact_enrollment_national",
+                "has_month": True,
                 "key_columns": ["contract_id", "plan_id", "enrollment", "parent_org"],
                 "join_keys": ["contract_id", "plan_id"]
             },
@@ -6150,6 +6153,7 @@ async def list_available_data_schemas():
                 "name": "Star Ratings",
                 "description": "Quality ratings and measures",
                 "table": "summary_all_years",
+                "has_month": False,
                 "key_columns": ["contract_id", "overall_rating", "part_c_rating", "part_d_rating"],
                 "join_keys": ["contract_id"]
             },
@@ -6158,6 +6162,7 @@ async def list_available_data_schemas():
                 "name": "Risk Scores",
                 "description": "Plan risk adjustment data",
                 "table": "fact_risk_scores_unified",
+                "has_month": False,
                 "key_columns": ["contract_id", "plan_id", "risk_score_partc", "risk_score_partd"],
                 "join_keys": ["contract_id", "plan_id"]
             },
@@ -6166,6 +6171,7 @@ async def list_available_data_schemas():
                 "name": "SNP Classification",
                 "description": "Special Needs Plan types",
                 "table": "fact_snp_historical",
+                "has_month": False,
                 "key_columns": ["contract_id", "plan_id", "snp_type", "enrollment"],
                 "join_keys": ["contract_id", "plan_id"]
             }
@@ -6174,27 +6180,43 @@ async def list_available_data_schemas():
         data_sources = []
         for config in sources_config:
             try:
-                # Get available years from actual data
-                years_sql = f"SELECT DISTINCT year FROM {config['table']} ORDER BY year"
-                result = engine.execute(years_sql)
-                years = [row[0] for row in result]
+                if config.get("has_month"):
+                    # Get years with their latest month (Dec for past years, Feb for 2026)
+                    years_sql = f"""
+                        SELECT year, MAX(month) as latest_month 
+                        FROM {config['table']} 
+                        GROUP BY year 
+                        ORDER BY year
+                    """
+                    result = engine.query(years_sql)
+                    years_data = [{"year": int(row['year']), "month": int(row['latest_month'])} for _, row in result.iterrows()]
+                    years = [d["year"] for d in years_data]
+                else:
+                    # Just get years
+                    years_sql = f"SELECT DISTINCT year FROM {config['table']} ORDER BY year"
+                    result = engine.query(years_sql)
+                    years = [int(row['year']) for _, row in result.iterrows()]
+                    years_data = [{"year": y, "month": None} for y in years]
                 
                 data_sources.append({
                     "id": config["id"],
                     "name": config["name"],
                     "description": config["description"],
                     "years": years,
+                    "years_detail": years_data,
+                    "has_month": config.get("has_month", False),
                     "key_columns": config["key_columns"],
                     "join_keys": config["join_keys"]
                 })
             except Exception as e:
                 print(f"Error getting years for {config['id']}: {e}")
-                # Fallback to empty
                 data_sources.append({
                     "id": config["id"],
                     "name": config["name"],
                     "description": config["description"],
                     "years": [],
+                    "years_detail": [],
+                    "has_month": config.get("has_month", False),
                     "key_columns": config["key_columns"],
                     "join_keys": config["join_keys"]
                 })
@@ -6202,68 +6224,93 @@ async def list_available_data_schemas():
         return {"data_sources": data_sources}
         
     except Exception as e:
+        print(f"Error in data-schema/list: {e}")
         # Fallback to static if DB fails
         return {
             "data_sources": [
-                {"id": "cpsc", "name": "CPSC Enrollment", "description": "County-level enrollment", "years": list(range(2013, 2026)), "key_columns": ["contract_id", "plan_id", "state", "county"], "join_keys": ["contract_id", "plan_id"]},
-                {"id": "enrollment", "name": "Monthly Enrollment", "description": "Contract-plan enrollment", "years": list(range(2007, 2026)), "key_columns": ["contract_id", "plan_id", "enrollment"], "join_keys": ["contract_id", "plan_id"]},
-                {"id": "stars", "name": "Star Ratings", "description": "Quality ratings", "years": list(range(2008, 2027)), "key_columns": ["contract_id", "overall_rating"], "join_keys": ["contract_id"]},
-                {"id": "risk_scores", "name": "Risk Scores", "description": "Risk adjustment data", "years": list(range(2006, 2025)), "key_columns": ["contract_id", "risk_score_partc"], "join_keys": ["contract_id"]},
-                {"id": "snp", "name": "SNP Classification", "description": "Special Needs Plans", "years": list(range(2007, 2025)), "key_columns": ["contract_id", "snp_type"], "join_keys": ["contract_id"]}
+                {"id": "cpsc", "name": "CPSC Enrollment", "description": "County-level enrollment", "years": list(range(2013, 2027)), "years_detail": [], "has_month": True, "key_columns": ["contract_id", "plan_id", "state", "county"], "join_keys": ["contract_id", "plan_id"]},
+                {"id": "enrollment", "name": "Monthly Enrollment", "description": "Contract-plan enrollment", "years": list(range(2007, 2027)), "years_detail": [], "has_month": True, "key_columns": ["contract_id", "plan_id", "enrollment"], "join_keys": ["contract_id", "plan_id"]},
+                {"id": "stars", "name": "Star Ratings", "description": "Quality ratings", "years": list(range(2008, 2027)), "years_detail": [], "has_month": False, "key_columns": ["contract_id", "overall_rating"], "join_keys": ["contract_id"]},
+                {"id": "risk_scores", "name": "Risk Scores", "description": "Risk adjustment data", "years": list(range(2006, 2025)), "years_detail": [], "has_month": False, "key_columns": ["contract_id", "risk_score_partc"], "join_keys": ["contract_id"]},
+                {"id": "snp", "name": "SNP Classification", "description": "Special Needs Plans", "years": list(range(2007, 2025)), "years_detail": [], "has_month": False, "key_columns": ["contract_id", "snp_type"], "join_keys": ["contract_id"]}
             ]
         }
 
 
 @app.get("/api/data-schema/{source_id}/{year}")
-async def get_data_schema_and_sample(source_id: str, year: int):
+async def get_data_schema_and_sample(source_id: str, year: int, month: Optional[int] = None):
     """
     Get schema and sample rows from a processed data source.
     Returns column names, types, and 5 sample rows for AI context.
+    Uses latest available month if not specified (Dec for past years, Feb for 2026).
     """
     try:
         from db import get_engine
         engine = get_engine()
         
-        # Map source_id to actual table
-        table_map = {
-            "cpsc": "fact_enrollment_all_years",
-            "enrollment": "fact_enrollment_national",
-            "stars": "summary_all_years",
-            "risk_scores": "fact_risk_scores_unified",
-            "snp": "fact_snp_historical"
+        # Map source_id to actual table and whether it has month
+        table_config = {
+            "cpsc": {"table": "fact_enrollment_all_years", "has_month": True},
+            "enrollment": {"table": "fact_enrollment_national", "has_month": True},
+            "stars": {"table": "summary_all_years", "has_month": False},
+            "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False},
+            "snp": {"table": "fact_snp_historical", "has_month": False}
         }
         
-        if source_id not in table_map:
+        if source_id not in table_config:
             raise HTTPException(status_code=400, detail=f"Unknown source: {source_id}")
         
-        table = table_map[source_id]
+        config = table_config[source_id]
+        table = config["table"]
+        has_month = config["has_month"]
         
         # Get schema
         schema_sql = f"DESCRIBE {table}"
-        schema_result = engine.execute(schema_sql)
-        columns = [{"name": row[0], "type": row[1]} for row in schema_result]
+        schema_result = engine.query(schema_sql)
+        columns = [{"name": row['column_name'], "type": row['column_type']} for _, row in schema_result.iterrows()]
+        
+        # Determine month filter for tables that have month
+        month_filter = ""
+        actual_month = None
+        if has_month:
+            if month:
+                actual_month = month
+            else:
+                # Get latest month for this year
+                month_sql = f"SELECT MAX(month) as m FROM {table} WHERE year = {year}"
+                month_result = engine.query(month_sql)
+                actual_month = int(month_result.iloc[0]['m']) if not month_result.empty else 12
+            month_filter = f" AND month = {actual_month}"
         
         # Get sample rows
-        sample_sql = f"SELECT * FROM {table} WHERE year = {year} LIMIT 5"
-        sample_result = engine.execute(sample_sql)
-        sample_rows = [dict(row) for row in sample_result]
+        sample_sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 5"
+        sample_result = engine.query(sample_sql)
+        sample_rows = sample_result.to_dict('records')
         
         # Get row count
-        count_sql = f"SELECT COUNT(*) as cnt FROM {table} WHERE year = {year}"
-        count_result = engine.execute(count_sql)
-        row_count = list(count_result)[0]['cnt']
+        count_sql = f"SELECT COUNT(*) as cnt FROM {table} WHERE year = {year}{month_filter}"
+        count_result = engine.query(count_sql)
+        row_count = int(count_result.iloc[0]['cnt'])
+        
+        month_label = ""
+        if has_month and actual_month:
+            month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            month_label = f" ({month_names[actual_month]} {year})"
         
         return {
             "source_id": source_id,
             "year": year,
+            "month": actual_month,
             "table": table,
             "schema": columns,
             "sample_rows": sample_rows,
             "total_rows": row_count,
-            "description": f"Schema and sample data from {table} for year {year}"
+            "description": f"Schema and sample data from {table} for {year}{month_label}"
         }
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get schema: {str(e)}")
 
 

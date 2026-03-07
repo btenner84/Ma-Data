@@ -209,37 +209,53 @@ class MAAgentV3:
             return None
     
     def _fetch_data_schema(self, source_id: str, year: int) -> Optional[str]:
-        """Fetch schema and sample data for a raw data source."""
+        """Fetch schema and sample data for a raw data source.
+        Uses latest available month (Dec for past years, Feb for 2026)."""
         from db import get_engine
         
-        table_map = {
-            "cpsc": "fact_enrollment_all_years",
-            "enrollment": "fact_enrollment_national",
-            "stars": "summary_all_years",
-            "risk_scores": "fact_risk_scores_unified",
-            "snp": "fact_snp_historical"
+        table_config = {
+            "cpsc": {"table": "fact_enrollment_all_years", "has_month": True},
+            "enrollment": {"table": "fact_enrollment_national", "has_month": True},
+            "stars": {"table": "summary_all_years", "has_month": False},
+            "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False},
+            "snp": {"table": "fact_snp_historical", "has_month": False}
         }
         
-        if source_id not in table_map:
+        if source_id not in table_config:
             return None
         
         try:
             engine = get_engine()
-            table = table_map[source_id]
+            config = table_config[source_id]
+            table = config["table"]
+            has_month = config["has_month"]
             
             # Get schema
             schema_sql = f"DESCRIBE {table}"
-            schema_result = engine.execute(schema_sql)
-            columns = [(row[0], row[1]) for row in schema_result]
+            schema_result = engine.query(schema_sql)
+            columns = [(row['column_name'], row['column_type']) for _, row in schema_result.iterrows()]
+            
+            # Build month filter for tables with monthly data
+            month_filter = ""
+            month_label = ""
+            month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            
+            if has_month:
+                # Get latest month for this year
+                month_sql = f"SELECT MAX(month) as m FROM {table} WHERE year = {year}"
+                month_result = engine.query(month_sql)
+                latest_month = int(month_result.iloc[0]['m']) if not month_result.empty else 12
+                month_filter = f" AND month = {latest_month}"
+                month_label = f" - {month_names[latest_month]}"
             
             # Get sample rows
-            sample_sql = f"SELECT * FROM {table} WHERE year = {year} LIMIT 5"
-            sample_result = engine.execute(sample_sql)
-            sample_rows = [dict(row) for row in sample_result]
+            sample_sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 5"
+            sample_result = engine.query(sample_sql)
+            sample_rows = sample_result.to_dict('records')
             
             # Format as context
             schema_text = f"""
-=== {source_id.upper()} DATA ({year}) ===
+=== {source_id.upper()} DATA ({year}{month_label}) ===
 Table: {table}
 
 COLUMNS:
@@ -252,11 +268,14 @@ KEY JOIN COLUMNS:
 - contract_id: Links to other tables by contract
 - plan_id: Links at plan level (where available)
 - year: Filter by year
+{f'- month: Filter by month (latest available: {month_names[latest_month]})' if has_month else ''}
 """
             return schema_text
             
         except Exception as e:
             print(f"Failed to fetch schema {source_id}/{year}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _get_system_prompt(self, document_context: Optional[List[Dict]] = None) -> str:

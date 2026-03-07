@@ -36,11 +36,18 @@ interface CMSDocument {
   size_mb: number;
 }
 
+interface YearDetail {
+  year: number;
+  month: number | null;
+}
+
 interface DataSource {
   id: string;
   name: string;
   description: string;
   years: number[];
+  years_detail?: YearDetail[];
+  has_month?: boolean;
   key_columns: string[];
   join_keys: string[];
 }
@@ -1607,25 +1614,38 @@ export function ChatV2() {
                         Key columns: {source.key_columns.slice(0, 4).join(', ')}
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {[...source.years].reverse().slice(0, 12).map((year) => {
-                          const isSelected = selectedDocs.some(d => d.type === source.id && d.year === year);
-                          return (
-                            <button
-                              key={year}
-                              onClick={() => isSelected 
-                                ? removeDocument(source.id, year)
-                                : addDocument(source.id, year, `${source.name} ${year}`, true)
-                              }
-                              className={`px-2 py-1 text-xs rounded border transition-all ${
-                                isSelected
-                                  ? 'bg-purple-100 border-purple-300 text-purple-700 dark:bg-purple-900 dark:border-purple-700 dark:text-purple-300'
-                                  : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
-                              }`}
-                            >
-                              {year}
-                            </button>
-                          );
-                        })}
+                        {(() => {
+                          const monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                          const yearsToShow = [...source.years].reverse().slice(0, 12);
+                          
+                          return yearsToShow.map((year) => {
+                            const isSelected = selectedDocs.some(d => d.type === source.id && d.year === year);
+                            const yearDetail = source.years_detail?.find(d => d.year === year);
+                            const monthLabel = source.has_month && yearDetail?.month 
+                              ? ` (${monthNames[yearDetail.month]})`
+                              : '';
+                            
+                            return (
+                              <button
+                                key={year}
+                                onClick={() => isSelected 
+                                  ? removeDocument(source.id, year)
+                                  : addDocument(source.id, year, `${source.name} ${year}${monthLabel}`, true)
+                                }
+                                className={`px-2 py-1 text-xs rounded border transition-all ${
+                                  isSelected
+                                    ? 'bg-purple-100 border-purple-300 text-purple-700 dark:bg-purple-900 dark:border-purple-700 dark:text-purple-300'
+                                    : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
+                                }`}
+                                title={source.has_month && yearDetail?.month 
+                                  ? `${monthNames[yearDetail.month]} ${year} data` 
+                                  : `${year} data`}
+                              >
+                                {year}{source.has_month && yearDetail?.month ? ` ${monthNames[yearDetail.month]}` : ''}
+                              </button>
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
                   ))}
