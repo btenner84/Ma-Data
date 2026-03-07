@@ -1167,55 +1167,64 @@ function DataLinkDownloads({ result }: { result: DataLinkResult }) {
     <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
       <div className="flex items-center gap-2 mb-3">
         <Database className="w-5 h-5 text-purple-600" />
-        <h4 className="font-semibold text-gray-900 dark:text-white">Data Linked Successfully</h4>
+        <h4 className="font-semibold text-gray-900 dark:text-white">Excel Export Ready</h4>
       </div>
       
-      {/* Join Logic */}
+      {/* Worksheets in workbook */}
       {result.join_logic && (
         <div className="mb-4 text-sm text-gray-600 dark:text-gray-300">
-          <p className="mb-1"><strong>Join Logic:</strong> {result.join_logic.explanation}</p>
-          <p className="text-xs text-gray-500">Keys used: {result.join_logic.join_keys_used.join(', ')}</p>
+          <p className="mb-2"><strong>Worksheets included:</strong></p>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {result.join_logic.sources_linked.map((source, i) => (
+              <span key={i} className="px-2 py-1 bg-white dark:bg-gray-800 rounded text-xs border border-gray-200 dark:border-gray-700">
+                {source}
+              </span>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            <strong>Linking tip:</strong> {result.join_logic.explanation}
+          </p>
         </div>
       )}
       
       {/* Summary */}
       {result.summary && (
         <div className="flex gap-4 mb-4 text-xs text-gray-500 dark:text-gray-400">
-          <span>{result.summary.sources_count} sources</span>
-          <span>{result.summary.total_source_rows.toLocaleString()} source rows</span>
+          <span>{result.summary.sources_count} worksheets</span>
           <span className="text-purple-600 dark:text-purple-400 font-medium">
-            {result.summary.combined_rows.toLocaleString()} combined rows
+            {result.summary.total_source_rows.toLocaleString()} total rows
           </span>
         </div>
       )}
       
-      {/* Download Buttons */}
+      {/* Download Button */}
       <div className="space-y-2">
-        {/* Individual Source Files */}
-        <div className="flex flex-wrap gap-2">
-          {result.source_files.map((file, i) => (
-            <button
-              key={i}
-              onClick={() => downloadExcelFromBase64(file.excel_base64, file.filename)}
-              className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 transition-colors text-sm"
-            >
-              <Download className="w-4 h-4 text-blue-500" />
-              <span className="text-gray-700 dark:text-gray-300">{file.display_name}</span>
-              <span className="text-xs text-gray-400">({file.row_count.toLocaleString()} rows)</span>
-            </button>
-          ))}
-        </div>
-        
-        {/* Combined File - Highlighted */}
+        {/* Main Workbook Download */}
         {result.combined_file && (
           <button
             onClick={() => downloadExcelFromBase64(result.combined_file!.excel_base64, result.combined_file!.filename)}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-lg font-medium transition-colors"
           >
             <Download className="w-5 h-5" />
-            <span>Download Combined Linked Data</span>
-            <span className="text-purple-200">({result.combined_file.row_count.toLocaleString()} rows)</span>
+            <span>Download Excel Workbook</span>
+            <span className="text-purple-200">({result.summary?.sources_count || 0} sheets)</span>
           </button>
+        )}
+        
+        {/* Individual files if any (for backward compat) */}
+        {result.source_files && result.source_files.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-2">
+            {result.source_files.map((file, i) => (
+              <button
+                key={i}
+                onClick={() => downloadExcelFromBase64(file.excel_base64, file.filename)}
+                className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 transition-colors text-sm"
+              >
+                <Download className="w-4 h-4 text-blue-500" />
+                <span className="text-gray-700 dark:text-gray-300">{file.display_name}</span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -1720,7 +1729,7 @@ export function ChatV2() {
                 <div className="space-y-4">
                   <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 mb-4">
                     <p className="text-sm text-purple-800 dark:text-purple-200">
-                      <strong>Data Linking:</strong> Select 2+ data sources and ask the AI to link them. Get downloadable Excel files with the raw data and combined results.
+                      <strong>Data Export:</strong> Select data files and ask for Excel export. Each file becomes a worksheet in one workbook - then use VLOOKUP/INDEX-MATCH to link them yourself.
                     </p>
                   </div>
                   
@@ -1790,9 +1799,9 @@ export function ChatV2() {
                   <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
                     <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Example Requests</h4>
                     <div className="space-y-2 text-sm text-gray-500 dark:text-gray-400">
-                      <p>• "Link these files and give me the combined Excel"</p>
-                      <p>• "Join enrollment with star ratings by contract"</p>
-                      <p>• "Combine these and calculate % in 5-star plans"</p>
+                      <p>• "Export these to Excel"</p>
+                      <p>• "Give me these files in one workbook"</p>
+                      <p>• "What columns are in these files and how do they link?"</p>
                     </div>
                   </div>
                 </div>
