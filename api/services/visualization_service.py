@@ -434,8 +434,21 @@ class ChartBuilder:
         if not metric:
             return self._error_spec("No numeric metric found for ranking", intent.title)
         
-        # AGGREGATE DATA: If multiple rows per entity, sum the metric
-        # This fixes the "duplicate label" bug
+        # For rankings, use ONLY the latest year's data (not sum of all years!)
+        # Check if data has a year column
+        has_year = 'year' in columns or 'star_year' in columns
+        year_col = 'year' if 'year' in columns else 'star_year' if 'star_year' in columns else None
+        
+        if has_year and year_col and len(data) > 0:
+            # Find the latest year in the data
+            years = [row.get(year_col) for row in data if row.get(year_col) is not None]
+            if years:
+                latest_year = max(years)
+                # Filter to only latest year
+                data = [row for row in data if row.get(year_col) == latest_year]
+                print(f"Ranking chart: Using latest year {latest_year}, {len(data)} rows")
+        
+        # Now dedupe by dimension (in case of duplicates within same year)
         aggregated = {}
         for row in data:
             key = row.get(dimension)
