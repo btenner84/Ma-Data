@@ -187,7 +187,11 @@ async def ask_agent(request: AskRequest):
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"ERROR in /ask endpoint: {str(e)}")
+        print(f"Full traceback:\n{error_trace}")
+        raise HTTPException(status_code=500, detail=f"Request failed: {str(e)}")
 
 
 @router.post("/ask/stream")
