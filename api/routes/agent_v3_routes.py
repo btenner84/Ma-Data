@@ -29,10 +29,11 @@ router = APIRouter(prefix="/api/v3/agent", tags=["agent-v3"])
 # =============================================================================
 
 class DocumentContext(BaseModel):
-    """A selected document for context."""
-    type: str  # rate_notice_advance, rate_notice_final, tech_notes_stars
+    """A selected document or data source for context."""
+    type: str  # rate_notice_advance, rate_notice_final, tech_notes_stars, cpsc, enrollment, stars, etc.
     year: int
     name: str
+    isDataSource: bool = False  # True for raw data sources (cpsc, enrollment, stars, etc.)
 
 
 class AskRequest(BaseModel):
@@ -88,6 +89,20 @@ class TableResponse(BaseModel):
     columns: Optional[List[str]] = None
 
 
+class DownloadFile(BaseModel):
+    """A downloadable file."""
+    filename: str
+    display_name: str
+    excel_base64: str
+    row_count: int = 0
+
+class DataLinkResult(BaseModel):
+    """Result from data linking operation."""
+    source_files: List[DownloadFile] = []
+    combined_file: Optional[DownloadFile] = None
+    join_logic: Optional[Dict] = None
+    summary: Optional[Dict] = None
+
 class AskResponse(BaseModel):
     """Full response from agent."""
     status: str
@@ -98,6 +113,7 @@ class AskResponse(BaseModel):
     sources: List[str] = []
     confidence: str = "high"
     error: Optional[str] = None
+    data_link_result: Optional[DataLinkResult] = None  # Excel downloads when linking data
 
 
 class ToolInfo(BaseModel):
@@ -117,6 +133,46 @@ class ToolsResponse(BaseModel):
 # ENDPOINTS
 # =============================================================================
 
+def _should_link_data(question: str) -> bool:
+    """Check if user is asking to link/combine data."""
+    link_keywords = ['link', 'join', 'combine', 'merge', 'connect', 'excel', 'download', 'export']
+    q_lower = question.lower()
+    return any(kw in q_lower for kw in link_keywords)
+
+
+async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
+    """Call the data linking endpoint and return Excel files."""
+    import httpx
+    
+    try:
+        # Prepare request for data linking
+        sources = [
+            {"source_id": ds["type"], "year": ds["year"]}
+            for ds in data_sources
+        ]
+        
+        # Call the data-link endpoint internally
+        from api.main import link_data_sources
+        from pydantic import BaseModel
+        
+        class DataSourceSelection(BaseModel):
+            source_id: str
+            year: int
+        
+        class LinkDataRequest(BaseModel):
+            sources: List[DataSourceSelection]
+        
+        request = LinkDataRequest(sources=[DataSourceSelection(**s) for s in sources])
+        result = await link_data_sources(request)
+        
+        return result
+        
+    except Exception as e:
+        print(f"Data linking failed: {e}")
+        traceback.print_exc()
+        return None
+
+
 @router.post("/ask", response_model=AskResponse)
 async def ask_agent(request: AskRequest):
     """
@@ -127,17 +183,21 @@ async def ask_agent(request: AskRequest):
     - Charts and tables
     - Full thinking process (if include_thinking=True)
     - Sources and confidence
+    - Data link result with Excel downloads (when linking data sources)
     """
     try:
         agent = get_agent_v3()
         
         # Convert document_context to dict format for agent
         doc_context = None
+        data_sources = []
         if request.document_context:
             doc_context = [
-                {"type": d.type, "year": d.year, "name": d.name}
+                {"type": d.type, "year": d.year, "name": d.name, "isDataSource": d.isDataSource}
                 for d in request.document_context
             ]
+            # Extract just the data sources
+            data_sources = [d for d in doc_context if d.get("isDataSource", False)]
         
         result = await agent.answer(
             request.question, 
@@ -146,6 +206,22 @@ async def ask_agent(request: AskRequest):
         )
         
         response_dict = result.to_dict()
+        
+        # Check if user wants to link data and has 2+ data sources selected
+        data_link_result = None
+        if len(data_sources) >= 2 and _should_link_data(request.question):
+            link_result = await _perform_data_linking(data_sources)
+            if link_result and link_result.get("success"):
+                data_link_result = {
+                    "source_files": link_result.get("source_files", []),
+                    "combined_file": link_result.get("combined_file"),
+                    "join_logic": link_result.get("join_logic"),
+                    "summary": link_result.get("summary")
+                }
+                # Enhance response text to mention downloads
+                response_dict["response"] += f"\n\n**Downloads Ready:** I've linked your {len(data_sources)} data sources. You can download the individual files or the combined linked Excel file below."
+        
+        response_dict["data_link_result"] = data_link_result
         
         # Remove thinking if not requested
         if not request.include_thinking:

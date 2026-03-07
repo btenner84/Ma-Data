@@ -323,21 +323,25 @@ DOCUMENT USAGE GUIDELINES:
             
             if data_contents:
                 data_context_section = f"""
-RAW DATA CONTEXT (TUTORIAL MODE):
-The user wants to learn how to work with raw CMS data. They have selected the following data sources:
+RAW DATA CONTEXT (DATA LINKING MODE):
+The user has selected raw CMS data sources to link/combine. They have selected:
 {''.join(data_contents)}
 
-TUTORIAL MODE GUIDELINES:
-- Explain step-by-step how to join tables, calculate metrics, and analyze the data
-- Show actual SQL queries using the real column names from the schemas above
-- Explain which columns to use for joins (contract_id, plan_id, year)
-- Use the sample data to demonstrate calculations
-- Be specific about data types and potential gotchas
-- When showing how to calculate % of enrollment in X-star plans:
-  1. Explain the join between enrollment and star ratings tables
-  2. Show the filtering logic for star ratings
-  3. Demonstrate the aggregation/calculation
-- Format SQL queries in code blocks
+DATA LINKING CAPABILITIES:
+When the user asks to "link", "join", "combine", or "merge" the selected data sources:
+1. The system can generate downloadable Excel files with:
+   - Individual source files (each data source as separate Excel)
+   - Combined/linked file (all sources joined together)
+2. Explain the join logic used (which columns link the tables)
+3. Show what the combined data looks like
+
+RESPONSE GUIDELINES:
+- If user asks to link/combine the data, explain how the join works
+- Mention they can download: individual files + combined linked file
+- Explain the join keys used (contract_id, plan_id, year)
+- Describe what columns are in the combined output
+- If they ask for analysis on the linked data, explain how to calculate metrics
+- Format any SQL examples in code blocks
 """
         
         return f"""You are an expert Medicare Advantage data analyst with access to comprehensive MA data.

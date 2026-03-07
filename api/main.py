@@ -6315,6 +6315,203 @@ async def get_data_schema_and_sample(source_id: str, year: int, month: Optional[
 
 
 # ================================================================
+# DATA LINKING API - Link multiple data sources and export to Excel
+# ================================================================
+
+from pydantic import BaseModel
+from typing import List
+
+class DataSourceSelection(BaseModel):
+    source_id: str
+    year: int
+
+class LinkDataRequest(BaseModel):
+    sources: List[DataSourceSelection]
+    
+@app.post("/api/data-link")
+async def link_data_sources(request: LinkDataRequest):
+    """
+    Link multiple data sources and return Excel files.
+    Returns: individual source files + combined linked file + join logic used.
+    """
+    import io
+    import pandas as pd
+    from openpyxl import Workbook
+    from openpyxl.utils.dataframe import dataframe_to_rows
+    import base64
+    
+    if len(request.sources) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 data sources to link")
+    
+    try:
+        from db import get_engine
+        engine = get_engine()
+        
+        # Table config with join keys
+        table_config = {
+            "cpsc": {
+                "table": "fact_enrollment_all_years", 
+                "has_month": True,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "CPSC Enrollment"
+            },
+            "enrollment": {
+                "table": "fact_enrollment_national", 
+                "has_month": True,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "Monthly Enrollment"
+            },
+            "stars": {
+                "table": "summary_all_years", 
+                "has_month": False,
+                "join_keys": ["contract_id", "year"],
+                "display_name": "Star Ratings"
+            },
+            "risk_scores": {
+                "table": "fact_risk_scores_unified", 
+                "has_month": False,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "Risk Scores"
+            },
+            "snp": {
+                "table": "fact_snp_historical", 
+                "has_month": False,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "SNP Classification"
+            }
+        }
+        
+        # Fetch each data source
+        dataframes = {}
+        source_info = []
+        
+        for src in request.sources:
+            if src.source_id not in table_config:
+                raise HTTPException(status_code=400, detail=f"Unknown source: {src.source_id}")
+            
+            config = table_config[src.source_id]
+            table = config["table"]
+            
+            # Build query with month filter if applicable
+            month_filter = ""
+            if config["has_month"]:
+                month_sql = f"SELECT MAX(month) as m FROM {table} WHERE year = {src.year}"
+                month_result = engine.query(month_sql)
+                latest_month = int(month_result.iloc[0]['m']) if not month_result.empty else 12
+                month_filter = f" AND month = {latest_month}"
+            
+            # Fetch data (limit to prevent huge downloads)
+            sql = f"SELECT * FROM {table} WHERE year = {src.year}{month_filter} LIMIT 50000"
+            df = engine.query(sql)
+            
+            key = f"{src.source_id}_{src.year}"
+            dataframes[key] = df
+            source_info.append({
+                "key": key,
+                "source_id": src.source_id,
+                "year": src.year,
+                "display_name": config["display_name"],
+                "join_keys": config["join_keys"],
+                "row_count": len(df),
+                "columns": list(df.columns)
+            })
+        
+        # Determine join keys (find common keys between sources)
+        all_join_keys = [set(s["join_keys"]) for s in source_info]
+        common_keys = all_join_keys[0]
+        for keys in all_join_keys[1:]:
+            common_keys = common_keys.intersection(keys)
+        
+        join_keys = list(common_keys)
+        if not join_keys:
+            join_keys = ["contract_id"]  # Fallback to contract_id
+        
+        # Perform the join
+        keys = list(dataframes.keys())
+        combined_df = dataframes[keys[0]].copy()
+        
+        # Add suffix to non-key columns
+        suffix_map = {keys[0]: f"_{source_info[0]['source_id']}"}
+        
+        for i, key in enumerate(keys[1:], 1):
+            right_df = dataframes[key]
+            suffix = f"_{source_info[i]['source_id']}"
+            suffix_map[key] = suffix
+            
+            # Rename columns to avoid conflicts (except join keys)
+            left_cols = {c: f"{c}{suffix_map[keys[0]]}" for c in combined_df.columns if c not in join_keys}
+            right_cols = {c: f"{c}{suffix}" for c in right_df.columns if c not in join_keys}
+            
+            if i == 1:  # First join, rename left side too
+                combined_df = combined_df.rename(columns=left_cols)
+            
+            right_df_renamed = right_df.rename(columns=right_cols)
+            
+            # Perform outer join
+            combined_df = pd.merge(
+                combined_df, 
+                right_df_renamed, 
+                on=join_keys, 
+                how='outer',
+                suffixes=('', '_dup')
+            )
+        
+        # Create Excel files as base64
+        def df_to_excel_base64(df, sheet_name="Data"):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+            output.seek(0)
+            return base64.b64encode(output.read()).decode('utf-8')
+        
+        # Generate individual source files
+        source_files = []
+        for key, df in dataframes.items():
+            info = next(s for s in source_info if s["key"] == key)
+            source_files.append({
+                "filename": f"{info['source_id']}_{info['year']}.xlsx",
+                "display_name": f"{info['display_name']} ({info['year']})",
+                "row_count": len(df),
+                "excel_base64": df_to_excel_base64(df, f"{info['source_id']}_{info['year']}")
+            })
+        
+        # Generate combined file
+        combined_file = {
+            "filename": "combined_linked_data.xlsx",
+            "display_name": "Combined Linked Data",
+            "row_count": len(combined_df),
+            "excel_base64": df_to_excel_base64(combined_df, "Combined")
+        }
+        
+        # Build join logic explanation
+        source_names = [s["display_name"] for s in source_info]
+        join_logic = {
+            "sources_linked": source_names,
+            "join_keys_used": join_keys,
+            "join_type": "OUTER JOIN (keeps all records from both sources)",
+            "explanation": f"Linked {' + '.join(source_names)} using columns: {', '.join(join_keys)}",
+            "sql_equivalent": f"SELECT * FROM {source_info[0]['source_id']} OUTER JOIN {source_info[1]['source_id']} ON {' AND '.join([f'a.{k} = b.{k}' for k in join_keys])}"
+        }
+        
+        return {
+            "success": True,
+            "source_files": source_files,
+            "combined_file": combined_file,
+            "join_logic": join_logic,
+            "summary": {
+                "sources_count": len(request.sources),
+                "total_source_rows": sum(s["row_count"] for s in source_info),
+                "combined_rows": len(combined_df)
+            }
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to link data: {str(e)}")
+
+
+# ================================================================
 # CMS DOCUMENTS API (Technical Notes, Rate Notices, etc.)
 # ================================================================
 
