@@ -142,33 +142,175 @@ def _should_link_data(question: str) -> bool:
 
 async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
     """Call the data linking endpoint and return Excel files."""
-    import httpx
+    import io
+    import pandas as pd
+    import base64
+    
+    print(f"[DATA LINK] Starting data linking for {len(data_sources)} sources: {data_sources}")
     
     try:
-        # Prepare request for data linking
-        sources = [
-            {"source_id": ds["type"], "year": ds["year"]}
-            for ds in data_sources
-        ]
+        from db import get_engine
+        engine = get_engine()
         
-        # Call the data-link endpoint internally
-        from api.main import link_data_sources
-        from pydantic import BaseModel
+        # Table config with join keys
+        table_config = {
+            "cpsc": {
+                "table": "fact_enrollment_all_years", 
+                "has_month": True,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "CPSC Enrollment"
+            },
+            "enrollment": {
+                "table": "fact_enrollment_national", 
+                "has_month": True,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "Monthly Enrollment"
+            },
+            "stars": {
+                "table": "summary_all_years", 
+                "has_month": False,
+                "join_keys": ["contract_id", "year"],
+                "display_name": "Star Ratings"
+            },
+            "risk_scores": {
+                "table": "fact_risk_scores_unified", 
+                "has_month": False,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "Risk Scores"
+            },
+            "snp": {
+                "table": "fact_snp_historical", 
+                "has_month": False,
+                "join_keys": ["contract_id", "plan_id", "year"],
+                "display_name": "SNP Classification"
+            }
+        }
         
-        class DataSourceSelection(BaseModel):
-            source_id: str
-            year: int
+        # Fetch each data source
+        dataframes = {}
+        source_info = []
         
-        class LinkDataRequest(BaseModel):
-            sources: List[DataSourceSelection]
+        for ds in data_sources:
+            src_id = ds["type"]
+            year = ds["year"]
+            
+            if src_id not in table_config:
+                print(f"[DATA LINK] Unknown source: {src_id}")
+                continue
+            
+            config = table_config[src_id]
+            table = config["table"]
+            
+            # Build query with month filter if applicable
+            month_filter = ""
+            if config["has_month"]:
+                month_sql = f"SELECT MAX(month) as m FROM {table} WHERE year = {year}"
+                month_result = engine.query(month_sql)
+                latest_month = int(month_result.iloc[0]['m']) if not month_result.empty else 12
+                month_filter = f" AND month = {latest_month}"
+            
+            # Fetch data (limit to prevent huge downloads)
+            sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 50000"
+            print(f"[DATA LINK] Fetching {src_id}: {sql[:100]}...")
+            df = engine.query(sql)
+            print(f"[DATA LINK] Got {len(df)} rows for {src_id}")
+            
+            key = f"{src_id}_{year}"
+            dataframes[key] = df
+            source_info.append({
+                "key": key,
+                "source_id": src_id,
+                "year": year,
+                "display_name": config["display_name"],
+                "join_keys": config["join_keys"],
+                "row_count": len(df),
+                "columns": list(df.columns)
+            })
         
-        request = LinkDataRequest(sources=[DataSourceSelection(**s) for s in sources])
-        result = await link_data_sources(request)
+        if len(dataframes) < 2:
+            print(f"[DATA LINK] Not enough data sources fetched: {len(dataframes)}")
+            return None
         
-        return result
+        # Determine join keys (find common keys between sources)
+        all_join_keys = [set(s["join_keys"]) for s in source_info]
+        common_keys = all_join_keys[0]
+        for keys in all_join_keys[1:]:
+            common_keys = common_keys.intersection(keys)
+        
+        join_keys = list(common_keys) if common_keys else ["contract_id"]
+        print(f"[DATA LINK] Using join keys: {join_keys}")
+        
+        # Perform the join
+        keys = list(dataframes.keys())
+        combined_df = dataframes[keys[0]].copy()
+        
+        for i, key in enumerate(keys[1:], 1):
+            right_df = dataframes[key]
+            suffix = f"_{source_info[i]['source_id']}"
+            
+            # Perform outer join
+            combined_df = pd.merge(
+                combined_df, 
+                right_df, 
+                on=join_keys, 
+                how='outer',
+                suffixes=('', suffix)
+            )
+        
+        print(f"[DATA LINK] Combined: {len(combined_df)} rows")
+        
+        # Create Excel files as base64
+        def df_to_excel_base64(df, sheet_name="Data"):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+            output.seek(0)
+            return base64.b64encode(output.read()).decode('utf-8')
+        
+        # Generate individual source files
+        source_files = []
+        for key, df in dataframes.items():
+            info = next(s for s in source_info if s["key"] == key)
+            source_files.append({
+                "filename": f"{info['source_id']}_{info['year']}.xlsx",
+                "display_name": f"{info['display_name']} ({info['year']})",
+                "row_count": len(df),
+                "excel_base64": df_to_excel_base64(df, f"{info['source_id']}_{info['year']}")
+            })
+        
+        # Generate combined file
+        combined_file = {
+            "filename": "combined_linked_data.xlsx",
+            "display_name": "Combined Linked Data",
+            "row_count": len(combined_df),
+            "excel_base64": df_to_excel_base64(combined_df, "Combined")
+        }
+        
+        # Build join logic explanation
+        source_names = [s["display_name"] for s in source_info]
+        join_logic = {
+            "sources_linked": source_names,
+            "join_keys_used": join_keys,
+            "join_type": "OUTER JOIN (keeps all records from both sources)",
+            "explanation": f"Linked {' + '.join(source_names)} using columns: {', '.join(join_keys)}",
+        }
+        
+        print(f"[DATA LINK] Success! Generated {len(source_files)} source files + combined file")
+        
+        return {
+            "success": True,
+            "source_files": source_files,
+            "combined_file": combined_file,
+            "join_logic": join_logic,
+            "summary": {
+                "sources_count": len(data_sources),
+                "total_source_rows": sum(s["row_count"] for s in source_info),
+                "combined_rows": len(combined_df)
+            }
+        }
         
     except Exception as e:
-        print(f"Data linking failed: {e}")
+        print(f"[DATA LINK] Failed: {e}")
         traceback.print_exc()
         return None
 
