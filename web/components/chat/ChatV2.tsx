@@ -1607,7 +1607,7 @@ export function ChatV2() {
                         Key columns: {source.key_columns.slice(0, 4).join(', ')}
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {source.years.slice(-8).reverse().map((year) => {
+                        {[...source.years].reverse().slice(0, 12).map((year) => {
                           const isSelected = selectedDocs.some(d => d.type === source.id && d.year === year);
                           return (
                             <button

@@ -6121,22 +6121,27 @@ async def list_available_data_schemas():
     """
     List all raw data sources available for schema extraction.
     Used by chat to let users select data sources for tutorials.
+    Dynamically checks what years are actually in the database.
     """
-    return {
-        "data_sources": [
+    try:
+        from db import get_engine
+        engine = get_engine()
+        
+        # Define sources and their tables
+        sources_config = [
             {
                 "id": "cpsc",
                 "name": "CPSC Enrollment",
                 "description": "County-level enrollment with geographic detail",
-                "years": list(range(2013, 2026)),
+                "table": "fact_enrollment_all_years",
                 "key_columns": ["contract_id", "plan_id", "state", "county", "enrollment"],
                 "join_keys": ["contract_id", "plan_id"]
             },
             {
                 "id": "enrollment",
-                "name": "Monthly Enrollment",
+                "name": "Monthly Enrollment", 
                 "description": "Contract-plan level enrollment",
-                "years": list(range(2007, 2026)),
+                "table": "fact_enrollment_national",
                 "key_columns": ["contract_id", "plan_id", "enrollment", "parent_org"],
                 "join_keys": ["contract_id", "plan_id"]
             },
@@ -6144,7 +6149,7 @@ async def list_available_data_schemas():
                 "id": "stars",
                 "name": "Star Ratings",
                 "description": "Quality ratings and measures",
-                "years": list(range(2008, 2027)),
+                "table": "summary_all_years",
                 "key_columns": ["contract_id", "overall_rating", "part_c_rating", "part_d_rating"],
                 "join_keys": ["contract_id"]
             },
@@ -6152,7 +6157,7 @@ async def list_available_data_schemas():
                 "id": "risk_scores",
                 "name": "Risk Scores",
                 "description": "Plan risk adjustment data",
-                "years": list(range(2006, 2025)),
+                "table": "fact_risk_scores_unified",
                 "key_columns": ["contract_id", "plan_id", "risk_score_partc", "risk_score_partd"],
                 "join_keys": ["contract_id", "plan_id"]
             },
@@ -6160,12 +6165,53 @@ async def list_available_data_schemas():
                 "id": "snp",
                 "name": "SNP Classification",
                 "description": "Special Needs Plan types",
-                "years": list(range(2007, 2025)),
+                "table": "fact_snp_historical",
                 "key_columns": ["contract_id", "plan_id", "snp_type", "enrollment"],
                 "join_keys": ["contract_id", "plan_id"]
             }
         ]
-    }
+        
+        data_sources = []
+        for config in sources_config:
+            try:
+                # Get available years from actual data
+                years_sql = f"SELECT DISTINCT year FROM {config['table']} ORDER BY year"
+                result = engine.execute(years_sql)
+                years = [row[0] for row in result]
+                
+                data_sources.append({
+                    "id": config["id"],
+                    "name": config["name"],
+                    "description": config["description"],
+                    "years": years,
+                    "key_columns": config["key_columns"],
+                    "join_keys": config["join_keys"]
+                })
+            except Exception as e:
+                print(f"Error getting years for {config['id']}: {e}")
+                # Fallback to empty
+                data_sources.append({
+                    "id": config["id"],
+                    "name": config["name"],
+                    "description": config["description"],
+                    "years": [],
+                    "key_columns": config["key_columns"],
+                    "join_keys": config["join_keys"]
+                })
+        
+        return {"data_sources": data_sources}
+        
+    except Exception as e:
+        # Fallback to static if DB fails
+        return {
+            "data_sources": [
+                {"id": "cpsc", "name": "CPSC Enrollment", "description": "County-level enrollment", "years": list(range(2013, 2026)), "key_columns": ["contract_id", "plan_id", "state", "county"], "join_keys": ["contract_id", "plan_id"]},
+                {"id": "enrollment", "name": "Monthly Enrollment", "description": "Contract-plan enrollment", "years": list(range(2007, 2026)), "key_columns": ["contract_id", "plan_id", "enrollment"], "join_keys": ["contract_id", "plan_id"]},
+                {"id": "stars", "name": "Star Ratings", "description": "Quality ratings", "years": list(range(2008, 2027)), "key_columns": ["contract_id", "overall_rating"], "join_keys": ["contract_id"]},
+                {"id": "risk_scores", "name": "Risk Scores", "description": "Risk adjustment data", "years": list(range(2006, 2025)), "key_columns": ["contract_id", "risk_score_partc"], "join_keys": ["contract_id"]},
+                {"id": "snp", "name": "SNP Classification", "description": "Special Needs Plans", "years": list(range(2007, 2025)), "key_columns": ["contract_id", "snp_type"], "join_keys": ["contract_id"]}
+            ]
+        }
 
 
 @app.get("/api/data-schema/{source_id}/{year}")
