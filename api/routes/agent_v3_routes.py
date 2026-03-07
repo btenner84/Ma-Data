@@ -209,8 +209,8 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
                 latest_month = int(month_result.iloc[0]['m']) if not month_result.empty else 12
                 month_filter = f" AND month = {latest_month}"
             
-            # Fetch data (limit to prevent huge downloads)
-            sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 50000"
+            # Fetch data (limit to prevent memory issues - 10k rows is ~2-5MB Excel)
+            sql = f"SELECT * FROM {table} WHERE year = {year}{month_filter} LIMIT 10000"
             print(f"[DATA LINK] Fetching {src_id}: {sql[:100]}...")
             df = engine.query(sql)
             print(f"[DATA LINK] Got {len(df)} rows for {src_id}")
@@ -312,7 +312,7 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
     except Exception as e:
         print(f"[DATA LINK] Failed: {e}")
         traceback.print_exc()
-        return None
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -351,17 +351,36 @@ async def ask_agent(request: AskRequest):
         
         # Check if user wants to link data and has 2+ data sources selected
         data_link_result = None
+        link_error = None
+        
+        print(f"[ASK] Data sources: {len(data_sources)}, Question contains link keywords: {_should_link_data(request.question)}")
+        
         if len(data_sources) >= 2 and _should_link_data(request.question):
-            link_result = await _perform_data_linking(data_sources)
-            if link_result and link_result.get("success"):
-                data_link_result = {
-                    "source_files": link_result.get("source_files", []),
-                    "combined_file": link_result.get("combined_file"),
-                    "join_logic": link_result.get("join_logic"),
-                    "summary": link_result.get("summary")
-                }
-                # Enhance response text to mention downloads
-                response_dict["response"] += f"\n\n**Downloads Ready:** I've linked your {len(data_sources)} data sources. You can download the individual files or the combined linked Excel file below."
+            print(f"[ASK] Attempting to link {len(data_sources)} data sources...")
+            try:
+                link_result = await _perform_data_linking(data_sources)
+                print(f"[ASK] Link result: {link_result is not None}, success: {link_result.get('success') if link_result else 'N/A'}")
+                
+                if link_result and link_result.get("success"):
+                    data_link_result = {
+                        "source_files": link_result.get("source_files", []),
+                        "combined_file": link_result.get("combined_file"),
+                        "join_logic": link_result.get("join_logic"),
+                        "summary": link_result.get("summary")
+                    }
+                    # Enhance response text to mention downloads
+                    response_dict["response"] += f"\n\n**Downloads Ready:** I've linked your {len(data_sources)} data sources. You can download the individual files or the combined linked Excel file below."
+                else:
+                    link_error = link_result.get("error") if link_result else "Unknown error"
+                    response_dict["response"] += f"\n\n**Note:** Data linking encountered an issue: {link_error}"
+            except Exception as e:
+                link_error = str(e)
+                print(f"[ASK] Link error: {e}")
+                response_dict["response"] += f"\n\n**Note:** Could not generate Excel files: {link_error}"
+        elif len(data_sources) >= 2:
+            print(f"[ASK] Data sources selected but question doesn't seem to ask for linking")
+        elif _should_link_data(request.question):
+            print(f"[ASK] Question asks for linking but not enough data sources selected ({len(data_sources)})")
         
         response_dict["data_link_result"] = data_link_result
         
