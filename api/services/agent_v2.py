@@ -1276,10 +1276,13 @@ ORDER BY m.year, ms.domain
         
         # Record thought: Data assessment
         data_summary = self._summarize_data_sources(data)
-        total_rows = sum(
-            len(v.get("data", {}).get("rows", [])) if isinstance(v.get("data"), dict) else 0
-            for v in data.values()
-        )
+        try:
+            total_rows = sum(
+                len(v.get("data", {}).get("rows", [])) if isinstance(v, dict) and isinstance(v.get("data"), dict) else 0
+                for v in data.values()
+            )
+        except Exception:
+            total_rows = 0
         
         self.current_audit.add_thought(
             step="data_assessment",
