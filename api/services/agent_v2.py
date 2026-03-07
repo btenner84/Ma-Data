@@ -241,10 +241,27 @@ class ChartSpec:
 
 PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS to comprehensive MA data.
 
+=== CRITICAL: TABLE SELECTION GUIDE ===
+
+**FOR MONTHLY ENROLLMENT DATA (including D-SNP monthly):**
+→ USE: fact_enrollment_all_years (has year, month, snp_type columns)
+→ NOT: fact_snp or fact_snp_historical (yearly only!)
+
+**FOR D-SNP/C-SNP/I-SNP MONTHLY CHANGES:**
+→ USE: fact_enrollment_all_years WHERE snp_type = 'D-SNP'
+→ Data available: Jan 2024 through Feb 2026, monthly
+
+**FOR STAR RATINGS WITH ENROLLMENT:**
+→ USE: stars_enrollment_unified (has enrollment already joined!)
+
+**FOR YEARLY SNP SUMMARY:**
+→ USE: fact_snp or fact_snp_historical
+
 === YOU HAVE ACCESS TO ===
 
-**STRUCTURED DATA (SQL Queryable - 2013-2026):**
-- Enrollment by contract, plan, parent organization, state
+**STRUCTURED DATA (SQL Queryable - 2013-2026, Monthly 2024-2026):**
+- Enrollment by contract, plan, parent organization, state - MONTHLY granularity
+- D-SNP, C-SNP, I-SNP enrollment by payer - MONTHLY from 2024
 - Star Ratings: overall ratings + 40+ individual measures
 - Risk Scores by contract
 - USPCC rates, growth factors, HCC coefficients
@@ -293,9 +310,10 @@ PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS t
   * Use to see measure weights and which domain they belong to
 
 **SNP (SPECIAL NEEDS PLAN) TABLES:**
-- fact_snp: year, parent_org, snp_type (D-SNP/C-SNP/I-SNP), enrollment, contract_count
-- fact_snp_historical: year, parent_org, snp_type, enrollment (longer history)
-  * Use for D-SNP growth analysis, dual eligible trends
+- fact_snp: year, parent_org, snp_type (D-SNP/C-SNP/I-SNP), enrollment (YEARLY only!)
+- fact_snp_historical: year, parent_org, snp_type, enrollment (YEARLY only, longer history)
+  * IMPORTANT: For MONTHLY D-SNP data, use fact_enrollment_all_years with snp_type filter!
+  * fact_enrollment_all_years has snp_type column: 'D-SNP', 'C-SNP', 'I-SNP', 'Non-SNP', or NULL
 
 **DISENROLLMENT TABLES:**
 - disenrollment_all_years: year, contract_id, parent_organization, disenrollment_count, disenrollment_rate
@@ -377,7 +395,7 @@ WHERE parent_org IN ('Humana', 'UnitedHealth Group', 'CVS Health')
 GROUP BY star_year, parent_org ORDER BY parent_org, star_year
 ```
 
-**D-SNP Growth by Parent Organization (Yearly):**
+**D-SNP Growth by Parent Organization (Yearly - use fact_snp):**
 ```sql
 SELECT year, parent_org, snp_type, enrollment
 FROM fact_snp_historical
@@ -385,62 +403,60 @@ WHERE snp_type = 'D-SNP'
 ORDER BY parent_org, year
 ```
 
-**MONTHLY D-SNP Enrollment Change (e.g., Dec 2025 to Feb 2026):**
-```sql
-WITH monthly AS (
-  SELECT 
-    year, month, parent_org,
-    SUM(enrollment) as enrollment
-  FROM fact_enrollment_all_years
-  WHERE snp_type = 'D-SNP'
-  AND ((year = 2025 AND month = 12) OR (year = 2026 AND month IN (1, 2)))
-  GROUP BY year, month, parent_org
-),
-pivoted AS (
-  SELECT 
-    parent_org,
-    MAX(CASE WHEN year = 2025 AND month = 12 THEN enrollment END) as dec_2025,
-    MAX(CASE WHEN year = 2026 AND month = 1 THEN enrollment END) as jan_2026,
-    MAX(CASE WHEN year = 2026 AND month = 2 THEN enrollment END) as feb_2026
-  FROM monthly
-  GROUP BY parent_org
-)
-SELECT 
-  parent_org,
-  dec_2025,
-  jan_2026,
-  feb_2026,
-  feb_2026 - dec_2025 as net_change,
-  ROUND(100.0 * (feb_2026 - dec_2025) / NULLIF(dec_2025, 0), 1) as pct_change
-FROM pivoted
-WHERE dec_2025 > 10000 OR feb_2026 > 10000  -- Filter to significant payers
-ORDER BY net_change DESC
-```
+=== MONTHLY D-SNP QUERIES (CRITICAL - use fact_enrollment_all_years!) ===
 
-**Top D-SNP Gainers/Losers (Month-over-Month):**
+**D-SNP Gainers/Losers Dec 2025 to Feb 2026 (THE MAIN D-SNP MONTHLY QUERY):**
 ```sql
-WITH curr AS (
-  SELECT parent_org, SUM(enrollment) as enrollment
-  FROM fact_enrollment_all_years
-  WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2
-  GROUP BY parent_org
-),
-prev AS (
-  SELECT parent_org, SUM(enrollment) as enrollment
+WITH dec_2025 AS (
+  SELECT parent_org, SUM(enrollment) as dec_enrollment
   FROM fact_enrollment_all_years
   WHERE snp_type = 'D-SNP' AND year = 2025 AND month = 12
   GROUP BY parent_org
+),
+feb_2026 AS (
+  SELECT parent_org, SUM(enrollment) as feb_enrollment
+  FROM fact_enrollment_all_years
+  WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2
+  GROUP BY parent_org
 )
 SELECT 
-  COALESCE(c.parent_org, p.parent_org) as parent_org,
-  p.enrollment as dec_2025,
-  c.enrollment as feb_2026,
-  c.enrollment - p.enrollment as change,
-  ROUND(100.0 * (c.enrollment - p.enrollment) / NULLIF(p.enrollment, 0), 1) as pct_change
-FROM curr c
-FULL OUTER JOIN prev p ON c.parent_org = p.parent_org
-WHERE COALESCE(p.enrollment, 0) > 5000 OR COALESCE(c.enrollment, 0) > 5000
-ORDER BY change DESC
+  COALESCE(f.parent_org, d.parent_org) as parent_org,
+  COALESCE(d.dec_enrollment, 0) as dec_2025,
+  COALESCE(f.feb_enrollment, 0) as feb_2026,
+  COALESCE(f.feb_enrollment, 0) - COALESCE(d.dec_enrollment, 0) as net_change,
+  ROUND(100.0 * (COALESCE(f.feb_enrollment, 0) - COALESCE(d.dec_enrollment, 0)) / 
+        NULLIF(d.dec_enrollment, 0), 1) as pct_change
+FROM feb_2026 f
+FULL OUTER JOIN dec_2025 d ON f.parent_org = d.parent_org
+WHERE COALESCE(d.dec_enrollment, 0) > 10000 OR COALESCE(f.feb_enrollment, 0) > 10000
+ORDER BY net_change DESC
+```
+
+**Monthly D-SNP Trend by Payer:**
+```sql
+SELECT 
+  year, month, parent_org,
+  SUM(enrollment) as enrollment
+FROM fact_enrollment_all_years
+WHERE snp_type = 'D-SNP'
+AND year >= 2024
+AND parent_org IN ('UnitedHealth Group, Inc.', 'Humana Inc.', 'Centene Corporation')
+GROUP BY year, month, parent_org
+ORDER BY parent_org, year, month
+```
+
+**Current D-SNP Market Share (Feb 2026):**
+```sql
+SELECT 
+  parent_org,
+  SUM(enrollment) as enrollment,
+  ROUND(100.0 * SUM(enrollment) / (SELECT SUM(enrollment) FROM fact_enrollment_all_years 
+    WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2), 1) as market_share
+FROM fact_enrollment_all_years
+WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2
+GROUP BY parent_org
+HAVING SUM(enrollment) > 10000
+ORDER BY enrollment DESC
 ```
 
 **State-Level Market Share:**
