@@ -26,7 +26,7 @@ import {
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
-// Format large numbers with abbreviations (1.4M, 2.5B, etc.)
+// Format large numbers with abbreviations (1.4M, 2.5B, etc.) - v2
 function formatLargeNumber(value: number | string): string {
   if (typeof value !== 'number') return String(value);
   
