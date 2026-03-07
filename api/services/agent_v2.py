@@ -250,552 +250,183 @@ class ChartSpec:
 # AGENT PROMPTS - Specialized for each phase
 # =============================================================================
 
-PLANNER_PROMPT = """You are a Medicare Advantage data analyst with FULL ACCESS to comprehensive MA data.
+PLANNER_PROMPT = """You are an MA data analyst. TODAY IS MARCH 4, 2026. Data available: 2013-2026.
 
-=== CRITICAL: USE THE ACTUAL DATABASE VALUES PROVIDED BELOW ===
+═══════════════════════════════════════════════════════════════════════════════
+WORKING SQL EXAMPLES - USE THESE PATTERNS
+═══════════════════════════════════════════════════════════════════════════════
 
-After this prompt, you will see "ACTUAL DATABASE VALUES" with exact parent_org names,
-plan_types, and interpretation rules. USE THESE to map user queries to correct SQL.
-
-When user says "united" → match to UnitedHealth Group, Inc.
-When user says "traditional MA" → use TOTAL enrollment (no such plan_type exists!)
-When user says "last 10 years" → year >= 2016
-
-=== CRITICAL: TABLE SELECTION GUIDE ===
-
-**FOR MONTHLY ENROLLMENT DATA (including D-SNP monthly):**
-→ USE: fact_enrollment_all_years (has year, month, snp_type columns)
-→ NOT: fact_snp or fact_snp_historical (yearly only!)
-
-**FOR D-SNP/C-SNP/I-SNP MONTHLY CHANGES:**
-→ USE: fact_enrollment_all_years WHERE snp_type = 'D-SNP'
-→ Data available: Jan 2024 through Feb 2026, monthly
-
-**FOR STAR RATINGS WITH ENROLLMENT:**
-→ USE: stars_enrollment_unified (has enrollment already joined!)
-
-**FOR YEARLY SNP SUMMARY:**
-→ USE: fact_snp or fact_snp_historical
-
-=== YOU HAVE ACCESS TO ===
-
-**STRUCTURED DATA (SQL Queryable - 2013-2026, Monthly 2024-2026):**
-- Enrollment by contract, plan, parent organization, state - MONTHLY granularity
-- D-SNP, C-SNP, I-SNP enrollment by payer - MONTHLY from 2024
-- Star Ratings: overall ratings + 40+ individual measures
-- Risk Scores by contract
-- USPCC rates, growth factors, HCC coefficients
-
-**CMS DOCUMENTS (Searchable Full Text):**
-- Rate Notices (Advance & Final) - 2016-2027
-- Star Ratings Technical Notes - 2016-2027
-- Call Letters - 2020-2027
-- Risk Adjustment Fact Sheets - 2022-2027
-- Payment Methodology documentation
-
-**KNOWLEDGE BASE (Definitions & Context):**
-- MA Glossary (HCC, RAF, QBP, CAI, etc.)
-- CMS-HCC Model Versions (V12, V21, V22, V24, V28) with phase-in schedules
-- Star measure definitions
-- Policy timeline and key changes
-- Top payer information
-
-=== AVAILABLE TOOLS ===
-- query_database: SQL queries against data tables
-- search_documents: Search CMS document text
-- get_rate_notice_metrics: Structured rate notice data (growth rates, V28 phase-in, Part D params)
-- get_hcc_model_info: HCC model details (coefficients, segments, normalization)
-- get_ma_policy_changes: Policy changes by year/category
-- lookup_knowledge: Glossary and definitions
-
-=== DATABASE SCHEMA ===
-
-**ENROLLMENT TABLES:**
-- fact_enrollment_all_years: year, month, contract_id, state, parent_org, plan_type, product_type, group_type, snp_type, enrollment
-  * HAS MONTHLY DATA! Can filter by month (1-12), snp_type ('D-SNP', 'C-SNP', 'I-SNP', null)
-  * Use for month-over-month analysis, D-SNP monthly enrollment, etc.
-- enrollment_by_parent: year, parent_organization, total_enrollment (aggregated by year)
-- fact_enrollment_by_state: year, month, state, parent_organization, enrollment (state aggregates)
-- fact_enrollment_by_geography: year, month, state, county, fips, contract_id, enrollment (county-level!)
-
-**STAR RATING TABLES:**
-- stars_enrollment_unified: star_year, contract_id, parent_org, enrollment, overall_rating (1-5), plan_type, group_type, snp_type
-  * THE MAIN TABLE for 4+ star analysis - already has enrollment joined!
-- summary_all_years: year, contract_id, parent_organization, overall_rating (1-5 scale), plan_type
-- measure_stars_all_years: year, contract_id, measure_id, star_rating (individual measure stars 1-5)
-- measures_all_years: year, contract_id, measure_id, measure_key, measure_name, numeric_value (raw scores)
-- cutpoints_all_years: year, measure_id, star_level (1-5), low_threshold, high_threshold
-  * Use to see "what score gets 4 stars on measure X"
-- stars_measure_specs: measure_id, measure_name, domain, weight, data_source
-  * Use to see measure weights and which domain they belong to
-
-**SNP (SPECIAL NEEDS PLAN) TABLES:**
-- fact_snp: year, parent_org, snp_type (D-SNP/C-SNP/I-SNP), enrollment (YEARLY only!)
-- fact_snp_historical: year, parent_org, snp_type, enrollment (YEARLY only, longer history)
-  * IMPORTANT: For MONTHLY D-SNP data, use fact_enrollment_all_years with snp_type filter!
-  * fact_enrollment_all_years has snp_type column: 'D-SNP', 'C-SNP', 'I-SNP', 'Non-SNP', or NULL
-
-**DISENROLLMENT TABLES:**
-- disenrollment_all_years: year, contract_id, parent_organization, disenrollment_count, disenrollment_rate
-  * Use for member retention analysis, "which plans have high churn"
-
-**ENTITY TRACKING (Contract ID Changes):**
-- dim_entity: contract_id, entity_id, parent_org, first_year, last_year, predecessor_id, successor_id
-  * CRITICAL for tracking contracts through mergers, ID changes over time
-  * entity_id is stable across contract_id changes
-
-**RISK SCORE TABLES:**
-- fact_risk_scores_unified: year, contract_id, risk_score, member_months
-- risk_scores_by_parent: year, parent_org, avg_risk_score, total_member_months
-
-**RATE/BENCHMARK TABLES:**
-- uspcc_projections: year, aged_uspcc, disabled_uspcc, esrd_uspcc
-- hcc_coefficients_all: model_year, model_version, hcc_code, hcc_label, segment, coefficient, source_document
-  * IMPORTANT: model_version is often NULL, use model_year instead!
-  * model_year=2024 = V24 model, model_year=2027 = V28 model
-  * Segments include: 'Community, NonDual, Aged', 'Community, FBDual, Aged', 'Institutional', etc.
-  * Has both Part C (HCC) and Part D (RXHCC) coefficients
-- county_benchmarks: year, state, county, fips, benchmark_rate
-- demographic_factors: year, notice_type, factor_type, factor_name, value
-
-=== EXAMPLE QUERIES ===
-
-=== RISK MODEL / HCC QUERIES ===
-
-**V24 vs V28 HCC Coefficient Comparison (use model_year NOT model_version!):**
+1. ENROLLMENT BY PAYER OVER TIME:
 ```sql
-WITH v24 AS (
-    SELECT hcc_code, hcc_label, coefficient
-    FROM hcc_coefficients_all
-    WHERE model_year = 2024 
-    AND hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
-    AND segment = 'Community, NonDual, Aged'
-),
-v28 AS (
-    SELECT hcc_code, hcc_label, coefficient
-    FROM hcc_coefficients_all
-    WHERE model_year = 2027 
-    AND hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
-    AND segment = 'Community, NonDual, Aged'
-)
-SELECT 
-    COALESCE(a.hcc_code, b.hcc_code) as hcc,
-    COALESCE(a.hcc_label, b.hcc_label) as label,
-    ROUND(a.coefficient, 3) as v24_coef,
-    ROUND(b.coefficient, 3) as v28_coef,
-    ROUND(b.coefficient - a.coefficient, 3) as change,
-    CASE 
-        WHEN a.coefficient IS NULL THEN 'NEW in V28'
-        WHEN b.coefficient IS NULL THEN 'DROPPED in V28'
-        ELSE 'CHANGED'
-    END as status
-FROM v24 a
-FULL OUTER JOIN v28 b ON a.hcc_code = b.hcc_code
-ORDER BY ABS(COALESCE(b.coefficient, 0) - COALESCE(a.coefficient, 0)) DESC
+SELECT year, parent_org, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE parent_org IN ('UnitedHealth Group, Inc.', 'Humana Inc.', 'CVS Health Corporation')
+GROUP BY year, parent_org
+ORDER BY year, parent_org
 ```
 
-**HCCs Dropped/Added in V28:**
+2. D-SNP ENROLLMENT BY PAYER:
 ```sql
--- New HCCs in V28
-SELECT DISTINCT b.hcc_code, b.hcc_label
-FROM hcc_coefficients_all b
-LEFT JOIN hcc_coefficients_all a ON b.hcc_code = a.hcc_code AND a.model_year = 2024
-WHERE b.model_year = 2027 AND a.hcc_code IS NULL
-AND b.hcc_code LIKE 'HCC%' AND b.hcc_code NOT LIKE 'RXHCC%'
-
--- HCCs dropped from V28
-SELECT DISTINCT a.hcc_code, a.hcc_label
-FROM hcc_coefficients_all a
-LEFT JOIN hcc_coefficients_all b ON a.hcc_code = b.hcc_code AND b.model_year = 2027
-WHERE a.model_year = 2024 AND b.hcc_code IS NULL
-AND a.hcc_code LIKE 'HCC%' AND a.hcc_code NOT LIKE 'RXHCC%'
+SELECT year, parent_org, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE snp_type = 'D-SNP'
+  AND parent_org LIKE '%United%'
+GROUP BY year, parent_org
+ORDER BY year
 ```
 
-**Model Summary (HCC counts by version):**
+3. ENROLLMENT BY STATE:
 ```sql
-SELECT 
-    model_year,
-    COUNT(DISTINCT hcc_code) as total_hccs,
-    COUNT(DISTINCT segment) as segments,
-    ROUND(AVG(coefficient), 3) as avg_coefficient
-FROM hcc_coefficients_all
-WHERE hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
-AND model_year IN (2024, 2027)
-GROUP BY model_year
+SELECT year, state, parent_org, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE state = 'TX' AND year >= 2020
+GROUP BY year, state, parent_org
+ORDER BY year, enrollment DESC
 ```
 
-=== STAR RATING QUERIES ===
+4. ENROLLMENT BY PLAN TYPE:
+```sql
+SELECT year, plan_type, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE parent_org LIKE '%Humana%'
+GROUP BY year, plan_type
+ORDER BY year, enrollment DESC
+```
 
-**4+ Star Enrollment by Parent Org (THE MAIN QUERY for star rating analysis):**
+5. GROUP VS INDIVIDUAL ENROLLMENT:
+```sql
+SELECT year, group_type, parent_org, SUM(enrollment) as enrollment
+FROM fact_enrollment_unified
+WHERE parent_org IN ('UnitedHealth Group, Inc.', 'Humana Inc.')
+GROUP BY year, group_type, parent_org
+ORDER BY year, parent_org
+```
+
+6. STAR RATINGS - % IN 4+ STARS BY PAYER:
 ```sql
 SELECT 
   star_year as year,
   parent_org,
   SUM(enrollment) as total_enrollment,
-  SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) as four_star_enrollment,
-  ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+  SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) as fourplus_enrollment,
+  ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / 
+        NULLIF(SUM(enrollment), 0), 1) as pct_fourplus
 FROM stars_enrollment_unified
-WHERE star_year BETWEEN 2015 AND 2026
 GROUP BY star_year, parent_org
-HAVING SUM(enrollment) > 100000
+HAVING SUM(enrollment) > 50000
 ORDER BY parent_org, star_year
 ```
 
-**Find Major 4+ Star Drops (>20 point drop year-over-year):**
+7. FIND MAJOR STAR RATING DROPS:
 ```sql
 WITH yearly AS (
-  SELECT 
-    star_year,
-    parent_org,
-    SUM(enrollment) as enrollment,
-    ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
+  SELECT star_year, parent_org, 
+         ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / 
+               NULLIF(SUM(enrollment), 0), 1) as pct_fourplus,
+         SUM(enrollment) as enrollment
   FROM stars_enrollment_unified
   GROUP BY star_year, parent_org
   HAVING SUM(enrollment) > 100000
 )
-SELECT 
-  curr.parent_org,
-  curr.star_year as year,
-  prev.pct_four_star as prev_pct,
-  curr.pct_four_star as curr_pct,
-  ROUND(curr.pct_four_star - prev.pct_four_star, 1) as change
+SELECT curr.parent_org, curr.star_year as drop_year,
+       prev.pct_fourplus as before, curr.pct_fourplus as after,
+       ROUND(curr.pct_fourplus - prev.pct_fourplus, 1) as drop_amount,
+       curr.enrollment
 FROM yearly curr
-JOIN yearly prev ON curr.parent_org = prev.parent_org AND curr.star_year = prev.star_year + 1
-WHERE curr.pct_four_star - prev.pct_four_star < -20
-ORDER BY change ASC
+JOIN yearly prev ON curr.parent_org = prev.parent_org 
+  AND curr.star_year = prev.star_year + 1
+WHERE curr.pct_fourplus - prev.pct_fourplus < -20
+ORDER BY drop_amount
 ```
 
-**Single Company Star Rating History (e.g., Humana):**
+8. HCC COEFFICIENTS V24 vs V28:
 ```sql
-SELECT 
-  star_year as year,
-  parent_org,
-  SUM(enrollment) as enrollment,
-  ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / NULLIF(SUM(enrollment), 0), 1) as pct_four_star
-FROM stars_enrollment_unified
-WHERE parent_org LIKE '%Humana%'
-GROUP BY star_year, parent_org
-ORDER BY star_year
+SELECT hcc_code, hcc_label, 
+       MAX(CASE WHEN model_year = 2024 THEN coefficient END) as v24,
+       MAX(CASE WHEN model_year = 2027 THEN coefficient END) as v28
+FROM hcc_coefficients_all
+WHERE segment = 'Community, NonDual, Aged'
+  AND hcc_code LIKE 'HCC%' AND hcc_code NOT LIKE 'RXHCC%'
+GROUP BY hcc_code, hcc_label
+ORDER BY hcc_code
 ```
 
-**Enrollment Trends by Organization:**
-```sql
-SELECT star_year as year, parent_org, SUM(enrollment) as enrollment
-FROM stars_enrollment_unified 
-WHERE parent_org IN ('Humana', 'UnitedHealth Group', 'CVS Health')
-GROUP BY star_year, parent_org ORDER BY parent_org, star_year
-```
+═══════════════════════════════════════════════════════════════════════════════
+ENTITY NAME MAPPING
+═══════════════════════════════════════════════════════════════════════════════
 
-**D-SNP Growth by Parent Organization (Yearly - use fact_snp):**
-```sql
-SELECT year, parent_org, snp_type, enrollment
-FROM fact_snp_historical
-WHERE snp_type = 'D-SNP'
-ORDER BY parent_org, year
-```
+User says → Use in SQL:
+• "united", "unh", "uhc" → 'UnitedHealth Group, Inc.' or LIKE '%United%'
+• "humana"               → 'Humana Inc.' or LIKE '%Humana%'  
+• "cvs", "aetna"         → 'CVS Health Corporation' or LIKE '%CVS%'
+• "elevance", "anthem"   → 'Elevance Health, Inc.' or LIKE '%Elevance%'
+• "cigna"                → LIKE '%CIGNA%'
+• "kaiser"               → LIKE '%Kaiser%'
+• "centene"              → 'Centene Corporation' or LIKE '%Centene%'
 
-=== MONTHLY D-SNP QUERIES (CRITICAL - use fact_enrollment_all_years!) ===
+═══════════════════════════════════════════════════════════════════════════════
+KEY TABLES
+═══════════════════════════════════════════════════════════════════════════════
 
-**D-SNP Gainers/Losers Dec 2025 to Feb 2026 (THE MAIN D-SNP MONTHLY QUERY):**
-```sql
-WITH dec_2025 AS (
-  SELECT parent_org, SUM(enrollment) as dec_enrollment
-  FROM fact_enrollment_all_years
-  WHERE snp_type = 'D-SNP' AND year = 2025 AND month = 12
-  GROUP BY parent_org
-),
-feb_2026 AS (
-  SELECT parent_org, SUM(enrollment) as feb_enrollment
-  FROM fact_enrollment_all_years
-  WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2
-  GROUP BY parent_org
-)
-SELECT 
-  COALESCE(f.parent_org, d.parent_org) as parent_org,
-  COALESCE(d.dec_enrollment, 0) as dec_2025,
-  COALESCE(f.feb_enrollment, 0) as feb_2026,
-  COALESCE(f.feb_enrollment, 0) - COALESCE(d.dec_enrollment, 0) as net_change,
-  ROUND(100.0 * (COALESCE(f.feb_enrollment, 0) - COALESCE(d.dec_enrollment, 0)) / 
-        NULLIF(d.dec_enrollment, 0), 1) as pct_change
-FROM feb_2026 f
-FULL OUTER JOIN dec_2025 d ON f.parent_org = d.parent_org
-WHERE COALESCE(d.dec_enrollment, 0) > 10000 OR COALESCE(f.feb_enrollment, 0) > 10000
-ORDER BY net_change DESC
-```
+• fact_enrollment_unified - THE main enrollment table (3M rows, 2013-2026)
+  Columns: year, month, contract_id, state, parent_org, plan_type, 
+           product_type, group_type, snp_type, enrollment
 
-**Monthly D-SNP Trend by Payer:**
-```sql
-SELECT 
-  year, month, parent_org,
-  SUM(enrollment) as enrollment
-FROM fact_enrollment_all_years
-WHERE snp_type = 'D-SNP'
-AND year >= 2024
-AND parent_org IN ('UnitedHealth Group, Inc.', 'Humana Inc.', 'Centene Corporation')
-GROUP BY year, month, parent_org
-ORDER BY parent_org, year, month
-```
+• stars_enrollment_unified - Star ratings + enrollment (10K rows, 2013-2026)
+  Columns: star_year, contract_id, parent_org, overall_rating, enrollment,
+           plan_type, group_type, snp_type, is_fourplus
 
-**Current D-SNP Market Share (Feb 2026):**
-```sql
-SELECT 
-  parent_org,
-  SUM(enrollment) as enrollment,
-  ROUND(100.0 * SUM(enrollment) / (SELECT SUM(enrollment) FROM fact_enrollment_all_years 
-    WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2), 1) as market_share
-FROM fact_enrollment_all_years
-WHERE snp_type = 'D-SNP' AND year = 2026 AND month = 2
-GROUP BY parent_org
-HAVING SUM(enrollment) > 10000
-ORDER BY enrollment DESC
-```
+• hcc_coefficients_all - Risk model coefficients (7K rows)
+  Columns: model_year, hcc_code, hcc_label, segment, coefficient
+  Note: model_year=2024 is V24, model_year=2027 is V28
 
-**State-Level Market Share:**
-```sql
-SELECT year, state, parent_organization, SUM(enrollment) as enrollment,
-  ROUND(100.0 * SUM(enrollment) / SUM(SUM(enrollment)) OVER (PARTITION BY year, state), 1) as market_share
-FROM fact_enrollment_by_state
-WHERE year = 2026 AND month = 12
-GROUP BY year, state, parent_organization
-ORDER BY state, market_share DESC
-```
+• measure_stars_all_years - Individual measure scores (245K rows)
+  Columns: year, contract_id, parent_org, measure_id, star_rating
 
-**County-Level Enrollment (Geographic Analysis):**
-```sql
-SELECT year, state, county, fips, SUM(enrollment) as enrollment
-FROM fact_enrollment_by_geography
-WHERE state = 'FL' AND year = 2026
-GROUP BY year, state, county, fips
-ORDER BY enrollment DESC
-```
+═══════════════════════════════════════════════════════════════════════════════
+COLUMN VALUES
+═══════════════════════════════════════════════════════════════════════════════
 
-**Star Rating Cutpoints (What score gets 4 stars?):**
-```sql
-SELECT year, measure_id, star_level, low_threshold, high_threshold
-FROM cutpoints_all_years
-WHERE measure_id = 'C01' AND star_level = 4
-ORDER BY year
-```
+plan_type: 'HMO/HMOPOS', 'Local PPO', 'Regional PPO', 'PFFS', 'MSA', 
+           'Medicare Prescription Drug Plan', '1876 Cost', 'National PACE'
 
-**Measure Weights and Domains:**
-```sql
-SELECT measure_id, measure_name, domain, weight
-FROM stars_measure_specs
-WHERE weight > 1
-ORDER BY weight DESC
-```
+snp_type: 'D-SNP', 'C-SNP', 'I-SNP', 'Non-SNP', NULL
 
-**Disenrollment Analysis:**
-```sql
-SELECT year, parent_organization, SUM(disenrollment_count) as disenrollment,
-  AVG(disenrollment_rate) as avg_rate
-FROM disenrollment_all_years
-GROUP BY year, parent_organization
-ORDER BY avg_rate DESC
-```
+group_type: 'Individual', 'Group', NULL
 
-**Contract ID Tracking (Entity Changes):**
-```sql
-SELECT contract_id, entity_id, parent_org, first_year, last_year, predecessor_id, successor_id
-FROM dim_entity
-WHERE parent_org LIKE '%Humana%'
-ORDER BY first_year
-```
+state: Two-letter codes ('TX', 'CA', 'FL', etc.)
 
-=== MEASURE-LEVEL ANALYSIS QUERIES (Critical for deep analysis!) ===
+═══════════════════════════════════════════════════════════════════════════════
+TIME INTERPRETATION
+═══════════════════════════════════════════════════════════════════════════════
 
-**Get Specific Measure Stars for a Contract (which measures hurt them?):**
-```sql
-SELECT 
-  m.year,
-  m.contract_id,
-  m.measure_id,
-  m.star_rating,
-  ms.measure_name,
-  ms.domain,
-  ms.weight
-FROM measure_stars_all_years m
-JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
-WHERE m.contract_id IN (
-  SELECT contract_id FROM summary_all_years 
-  WHERE parent_organization LIKE '%Humana%'
-)
-AND m.year BETWEEN 2023 AND 2026
-ORDER BY m.contract_id, m.year, ms.weight DESC
-```
+• "last 10 years" → year >= 2016 (current year is 2026)
+• "last 5 years"  → year >= 2021
+• "recent"        → year >= 2024
+• "all time"      → no year filter (2013-2026)
 
-**Year-over-Year Measure Changes (identify what dropped):**
-```sql
-WITH measure_history AS (
-  SELECT 
-    m.year,
-    m.contract_id,
-    s.parent_organization,
-    m.measure_id,
-    ms.measure_name,
-    ms.domain,
-    ms.weight,
-    m.star_rating
-  FROM measure_stars_all_years m
-  JOIN summary_all_years s ON m.contract_id = s.contract_id AND m.year = s.year
-  JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
-  WHERE ms.weight >= 1  -- Focus on weighted measures
-)
-SELECT 
-  curr.parent_organization,
-  curr.measure_id,
-  curr.measure_name,
-  curr.domain,
-  curr.weight,
-  prev.star_rating as prev_stars,
-  curr.star_rating as curr_stars,
-  curr.star_rating - prev.star_rating as change
-FROM measure_history curr
-JOIN measure_history prev 
-  ON curr.contract_id = prev.contract_id 
-  AND curr.measure_id = prev.measure_id 
-  AND curr.year = prev.year + 1
-WHERE curr.star_rating - prev.star_rating <= -2  -- 2+ star drop on a measure
-AND curr.year = 2025
-ORDER BY curr.weight DESC, change ASC
-```
+═══════════════════════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════════════════════
 
-**Recovery Analysis - Companies that recovered (with measure detail):**
-```sql
-WITH yearly_pct AS (
-  SELECT 
-    star_year,
-    parent_org,
-    SUM(enrollment) as enrollment,
-    ROUND(100.0 * SUM(CASE WHEN overall_rating >= 4 THEN enrollment ELSE 0 END) / 
-          NULLIF(SUM(enrollment), 0), 1) as pct_four_star
-  FROM stars_enrollment_unified
-  GROUP BY star_year, parent_org
-  HAVING SUM(enrollment) > 50000
-),
-drops AS (
-  SELECT 
-    curr.parent_org,
-    curr.star_year as drop_year,
-    prev.pct_four_star as before_drop,
-    curr.pct_four_star as after_drop
-  FROM yearly_pct curr
-  JOIN yearly_pct prev ON curr.parent_org = prev.parent_org AND curr.star_year = prev.star_year + 1
-  WHERE prev.pct_four_star - curr.pct_four_star > 25  -- Major drop
-)
-SELECT 
-  d.parent_org,
-  d.drop_year,
-  d.before_drop,
-  d.after_drop,
-  y.star_year,
-  y.pct_four_star,
-  CASE 
-    WHEN y.pct_four_star >= d.before_drop * 0.9 THEN 'RECOVERED'
-    WHEN y.pct_four_star >= d.after_drop + 20 THEN 'PARTIAL'
-    ELSE 'NOT_RECOVERED'
-  END as recovery_status,
-  y.star_year - d.drop_year as years_since_drop
-FROM drops d
-JOIN yearly_pct y ON d.parent_org = y.parent_org AND y.star_year >= d.drop_year
-ORDER BY d.parent_org, y.star_year
-```
-
-**Measure Performance for Specific Domain (e.g., Member Experience):**
-```sql
-SELECT 
-  m.year,
-  s.parent_organization,
-  ms.domain,
-  COUNT(*) as measure_count,
-  AVG(m.star_rating) as avg_stars,
-  SUM(CASE WHEN m.star_rating >= 4 THEN 1 ELSE 0 END) as measures_at_4_plus
-FROM measure_stars_all_years m
-JOIN summary_all_years s ON m.contract_id = s.contract_id AND m.year = s.year
-JOIN stars_measure_specs ms ON m.measure_id = ms.measure_id
-WHERE s.parent_organization LIKE '%Humana%'
-AND ms.domain LIKE '%Experience%'  -- Or '%Outcome%', '%Process%', '%Access%'
-GROUP BY m.year, s.parent_organization, ms.domain
-ORDER BY m.year
-```
-
-=== MULTI-STEP ANALYSIS STRATEGY ===
-
-For complex questions like "4+ star drops and recovery patterns", use MULTIPLE requirements:
-
-1. **First**: Get the drops - who dropped, when, how much
-2. **Second**: Get measure-level detail - which specific measures caused it  
-3. **Third**: Get recovery data - for companies that dropped before, how did they recover?
-4. **Fourth**: Compare current situation - how does Humana's measure profile compare to recoverers?
-
-DO NOT make assumptions about recovery timelines or causes. 
-Query the actual historical data to find:
-- Real examples of companies that dropped and recovered
-- How long it actually took them
-- Which measures they improved
-- What changed in their performance
-
-=== TOOL-BASED QUERIES (for documents/knowledge) ===
-
-**For Technical Notes questions (star rating methodology):**
-{
-  "description": "Star rating technical methodology for 2026",
-  "data_type": "policy",
-  "query_approach": "tool",
-  "specific_query": "search_documents: tech_notes 2026",
-  "priority": 1
-}
-
-**For Rate Notice questions (USPCC, growth, V28):**
-{
-  "description": "2027 advance notice rate parameters",
-  "data_type": "policy",
-  "query_approach": "tool",
-  "specific_query": "get_rate_notice_metrics: 2027 advance",
-  "priority": 1
-}
-
-**For HCC Model questions:**
-{
-  "description": "V28 model coefficients and changes",
-  "data_type": "risk",
-  "query_approach": "tool",
-  "specific_query": "get_hcc_model_info: V28",
-  "priority": 1
-}
-
-**For definitions:**
-{
-  "description": "What is CAI adjustment",
-  "data_type": "policy",
-  "query_approach": "knowledge",
-  "specific_query": "CAI contract adjustment",
-  "priority": 2
-}
-
-=== OUTPUT FORMAT ===
+Return JSON with your data requirements:
 ```json
 {
-  "question_type": "policy|enrollment|stars|risk|comparison|trend",
   "requirements": [
     {
-      "description": "What data is needed",
-      "data_type": "enrollment|stars|risk|policy|benchmark",
-      "query_approach": "sql|tool|knowledge",
-      "specific_query": "SQL query OR tool name with params",
-      "priority": 1
+      "tool": "query_database",
+      "description": "Get enrollment by payer over time",
+      "sql": "SELECT year, parent_org, SUM(enrollment) as enrollment FROM fact_enrollment_unified WHERE parent_org IN (...) GROUP BY year, parent_org ORDER BY year, parent_org"
     }
-  ],
-  "analysis_needed": "What analysis to perform",
-  "visualization": "chart type if applicable (line for trends, bar for comparisons)"
+  ]
 }
 ```
 
-IMPORTANT: 
-- For DATA questions: Use SQL queries against tables
-- For DOCUMENT/POLICY questions: Use tools (search_documents, get_rate_notice_metrics, get_hcc_model_info)
-- For DEFINITIONS: Use knowledge lookup
-- ALWAYS write complete, executable SQL queries when using sql approach"""
+IMPORTANT RULES:
+• ALWAYS use GROUP BY when aggregating enrollment
+• ALWAYS use SUM(enrollment) not just enrollment
+• Use LIKE '%name%' for fuzzy matching, exact names for IN clauses
+• Include ORDER BY for consistent results"""
 
 ANALYZER_PROMPT = """You are a Medicare Advantage data analyst. Analyze the query results and specify WHAT visualizations would best tell the story.
 
@@ -1299,14 +930,25 @@ ORDER BY m.year, ms.domain
             if req.query_approach == "sql" and req.specific_query:
                 # Execute SQL query
                 tool_name = "query_database"
+                # LOG THE SQL FOR DEBUGGING
+                print(f"\n{'='*60}")
+                print(f"EXECUTING SQL:")
+                print(f"{'='*60}")
+                print(req.specific_query)
+                print(f"{'='*60}\n")
+                
                 tool_result = self.tools.query_database(
                     sql=req.specific_query,
                     context=req.description
                 )
                 if tool_result.success:
                     result = tool_result.data
+                    # LOG RESULT COUNT
+                    if isinstance(result, dict) and 'rows' in result:
+                        print(f"SQL returned {len(result['rows'])} rows")
                 else:
                     error = tool_result.error
+                    print(f"SQL ERROR: {error}")
                     
             elif req.query_approach == "tool":
                 # Determine which tool based on description

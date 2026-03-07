@@ -434,10 +434,24 @@ class ChartBuilder:
         if not metric:
             return self._error_spec("No numeric metric found for ranking", intent.title)
         
+        # AGGREGATE DATA: If multiple rows per entity, sum the metric
+        # This fixes the "duplicate label" bug
+        aggregated = {}
+        for row in data:
+            key = row.get(dimension)
+            if key:
+                if key not in aggregated:
+                    aggregated[key] = {dimension: key, metric: 0}
+                val = row.get(metric, 0)
+                if val is not None:
+                    aggregated[key][metric] += val
+        
+        aggregated_data = list(aggregated.values())
+        
         # Sort and limit data
         sort_order = intent.sort_order or "desc"
         sorted_data = sorted(
-            data, 
+            aggregated_data, 
             key=lambda x: x.get(metric, 0) or 0,
             reverse=(sort_order == "desc")
         )
