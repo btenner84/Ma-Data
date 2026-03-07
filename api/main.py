@@ -6073,6 +6073,198 @@ async def health_check():
 
 
 # ================================================================
+# CMS DOCUMENTS API (Technical Notes, Rate Notices, etc.)
+# ================================================================
+
+@app.get("/api/documents/list")
+async def list_cms_documents():
+    """
+    List all available CMS documents organized by category.
+    Returns rate notices, technical notes, call letters with years available.
+    """
+    import boto3
+    
+    try:
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        documents = {
+            "rate_notices": {
+                "advance": [],
+                "final": []
+            },
+            "technical_notes": {
+                "stars": []
+            },
+            "call_letters": []
+        }
+        
+        # Rate Notice - Advance
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='documents/pdf/rate_notice_advance/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = filename.replace('.pdf', '')
+                if year.isdigit():
+                    documents["rate_notices"]["advance"].append({
+                        "year": int(year),
+                        "name": f"{year} Advance Rate Notice",
+                        "type": "rate_notice_advance",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
+        # Rate Notice - Final
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='documents/pdf/rate_notice_final/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = filename.replace('.pdf', '')
+                if year.isdigit():
+                    documents["rate_notices"]["final"].append({
+                        "year": int(year),
+                        "name": f"{year} Final Rate Notice",
+                        "type": "rate_notice_final",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
+        # Technical Notes - Stars
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='documents/pdf/tech_notes/', MaxKeys=100)
+        for obj in response.get('Contents', []):
+            filename = obj['Key'].split('/')[-1]
+            if filename.endswith('.pdf'):
+                year = filename.replace('.pdf', '')
+                if year.isdigit():
+                    documents["technical_notes"]["stars"].append({
+                        "year": int(year),
+                        "name": f"{year} Star Ratings Technical Notes",
+                        "type": "tech_notes_stars",
+                        "key": obj['Key'],
+                        "size_mb": round(obj['Size'] / 1024 / 1024, 1)
+                    })
+        
+        # Sort all lists by year descending
+        documents["rate_notices"]["advance"].sort(key=lambda x: x["year"], reverse=True)
+        documents["rate_notices"]["final"].sort(key=lambda x: x["year"], reverse=True)
+        documents["technical_notes"]["stars"].sort(key=lambda x: x["year"], reverse=True)
+        
+        return {
+            "documents": documents,
+            "total_count": (
+                len(documents["rate_notices"]["advance"]) +
+                len(documents["rate_notices"]["final"]) +
+                len(documents["technical_notes"]["stars"])
+            )
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+
+@app.get("/api/documents/download/{doc_type}/{year}")
+async def download_cms_document(doc_type: str, year: int):
+    """
+    Download a specific CMS document PDF.
+    doc_type: rate_notice_advance, rate_notice_final, tech_notes_stars
+    """
+    import boto3
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    
+    type_to_prefix = {
+        "rate_notice_advance": "documents/pdf/rate_notice_advance",
+        "rate_notice_final": "documents/pdf/rate_notice_final",
+        "tech_notes_stars": "documents/pdf/tech_notes",
+    }
+    
+    if doc_type not in type_to_prefix:
+        raise HTTPException(status_code=400, detail=f"Invalid document type. Use: {list(type_to_prefix.keys())}")
+    
+    try:
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        key = f"{type_to_prefix[doc_type]}/{year}.pdf"
+        
+        response = s3.get_object(Bucket=bucket, Key=key)
+        content = response['Body'].read()
+        
+        filename = f"{doc_type}_{year}.pdf"
+        
+        return StreamingResponse(
+            BytesIO(content),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except s3.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_type} {year}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@app.get("/api/documents/content/{doc_type}/{year}")
+async def get_document_content(doc_type: str, year: int, section: Optional[str] = None):
+    """
+    Get text content of a CMS document (for chat context).
+    Returns full text or specific section.
+    """
+    import boto3
+    
+    type_to_prefix = {
+        "rate_notice_advance": "documents/text/rate_notice_advance",
+        "rate_notice_final": "documents/text/rate_notice_final",
+        "tech_notes_stars": "documents/text/tech_notes",
+    }
+    
+    if doc_type not in type_to_prefix:
+        raise HTTPException(status_code=400, detail=f"Invalid document type")
+    
+    try:
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        key = f"{type_to_prefix[doc_type]}/{year}.txt"
+        
+        response = s3.get_object(Bucket=bucket, Key=key)
+        content = response['Body'].read().decode('utf-8')
+        
+        # Optionally extract specific section
+        if section:
+            # Simple section extraction - look for section headers
+            section_lower = section.lower()
+            lines = content.split('\n')
+            in_section = False
+            section_content = []
+            
+            for line in lines:
+                line_lower = line.lower()
+                if section_lower in line_lower and len(line) < 200:
+                    in_section = True
+                elif in_section:
+                    # End section at next major header
+                    if line.strip() and line.strip()[0].isdigit() and '.' in line[:10]:
+                        break
+                    section_content.append(line)
+            
+            if section_content:
+                content = '\n'.join(section_content)
+        
+        return {
+            "doc_type": doc_type,
+            "year": year,
+            "section": section,
+            "content": content[:50000],  # Limit to 50k chars for context
+            "truncated": len(content) > 50000,
+            "char_count": len(content)
+        }
+        
+    except s3.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail=f"Document text not found: {doc_type} {year}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get content: {str(e)}")
+
+
+# ================================================================
 # RATE NOTICE AUDIT ENDPOINTS
 # ================================================================
 

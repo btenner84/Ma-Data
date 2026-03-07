@@ -28,11 +28,19 @@ router = APIRouter(prefix="/api/v3/agent", tags=["agent-v3"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+class DocumentContext(BaseModel):
+    """A selected document for context."""
+    type: str  # rate_notice_advance, rate_notice_final, tech_notes_stars
+    year: int
+    name: str
+
+
 class AskRequest(BaseModel):
     """Request to ask the agent a question."""
     question: str
     user_id: str = "api"
     include_thinking: bool = True
+    document_context: Optional[List[DocumentContext]] = None
 
 
 class ThinkingStepResponse(BaseModel):
@@ -122,7 +130,20 @@ async def ask_agent(request: AskRequest):
     """
     try:
         agent = get_agent_v3()
-        result = await agent.answer(request.question, request.user_id)
+        
+        # Convert document_context to dict format for agent
+        doc_context = None
+        if request.document_context:
+            doc_context = [
+                {"type": d.type, "year": d.year, "name": d.name}
+                for d in request.document_context
+            ]
+        
+        result = await agent.answer(
+            request.question, 
+            request.user_id,
+            document_context=doc_context
+        )
         
         response_dict = result.to_dict()
         

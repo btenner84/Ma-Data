@@ -5,7 +5,7 @@ import {
   Send, Sparkles, User, ChevronDown, ChevronRight, 
   DollarSign, Clock, Database, Brain, CheckCircle, 
   XCircle, Activity, Loader2, Zap, Table, BarChart3, Download,
-  Search, FileText, Calculator, TrendingUp
+  Search, FileText, Calculator, TrendingUp, Plus, X, BookOpen, ScrollText
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -26,6 +26,21 @@ import {
 import { SharedChart, SharedTable } from '@/components/charts';
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+// Document context types
+interface CMSDocument {
+  year: number;
+  name: string;
+  type: string;
+  key: string;
+  size_mb: number;
+}
+
+interface SelectedDocument {
+  type: string;
+  year: number;
+  name: string;
+}
 
 // Format large numbers with abbreviations (1.4M, 2.5B, etc.) - v2
 function formatLargeNumber(value: number | string): string {
@@ -1237,7 +1252,32 @@ export function ChatV2() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showDocSelector, setShowDocSelector] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState<SelectedDocument[]>([]);
+  const [availableDocs, setAvailableDocs] = useState<{
+    rate_notices: { advance: CMSDocument[]; final: CMSDocument[] };
+    technical_notes: { stars: CMSDocument[] };
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch available documents on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/documents/list`)
+      .then(res => res.json())
+      .then(data => setAvailableDocs(data.documents))
+      .catch(err => console.error('Failed to fetch documents:', err));
+  }, []);
+
+  const addDocument = (type: string, year: number, name: string) => {
+    const exists = selectedDocs.some(d => d.type === type && d.year === year);
+    if (!exists) {
+      setSelectedDocs(prev => [...prev, { type, year, name }]);
+    }
+  };
+
+  const removeDocument = (type: string, year: number) => {
+    setSelectedDocs(prev => prev.filter(d => !(d.type === type && d.year === year)));
+  };
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1298,13 +1338,14 @@ export function ChatV2() {
     });
 
     try {
-      // Use V3 agent API
+      // Use V3 agent API with optional document context
       const response = await fetch(`${API_BASE}/api/v3/agent/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: userMessage.content,
           include_thinking: true,
+          document_context: selectedDocs.length > 0 ? selectedDocs : undefined,
         }),
       });
 
@@ -1412,12 +1453,44 @@ export function ChatV2() {
 
       {/* Input area */}
       <div className="border-t border-gray-200 dark:border-gray-700 p-4">
+        {/* Selected documents chips */}
+        {selectedDocs.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {selectedDocs.map((doc) => (
+              <span
+                key={`${doc.type}-${doc.year}`}
+                className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs rounded-full"
+              >
+                <FileText className="w-3 h-3" />
+                {doc.name}
+                <button
+                  type="button"
+                  onClick={() => removeDocument(doc.type, doc.year)}
+                  className="ml-1 hover:text-blue-600"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        
         <form onSubmit={handleSubmit} className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setShowDocSelector(true)}
+            className="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-500 hover:text-gray-700 hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            title="Add document context"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about Medicare Advantage data..."
+            placeholder={selectedDocs.length > 0 
+              ? "Ask about the selected documents..." 
+              : "Ask about Medicare Advantage data..."}
             disabled={isLoading}
             className="flex-1 px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           />
@@ -1434,6 +1507,179 @@ export function ChatV2() {
           </button>
         </form>
       </div>
+
+      {/* Document Selector Modal */}
+      {showDocSelector && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowDocSelector(false)}
+        >
+          <div 
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add Document Context</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Select documents to include in your question</p>
+              </div>
+              <button 
+                onClick={() => setShowDocSelector(false)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              >
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+              {/* Rate Notices - Advance */}
+              {availableDocs?.rate_notices.advance && availableDocs.rate_notices.advance.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                    <ScrollText className="w-4 h-4 text-emerald-500" />
+                    Advance Rate Notices
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {availableDocs.rate_notices.advance.slice(0, 8).map((doc) => {
+                      const isSelected = selectedDocs.some(d => d.type === doc.type && d.year === doc.year);
+                      return (
+                        <button
+                          key={doc.year}
+                          onClick={() => isSelected 
+                            ? removeDocument(doc.type, doc.year)
+                            : addDocument(doc.type, doc.year, `${doc.year} Advance Rate Notice`)
+                          }
+                          className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
+                            isSelected
+                              ? 'bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-900 dark:border-emerald-700 dark:text-emerald-300'
+                              : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {doc.year}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Rate Notices - Final */}
+              {availableDocs?.rate_notices.final && availableDocs.rate_notices.final.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-500" />
+                    Final Rate Notices
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {availableDocs.rate_notices.final.slice(0, 8).map((doc) => {
+                      const isSelected = selectedDocs.some(d => d.type === doc.type && d.year === doc.year);
+                      return (
+                        <button
+                          key={doc.year}
+                          onClick={() => isSelected 
+                            ? removeDocument(doc.type, doc.year)
+                            : addDocument(doc.type, doc.year, `${doc.year} Final Rate Notice`)
+                          }
+                          className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
+                            isSelected
+                              ? 'bg-blue-100 border-blue-300 text-blue-700 dark:bg-blue-900 dark:border-blue-700 dark:text-blue-300'
+                              : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {doc.year}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Technical Notes - Stars */}
+              {availableDocs?.technical_notes.stars && availableDocs.technical_notes.stars.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-amber-500" />
+                    Star Ratings Technical Notes
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {availableDocs.technical_notes.stars.slice(0, 8).map((doc) => {
+                      const isSelected = selectedDocs.some(d => d.type === doc.type && d.year === doc.year);
+                      return (
+                        <button
+                          key={doc.year}
+                          onClick={() => isSelected 
+                            ? removeDocument(doc.type, doc.year)
+                            : addDocument(doc.type, doc.year, `${doc.year} Stars Technical Notes`)
+                          }
+                          className={`px-3 py-1.5 text-sm rounded-lg border transition-all ${
+                            isSelected
+                              ? 'bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-900 dark:border-amber-700 dark:text-amber-300'
+                              : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {doc.year}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Quick actions */}
+              <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Quick Select</h4>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      if (availableDocs?.technical_notes.stars[0]) {
+                        const latest = availableDocs.technical_notes.stars[0];
+                        addDocument(latest.type, latest.year, `${latest.year} Stars Technical Notes`);
+                      }
+                    }}
+                    className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                  >
+                    Latest Technical Notes
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (availableDocs?.rate_notices.advance[0]) {
+                        const latest = availableDocs.rate_notices.advance[0];
+                        addDocument(latest.type, latest.year, `${latest.year} Advance Rate Notice`);
+                      }
+                    }}
+                    className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                  >
+                    Latest Advance Notice
+                  </button>
+                  <button
+                    onClick={() => {
+                      // Add last 2 years of tech notes for comparison
+                      availableDocs?.technical_notes.stars.slice(0, 2).forEach(doc => {
+                        addDocument(doc.type, doc.year, `${doc.year} Stars Technical Notes`);
+                      });
+                    }}
+                    className="px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                  >
+                    Compare Last 2 Years Tech Notes
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {selectedDocs.length} document{selectedDocs.length !== 1 ? 's' : ''} selected
+              </p>
+              <button
+                onClick={() => setShowDocSelector(false)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

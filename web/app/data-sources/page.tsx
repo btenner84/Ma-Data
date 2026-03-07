@@ -1,9 +1,33 @@
 "use client";
 
-import { useState } from "react";
-import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight, BookOpen, FileSearch, ScrollText } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+// CMS Document types
+interface CMSDocument {
+  year: number;
+  name: string;
+  type: string;
+  key: string;
+  size_mb: number;
+}
+
+interface DocumentsResponse {
+  documents: {
+    rate_notices: {
+      advance: CMSDocument[];
+      final: CMSDocument[];
+    };
+    technical_notes: {
+      stars: CMSDocument[];
+    };
+    call_letters: CMSDocument[];
+  };
+  total_count: number;
+}
 
 interface DataSourceConfig {
   id: string;
@@ -164,7 +188,18 @@ function getDownloadUrl(table: string, year: number): string {
 
 export default function DataSourcesPage() {
   const [selectedSource, setSelectedSource] = useState<DataSourceConfig | null>(null);
+  const [selectedDocCategory, setSelectedDocCategory] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+
+  // Fetch CMS documents list
+  const { data: documentsData } = useQuery<DocumentsResponse>({
+    queryKey: ["cms-documents"],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/documents/list`);
+      if (!res.ok) throw new Error("Failed to fetch documents");
+      return res.json();
+    },
+  });
 
   const handleDownload = (source: DataSourceConfig, year: number) => {
     const key = `${source.id}-${year}`;
@@ -176,6 +211,13 @@ export default function DataSourcesPage() {
     setTimeout(() => setDownloading(null), 2000);
   };
 
+  const handleDocumentDownload = (docType: string, year: number) => {
+    const key = `${docType}-${year}`;
+    setDownloading(key);
+    window.open(`${API_BASE}/api/documents/download/${docType}/${year}`, '_blank');
+    setTimeout(() => setDownloading(null), 2000);
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 min-h-screen bg-slate-50">
 
@@ -183,9 +225,9 @@ export default function DataSourcesPage() {
       <main className="max-w-6xl mx-auto px-6 py-10">
         {/* Page Title */}
         <div className="mb-10">
-          <h2 className="text-2xl font-bold text-slate-900 mb-2">Download Raw CMS Data</h2>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Data Sources & Documents</h2>
           <p className="text-slate-500">
-            Original CMS data files. Click any card to see available years and download.
+            Download raw CMS data files and policy documents including rate notices and technical notes.
           </p>
         </div>
 
@@ -229,6 +271,70 @@ export default function DataSourcesPage() {
               </button>
             );
           })}
+        </div>
+
+        {/* CMS Documents Section */}
+        <div className="mt-16 mb-10">
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">CMS Policy Documents</h2>
+          <p className="text-slate-500">
+            Official CMS publications including rate notices and technical specifications.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+          {/* Rate Notices - Advance */}
+          <button
+            onClick={() => setSelectedDocCategory('rate_notice_advance')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+          >
+            <div className="bg-emerald-100 text-emerald-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <ScrollText className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Advance Rate Notices</h3>
+            <p className="text-sm text-slate-500 mb-4">Proposed MA payment rates released in February</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-emerald-50 text-emerald-600">
+                {documentsData?.documents.rate_notices.advance.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
+
+          {/* Rate Notices - Final */}
+          <button
+            onClick={() => setSelectedDocCategory('rate_notice_final')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <div className="bg-blue-100 text-blue-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <FileText className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Final Rate Notices</h3>
+            <p className="text-sm text-slate-500 mb-4">Finalized MA payment rates released in April</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-blue-50 text-blue-600">
+                {documentsData?.documents.rate_notices.final.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
+
+          {/* Technical Notes - Stars */}
+          <button
+            onClick={() => setSelectedDocCategory('tech_notes_stars')}
+            className="bg-white rounded-2xl border border-slate-200 p-6 text-left hover:shadow-lg hover:border-slate-300 hover:scale-[1.02] transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+          >
+            <div className="bg-amber-100 text-amber-600 w-14 h-14 rounded-xl flex items-center justify-center mb-4">
+              <BookOpen className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-1">Star Ratings Technical Notes</h3>
+            <p className="text-sm text-slate-500 mb-4">Methodology and measure specifications</p>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-50 text-amber-600">
+                {documentsData?.documents.technical_notes.stars.length || 0} years
+              </span>
+              <ArrowRight className="w-4 h-4 text-slate-300" />
+            </div>
+          </button>
         </div>
 
         {/* Info Footer */}
@@ -334,6 +440,131 @@ export default function DataSourcesPage() {
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
               <p className="text-xs text-slate-400 text-center">
                 Files download directly from CMS archives stored in S3
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CMS Documents Modal */}
+      {selectedDocCategory && documentsData && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setSelectedDocCategory(null)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className={`px-6 py-5 border-b border-slate-100 ${
+              selectedDocCategory === 'rate_notice_advance' ? 'bg-emerald-50' :
+              selectedDocCategory === 'rate_notice_final' ? 'bg-blue-50' : 'bg-amber-50'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                    selectedDocCategory === 'rate_notice_advance' ? 'bg-emerald-100 text-emerald-600' :
+                    selectedDocCategory === 'rate_notice_final' ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-600'
+                  }`}>
+                    {selectedDocCategory === 'rate_notice_advance' ? <ScrollText className="w-6 h-6" /> :
+                     selectedDocCategory === 'rate_notice_final' ? <FileText className="w-6 h-6" /> :
+                     <BookOpen className="w-6 h-6" />}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">
+                      {selectedDocCategory === 'rate_notice_advance' ? 'Advance Rate Notices' :
+                       selectedDocCategory === 'rate_notice_final' ? 'Final Rate Notices' :
+                       'Star Ratings Technical Notes'}
+                    </h3>
+                    <p className="text-sm text-slate-500">PDF Documents</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedDocCategory(null)}
+                  className="p-2 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              <div className="mb-4">
+                <h4 className="text-sm font-medium text-slate-700 mb-2">What's included:</h4>
+                <ul className="space-y-1.5 text-sm text-slate-600">
+                  {selectedDocCategory === 'rate_notice_advance' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Proposed MA growth rates</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Draft risk adjustment changes</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Star bonus proposals</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />Part D parameters</li>
+                    </>
+                  )}
+                  {selectedDocCategory === 'rate_notice_final' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-blue-500" />Final MA growth rates</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-blue-500" />Risk adjustment coefficients</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-blue-500" />County benchmark rates</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-blue-500" />Quality bonus percentages</li>
+                    </>
+                  )}
+                  {selectedDocCategory === 'tech_notes_stars' && (
+                    <>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-amber-500" />Measure specifications</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-amber-500" />Cut point methodology</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-amber-500" />Weight assignments</li>
+                      <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-amber-500" />Data source details</li>
+                    </>
+                  )}
+                </ul>
+              </div>
+
+              {/* Year Selection */}
+              <div>
+                <h4 className="text-sm font-medium text-slate-700 mb-3">Select year to download:</h4>
+                <div className="grid grid-cols-4 gap-2">
+                  {(selectedDocCategory === 'rate_notice_advance' 
+                    ? documentsData.documents.rate_notices.advance
+                    : selectedDocCategory === 'rate_notice_final'
+                    ? documentsData.documents.rate_notices.final
+                    : documentsData.documents.technical_notes.stars
+                  ).map((doc) => {
+                    const isDownloading = downloading === `${doc.type}-${doc.year}`;
+                    
+                    return (
+                      <button
+                        key={doc.year}
+                        onClick={() => handleDocumentDownload(selectedDocCategory, doc.year)}
+                        disabled={isDownloading}
+                        className={`py-2.5 px-3 rounded-lg text-sm font-medium transition-all ${
+                          isDownloading 
+                            ? 'bg-green-100 text-green-700 border border-green-300' 
+                            : 'bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {isDownloading ? (
+                          <div className="flex items-center justify-center">
+                            <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        ) : (
+                          <div className="text-center">
+                            <div>{doc.year}</div>
+                            <div className="text-xs text-slate-400">{doc.size_mb}MB</div>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100">
+              <p className="text-xs text-slate-400 text-center">
+                Original CMS PDF documents • Use in Ask AI for context-aware questions
               </p>
             </div>
           </div>

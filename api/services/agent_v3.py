@@ -18,6 +18,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import anthropic
+import boto3
 
 from api.services.structured_tools import get_structured_tools, ToolResult
 from api.services.tool_definitions import get_tool_definitions
@@ -178,22 +179,79 @@ class MAAgentV3:
         self.viz_service = VisualizationService()
         self.model = "claude-sonnet-4-20250514"
     
-    def _get_system_prompt(self) -> str:
+    def _fetch_document_content(self, doc_type: str, year: int) -> Optional[str]:
+        """Fetch document text content from S3."""
+        type_to_prefix = {
+            "rate_notice_advance": "documents/text/rate_notice_advance",
+            "rate_notice_final": "documents/text/rate_notice_final",
+            "tech_notes_stars": "documents/text/tech_notes",
+        }
+        
+        if doc_type not in type_to_prefix:
+            return None
+            
+        try:
+            s3 = boto3.client('s3')
+            bucket = 'ma-data123'
+            key = f"{type_to_prefix[doc_type]}/{year}.txt"
+            
+            response = s3.get_object(Bucket=bucket, Key=key)
+            content = response['Body'].read().decode('utf-8')
+            
+            # Limit content size to avoid context overflow
+            max_chars = 30000
+            if len(content) > max_chars:
+                content = content[:max_chars] + "\n\n[Document truncated for context...]"
+            
+            return content
+        except Exception as e:
+            print(f"Failed to fetch document {doc_type}/{year}: {e}")
+            return None
+    
+    def _get_system_prompt(self, document_context: Optional[List[Dict]] = None) -> str:
         """Build system prompt with context."""
         context = self.tool_defs.get_system_prompt_context()
+        
+        # Build document context section if provided
+        doc_context_section = ""
+        if document_context:
+            doc_contents = []
+            for doc in document_context:
+                content = self._fetch_document_content(doc['type'], doc['year'])
+                if content:
+                    doc_contents.append(f"""
+=== {doc['name']} ===
+{content}
+""")
+            
+            if doc_contents:
+                doc_context_section = f"""
+DOCUMENT CONTEXT:
+The user has provided the following CMS documents as context for their question.
+Use this information to answer document-specific questions accurately.
+{''.join(doc_contents)}
+
+DOCUMENT USAGE GUIDELINES:
+- When answering questions about these documents, cite specific sections and page references when possible
+- Compare information across documents if multiple years are provided
+- Highlight any changes or differences between document versions
+- Reference the document year/type in your answers
+"""
         
         return f"""You are an expert Medicare Advantage data analyst with access to comprehensive MA data.
 
 {context}
+{doc_context_section}
 
 YOUR ROLE:
 - Answer questions about MA enrollment, star ratings, and risk scores
 - Use the provided tools to fetch data - NEVER make up numbers
 - Provide clear, data-backed insights with visualizations when helpful
+- When document context is provided, use it to answer document-specific questions
 
 RESPONSE FORMAT:
 1. Start with a brief, direct answer to the question
-2. Support with specific data points from tool results
+2. Support with specific data points from tool results or document context
 3. Suggest relevant visualizations (charts/tables) when appropriate
 4. Note any caveats or data limitations
 
@@ -205,7 +263,7 @@ TOOL USAGE:
 
 BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
     
-    async def answer(self, question: str, user_id: str = "api") -> AgentResponseV3:
+    async def answer(self, question: str, user_id: str = "api", document_context: Optional[List[Dict]] = None) -> AgentResponseV3:
         """
         Answer a question with full thinking transparency.
         """
@@ -237,7 +295,7 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
-                system=self._get_system_prompt(),
+                system=self._get_system_prompt(document_context),
                 messages=messages,
                 tools=tool_definitions
             )
@@ -327,7 +385,7 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                 final_response = self.client.messages.create(
                     model=self.model,
                     max_tokens=4096,
-                    system=self._get_system_prompt(),
+                    system=self._get_system_prompt(document_context),
                     messages=messages,
                     tools=tool_definitions
                 )
@@ -395,7 +453,7 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                     final_response = self.client.messages.create(
                         model=self.model,
                         max_tokens=4096,
-                        system=self._get_system_prompt(),
+                        system=self._get_system_prompt(document_context),
                         messages=messages
                     )
                     
@@ -467,6 +525,11 @@ BE CONCISE BUT COMPLETE. Lead with insights, not methodology."""
                 for res in all_results
                 if res['result'] and res['result'].service_called
             ))
+            
+            # Add document context sources
+            if document_context:
+                doc_sources = [doc['name'] for doc in document_context]
+                sources.extend(doc_sources)
             
             return AgentResponseV3(
                 status="success",
