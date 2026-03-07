@@ -1386,6 +1386,7 @@ export function ChatV2() {
     hcc_docs?: { model: CMSDocument[] };
   } | null>(null);
   const [availableDataSources, setAvailableDataSources] = useState<DataSource[]>([]);
+  const [loadingDataSources, setLoadingDataSources] = useState(true);
   const [contextTab, setContextTab] = useState<'documents' | 'data'>('data');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -1398,8 +1399,14 @@ export function ChatV2() {
     
     fetch(`${API_BASE}/api/data-schema/list`)
       .then(res => res.json())
-      .then(data => setAvailableDataSources(data.data_sources))
-      .catch(err => console.error('Failed to fetch data sources:', err));
+      .then(data => {
+        setAvailableDataSources(data.data_sources);
+        setLoadingDataSources(false);
+      })
+      .catch(err => {
+        console.error('Failed to fetch data sources:', err);
+        setLoadingDataSources(false);
+      });
   }, []);
 
   const addDocument = (type: string, year: number, name: string, isDataSource: boolean = false) => {
@@ -1717,6 +1724,17 @@ export function ChatV2() {
                     </p>
                   </div>
                   
+                  {loadingDataSources ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
+                      <span className="ml-3 text-gray-500 dark:text-gray-400">Loading data sources...</span>
+                    </div>
+                  ) : availableDataSources.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                      No data sources available
+                    </div>
+                  ) : (
+                    <>
                   {availableDataSources.map((source) => (
                     <div key={source.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
@@ -1765,6 +1783,8 @@ export function ChatV2() {
                       </div>
                     </div>
                   ))}
+                    </>
+                  )}
                   
                   {/* Example queries */}
                   <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
