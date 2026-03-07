@@ -6141,9 +6141,9 @@ async def list_available_data_schemas():
             },
             {
                 "id": "enrollment",
-                "name": "Monthly Enrollment", 
-                "description": "Contract-plan level enrollment",
-                "table": "fact_enrollment_national",
+                "name": "Monthly Enrollment by Plan", 
+                "description": "Plan-level enrollment with contract_id, plan_id, parent_org",
+                "table": "gold_fact_enrollment_national",
                 "has_month": True,
                 "key_columns": ["contract_id", "plan_id", "enrollment", "parent_org"],
                 "join_keys": ["contract_id", "plan_id"]
@@ -6251,7 +6251,7 @@ async def get_data_schema_and_sample(source_id: str, year: int, month: Optional[
         # Map source_id to actual table and whether it has month
         table_config = {
             "cpsc": {"table": "fact_enrollment_all_years", "has_month": True},
-            "enrollment": {"table": "fact_enrollment_national", "has_month": True},
+            "enrollment": {"table": "gold_fact_enrollment_national", "has_month": True},
             "stars": {"table": "summary_all_years", "has_month": False},
             "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False},
             "snp": {"table": "fact_snp_historical", "has_month": False}

@@ -215,7 +215,7 @@ class MAAgentV3:
         
         table_config = {
             "cpsc": {"table": "fact_enrollment_all_years", "has_month": True},
-            "enrollment": {"table": "fact_enrollment_national", "has_month": True},
+            "enrollment": {"table": "gold_fact_enrollment_national", "has_month": True},
             "stars": {"table": "summary_all_years", "has_month": False},
             "risk_scores": {"table": "fact_risk_scores_unified", "has_month": False},
             "snp": {"table": "fact_snp_historical", "has_month": False}
@@ -296,17 +296,16 @@ KEY JOIN COLUMNS:
                 "use_cases": ["Geographic market share", "State/county analysis", "Plan footprint mapping"]
             },
             "enrollment": {
-                "name": "Monthly Enrollment (National)",
-                "description": "AGGREGATED enrollment by parent organization - already summarized, NOT plan-level",
-                "key_columns": ["year", "month", "parent_org", "plan_type", "product_type", "enrollment"],
-                "granularity": "Parent Org + Plan Type + Month (NO contract_id)",
-                "primary_key": ["year", "month", "parent_org", "plan_type"],
+                "name": "Monthly Enrollment by Plan",
+                "description": "Plan-level enrollment from CMS Monthly Report - the source of truth for MA enrollment",
+                "key_columns": ["contract_id", "plan_id", "year", "month", "enrollment", "parent_org", "plan_type"],
+                "granularity": "Contract + Plan + Month",
+                "primary_key": ["contract_id", "plan_id", "year", "month"],
                 "foreign_keys": {
-                    "year": "Can join to other tables on year only",
-                    "NOTE": "This table has NO contract_id - use CPSC for contract-level data"
+                    "contract_id": "Links to Stars at contract level",
+                    "contract_id + plan_id": "Full plan identifier"
                 },
-                "important_note": "⚠️ This is PRE-AGGREGATED data. Does NOT have contract_id. To link enrollment with Stars, use CPSC instead.",
-                "use_cases": ["Parent org market share", "Plan type trends", "Organization comparisons"]
+                "use_cases": ["Parent org market share", "Plan-level enrollment trends", "Link with Stars on contract_id"]
             },
             "stars": {
                 "name": "Star Ratings",
@@ -370,10 +369,10 @@ KEY JOIN COLUMNS:
                 lines.append("  - Example: % of enrollment in 5-star plans by state")
             
             if "enrollment" in selected_sources and "stars" in selected_sources:
-                lines.append("• ⚠️ Enrollment National → Stars: LIMITED LINKING")
-                lines.append("  - Enrollment National has NO contract_id (it's pre-aggregated)")
-                lines.append("  - Can only join on year (not very useful)")
-                lines.append("  - RECOMMENDATION: Use CPSC instead if you need contract-level enrollment with stars")
+                lines.append("• Enrollment → Stars: Join on contract_id + year ✅")
+                lines.append("  - Enrollment has contract_id and plan_id")
+                lines.append("  - Stars is at contract level, so aggregate enrollment by contract first")
+                lines.append("  - Shows enrollment per contract with star rating")
             
             if "cpsc" in selected_sources and "enrollment" in selected_sources:
                 lines.append("• CPSC → Enrollment: Join on contract_id + plan_id + year")

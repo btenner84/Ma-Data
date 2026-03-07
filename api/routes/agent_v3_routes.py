@@ -161,10 +161,10 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
                 "display_name": "CPSC Enrollment"
             },
             "enrollment": {
-                "table": "fact_enrollment_national", 
+                "table": "gold_fact_enrollment_national", 
                 "has_month": True,
-                "join_keys": ["year", "parent_org"],  # NO contract_id - only parent_org
-                "display_name": "Monthly Enrollment"
+                "join_keys": ["contract_id", "year"],  # HAS contract_id and plan_id!
+                "display_name": "Monthly Enrollment by Plan"
             },
             "stars": {
                 "table": "summary_all_years", 
@@ -237,23 +237,61 @@ async def _perform_data_linking(data_sources: List[Dict]) -> Optional[Dict]:
         for keys in all_join_keys[1:]:
             common_keys = common_keys.intersection(keys)
         
-        join_keys = list(common_keys) if common_keys else ["contract_id"]
+        join_keys = list(common_keys) if common_keys else ["year"]
+        print(f"[DATA LINK] Common join keys: {join_keys}")
+        
+        # Check if this will be a useful join or a cartesian disaster
+        if join_keys == ["year"]:
+            # Only joining on year - this will create a cartesian product
+            # Return a warning instead of garbage data
+            source_names = [s["display_name"] for s in source_info]
+            return {
+                "success": False,
+                "error": f"Cannot meaningfully link {' + '.join(source_names)}. They only share 'year' as a common column, which would create a useless cartesian product. For contract-level linking with Stars, use CPSC instead of Enrollment National."
+            }
+        
         print(f"[DATA LINK] Using join keys: {join_keys}")
         
-        # Perform the join
+        # Smart linking: If we have enrollment + stars, aggregate enrollment by contract first
         keys = list(dataframes.keys())
-        combined_df = dataframes[keys[0]].copy()
+        processed_dfs = {}
+        
+        for key, df in dataframes.items():
+            info = next(s for s in source_info if s["key"] == key)
+            src_id = info["source_id"]
+            
+            if src_id == "cpsc" and "stars" in [s["source_id"] for s in source_info]:
+                # Aggregate CPSC enrollment to contract level for joining with stars
+                print(f"[DATA LINK] Aggregating CPSC to contract level for stars join...")
+                agg_df = df.groupby(['contract_id', 'year']).agg({
+                    'enrollment': 'sum',
+                    'state': lambda x: x.mode().iloc[0] if len(x) > 0 else None,  # Most common state
+                    'parent_org': 'first',
+                    'plan_type': lambda x: ', '.join(x.unique()[:3]),  # Plan types
+                }).reset_index()
+                agg_df = agg_df.rename(columns={
+                    'enrollment': 'total_enrollment',
+                    'state': 'primary_state',
+                    'plan_type': 'plan_types'
+                })
+                processed_dfs[key] = agg_df
+                print(f"[DATA LINK] Aggregated {len(df)} rows to {len(agg_df)} contracts")
+            else:
+                processed_dfs[key] = df
+        
+        # Perform the join
+        combined_df = processed_dfs[keys[0]].copy()
         
         for i, key in enumerate(keys[1:], 1):
-            right_df = dataframes[key]
+            right_df = processed_dfs[key]
             suffix = f"_{source_info[i]['source_id']}"
             
-            # Perform outer join
+            # Perform LEFT join (keep all from first source, add matching from second)
             combined_df = pd.merge(
                 combined_df, 
                 right_df, 
                 on=join_keys, 
-                how='outer',
+                how='left',
                 suffixes=('', suffix)
             )
         
