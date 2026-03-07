@@ -1278,7 +1278,7 @@ export function ChatV2() {
     hcc_docs?: { model: CMSDocument[] };
   } | null>(null);
   const [availableDataSources, setAvailableDataSources] = useState<DataSource[]>([]);
-  const [contextTab, setContextTab] = useState<'documents' | 'data'>('documents');
+  const [contextTab, setContextTab] = useState<'documents' | 'data'>('data');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch available documents and data sources on mount
@@ -1586,7 +1586,7 @@ export function ChatV2() {
                   }`}
                 >
                   <Layers className="w-4 h-4 inline mr-2" />
-                  Raw Data (Tutorials)
+                  Raw CMS Data
                 </button>
               </div>
             </div>
