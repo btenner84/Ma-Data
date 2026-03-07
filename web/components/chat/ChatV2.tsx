@@ -142,27 +142,47 @@ function formatLatency(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatCellValue(val: unknown): string {
-  if (val === null || val === undefined) return '-';
+function formatCellValue(val: unknown, colName?: string): { text: string; className?: string } {
+  if (val === null || val === undefined) return { text: '-', className: 'text-gray-400' };
   if (typeof val === 'object') {
-    // Handle objects/arrays - stringify them or extract meaningful value
     if (Array.isArray(val)) {
-      return val.length > 0 ? `[${val.length} items]` : '[]';
+      return { text: val.length > 0 ? `[${val.length} items]` : '[]' };
     }
-    // Try to get a meaningful string representation
     const obj = val as Record<string, unknown>;
-    if ('value' in obj) return formatCellValue(obj.value);
-    if ('name' in obj) return String(obj.name);
-    // Last resort - show as JSON (truncated)
+    if ('value' in obj) return formatCellValue(obj.value, colName);
+    if ('name' in obj) return { text: String(obj.name) };
     const json = JSON.stringify(val);
-    return json.length > 50 ? json.slice(0, 47) + '...' : json;
+    return { text: json.length > 50 ? json.slice(0, 47) + '...' : json };
   }
   if (typeof val === 'number') {
-    if (Number.isInteger(val) && Math.abs(val) > 10000) return val.toLocaleString();
-    if (!Number.isInteger(val)) return val.toFixed(2);
-    return val.toString();
+    const formatted = Number.isInteger(val) && Math.abs(val) > 1000 
+      ? val.toLocaleString() 
+      : !Number.isInteger(val) ? val.toFixed(1) : val.toString();
+    
+    // Color coding for change/growth columns
+    const isChangeCol = colName?.toLowerCase().includes('change') || 
+                        colName?.toLowerCase().includes('growth') ||
+                        colName?.toLowerCase().includes('pct_change');
+    if (isChangeCol) {
+      if (val > 0) return { text: `+${formatted}`, className: 'text-green-600 font-semibold' };
+      if (val < 0) return { text: formatted, className: 'text-red-600 font-semibold' };
+    }
+    
+    // Large numbers get special formatting
+    if (Math.abs(val) > 100000) return { text: formatted, className: 'font-medium' };
+    
+    return { text: formatted };
   }
-  return String(val);
+  
+  // String values - check for special patterns
+  const str = String(val);
+  if (str === 'Yes' || str === 'RECOVERED') return { text: str, className: 'text-green-600 font-medium' };
+  if (str === 'No' || str === 'NOT_RECOVERED') return { text: str, className: 'text-red-600 font-medium' };
+  if (str === 'Ongoing' || str === 'PARTIAL') return { text: str, className: 'text-yellow-600 font-medium' };
+  if (str === 'NEW in V28') return { text: str, className: 'text-blue-600 font-medium' };
+  if (str === 'DROPPED in V28') return { text: str, className: 'text-red-600 font-medium' };
+  
+  return { text: str };
 }
 
 function DataTableDisplay({ table }: { table: DataTable }) {
@@ -248,11 +268,14 @@ function DataTableDisplay({ table }: { table: DataTable }) {
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {validRows.map((row, i) => (
                   <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
-                    {columns.map((col, j) => (
-                      <td key={j} className="px-3 py-2 text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                        {formatCellValue((row as Record<string, unknown>)[col])}
-                      </td>
-                    ))}
+                    {columns.map((col, j) => {
+                      const { text, className } = formatCellValue((row as Record<string, unknown>)[col], col);
+                      return (
+                        <td key={j} className={`px-3 py-2 whitespace-nowrap ${className || 'text-gray-700 dark:text-gray-300'}`}>
+                          {text}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -283,37 +306,53 @@ function ChartDisplay({ chart }: { chart: ChartSpec }) {
   }
   
   const series = chart.series || [{ key: chart.y_axis, label: chart.y_axis, color: CHART_COLORS[0] }];
+  
+  // Determine if this is a "losers" chart (negative values, red coloring)
+  const isLosersChart = chart.title?.toLowerCase().includes('loser') || 
+                        chart.title?.toLowerCase().includes('drop') ||
+                        chart.title?.toLowerCase().includes('decrease');
+  const defaultBarColor = isLosersChart ? '#EF4444' : '#10B981';
 
   return (
-    <div className="my-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-800/50 font-medium text-gray-700 dark:text-gray-300"
-      >
-        {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        <BarChart3 className="w-4 h-4 text-green-500" />
-        {chart.title}
-        <span className="text-xs text-gray-400 ml-2">({validData.length} points)</span>
-      </button>
+    <div className="my-6 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
+      {/* Chart title - more prominent */}
+      <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="w-full flex items-center gap-3 font-semibold text-gray-800 dark:text-gray-200"
+        >
+          {collapsed ? <ChevronRight className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+          <BarChart3 className={`w-5 h-5 ${isLosersChart ? 'text-red-500' : 'text-green-500'}`} />
+          <span className="text-base">{chart.title}</span>
+        </button>
+      </div>
       
       {!collapsed && (
-        <div className="p-4 bg-white dark:bg-gray-900">
-          <ResponsiveContainer width="100%" height={300}>
+        <div className="p-6 bg-white dark:bg-gray-900">
+          <ResponsiveContainer width="100%" height={350}>
             {chart.chart_type === 'bar' ? (
-              <BarChart data={validData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-                <XAxis dataKey={chart.x_axis} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }} 
+              <BarChart data={validData} layout="vertical" margin={{ left: 20, right: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.2} horizontal={true} vertical={false} />
+                <XAxis type="number" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickFormatter={(v) => v.toLocaleString()} />
+                <YAxis 
+                  type="category" 
+                  dataKey={chart.x_axis} 
+                  tick={{ fill: '#6B7280', fontSize: 12 }} 
+                  width={150}
+                  tickLine={false}
                 />
-                <Legend />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6', padding: '12px' }}
+                  formatter={(value: number) => [value.toLocaleString(), '']}
+                />
                 {series.map((s, i) => (
-                  <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color || CHART_COLORS[i % CHART_COLORS.length]}>
-                    {validData.map((_, idx) => (
-                      <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                    ))}
-                  </Bar>
+                  <Bar 
+                    key={s.key} 
+                    dataKey={s.key} 
+                    name={s.label} 
+                    fill={s.color || defaultBarColor}
+                    radius={[0, 4, 4, 0]}
+                  />
                 ))}
               </BarChart>
             ) : chart.chart_type === 'area' ? (
