@@ -101,6 +101,59 @@ interface SQLQuery {
   error?: string;
 }
 
+// V3 Thinking interfaces
+interface ThinkingStepV3 {
+  id: string;
+  phase: string;
+  title: string;
+  content: string;
+  status: string;
+  duration_ms: number;
+  tool_name?: string;
+  tool_params?: Record<string, unknown>;
+  service_called?: string;
+  row_count?: number;
+  validations?: { check: string; passed: boolean; message: string }[];
+  confidence?: string;
+}
+
+interface ThinkingProcessV3 {
+  query_id: string;
+  question: string;
+  steps: ThinkingStepV3[];
+  total_duration_ms: number;
+  total_tokens: number;
+  tools_called: number;
+  status: string;
+}
+
+interface AgentResponseV3 {
+  status: string;
+  response: string;
+  charts: ChartSpecV3[];
+  tables: DataTableV3[];
+  thinking: ThinkingProcessV3 | null;
+  sources: string[];
+  confidence: string;
+  error?: string;
+}
+
+interface ChartSpecV3 {
+  type: 'bar' | 'line' | 'area' | 'table';
+  title: string;
+  data: Record<string, unknown>[];
+  xKey?: string;
+  yKeys?: string[];
+  colors?: string[];
+}
+
+interface DataTableV3 {
+  type: string;
+  title: string;
+  data: Record<string, unknown>[];
+  columns?: string[];
+}
+
 interface ChartSpec {
   chart_type: 'bar' | 'line' | 'area' | 'pie';
   title: string;
@@ -143,6 +196,20 @@ interface AgentResponse {
   };
 }
 
+// Unified response interface that handles both V2 and V3
+interface UnifiedResponse {
+  version: 'v2' | 'v3';
+  answer: string;
+  charts: ChartSpec[];
+  tables: DataTable[];
+  sources: string[];
+  confidence: number | string;
+  thinking?: ThinkingProcessV3;
+  total_tokens?: number;
+  tools_called?: number;
+  latency_ms?: number;
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -152,6 +219,7 @@ interface ChatMessage {
   loadingPhase?: string;
   loadingStep?: string;
   response?: AgentResponse;
+  responseV3?: AgentResponseV3;
 }
 
 const PHASE_ICONS: Record<string, React.ReactNode> = {
@@ -744,6 +812,274 @@ function SQLQueriesDisplay({ queries }: { queries: SQLQuery[] }) {
   );
 }
 
+// V3 Thinking Display - Shows transparent AI reasoning
+function ThinkingDisplayV3({ thinking }: { thinking: ThinkingProcessV3 }) {
+  const [expanded, setExpanded] = useState(true);
+  
+  const PHASE_ICONS_V3: Record<string, React.ReactNode> = {
+    plan: <Brain className="w-4 h-4" />,
+    query: <Database className="w-4 h-4" />,
+    analyze: <Activity className="w-4 h-4" />,
+    validate: <CheckCircle className="w-4 h-4" />,
+    synthesize: <Sparkles className="w-4 h-4" />,
+    error: <XCircle className="w-4 h-4" />,
+  };
+  
+  const PHASE_COLORS_V3: Record<string, string> = {
+    plan: 'text-purple-600 bg-purple-100 dark:bg-purple-900/30',
+    query: 'text-blue-600 bg-blue-100 dark:bg-blue-900/30',
+    analyze: 'text-green-600 bg-green-100 dark:bg-green-900/30',
+    validate: 'text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30',
+    synthesize: 'text-pink-600 bg-pink-100 dark:bg-pink-900/30',
+    error: 'text-red-600 bg-red-100 dark:bg-red-900/30',
+  };
+  
+  const STATUS_ICONS: Record<string, React.ReactNode> = {
+    running: <Loader2 className="w-3 h-3 animate-spin" />,
+    complete: <CheckCircle className="w-3 h-3 text-green-500" />,
+    error: <XCircle className="w-3 h-3 text-red-500" />,
+  };
+
+  return (
+    <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-gradient-to-br from-gray-50 to-blue-50/30 dark:from-gray-900 dark:to-blue-900/10">
+      {/* Header */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-4 py-3 flex items-center justify-between bg-white/50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700"
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <Brain className="w-5 h-5 text-purple-500" />
+            <span className="font-semibold text-gray-800 dark:text-gray-200">AI Thinking Process</span>
+          </div>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+            {thinking.steps.length} steps
+          </span>
+          <span className="text-xs text-gray-500">
+            {(thinking.total_duration_ms / 1000).toFixed(1)}s • {thinking.total_tokens.toLocaleString()} tokens • {thinking.tools_called} tools
+          </span>
+        </div>
+        {expanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+      </button>
+      
+      {/* Steps */}
+      {expanded && (
+        <div className="p-4 space-y-3">
+          {thinking.steps.map((step, i) => (
+            <div key={step.id} className="flex gap-3">
+              {/* Phase badge */}
+              <div className={`flex-shrink-0 w-20 flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium ${PHASE_COLORS_V3[step.phase] || 'text-gray-600 bg-gray-100'}`}>
+                {PHASE_ICONS_V3[step.phase]}
+                <span className="capitalize">{step.phase}</span>
+              </div>
+              
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  {STATUS_ICONS[step.status]}
+                  <span className="font-medium text-gray-800 dark:text-gray-200 text-sm">
+                    {step.title}
+                  </span>
+                  {step.duration_ms > 0 && (
+                    <span className="text-xs text-gray-400">
+                      {step.duration_ms}ms
+                    </span>
+                  )}
+                </div>
+                
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+                  {step.content}
+                </p>
+                
+                {/* Tool params if present */}
+                {step.tool_name && (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-mono">
+                      {step.tool_name}
+                    </span>
+                    {step.tool_params && Object.entries(step.tool_params).slice(0, 3).map(([key, val]) => (
+                      <span key={key} className="text-xs text-gray-500">
+                        {key}={JSON.stringify(val).slice(0, 30)}
+                      </span>
+                    ))}
+                    {step.row_count !== undefined && (
+                      <span className="text-xs text-green-600">
+                        → {step.row_count} rows
+                      </span>
+                    )}
+                  </div>
+                )}
+                
+                {/* Validations */}
+                {step.validations && step.validations.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {step.validations.map((v, j) => (
+                      <span 
+                        key={j} 
+                        className={`text-xs px-2 py-0.5 rounded ${
+                          v.passed ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                        }`}
+                      >
+                        {v.passed ? '✓' : '✗'} {v.check}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Confidence */}
+                {step.confidence && (
+                  <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full ${
+                    step.confidence === 'high' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                    step.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' :
+                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                  }`}>
+                    Confidence: {step.confidence}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// V3 Chart Display
+function ChartDisplayV3({ chart }: { chart: ChartSpecV3 }) {
+  const [collapsed, setCollapsed] = useState(false);
+  
+  if (!chart.data || chart.data.length === 0) {
+    return null;
+  }
+  
+  const xKey = chart.xKey || 'year';
+  const yKeys = chart.yKeys || Object.keys(chart.data[0]).filter(k => k !== xKey);
+  const colors = chart.colors || CHART_COLORS;
+  
+  const chartHeight = chart.type === 'bar' ? Math.max(300, Math.min(chart.data.length * 35, 500)) : 350;
+  
+  return (
+    <div className="my-6 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
+      <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-800/80 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="w-full flex items-center gap-3 font-semibold text-gray-800 dark:text-gray-200 text-left"
+        >
+          {collapsed ? <ChevronRight className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+          <BarChart3 className="w-5 h-5 text-blue-500" />
+          <span className="text-base">{chart.title}</span>
+        </button>
+      </div>
+      
+      {!collapsed && (
+        <div className="p-6 bg-white dark:bg-gray-900">
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            {chart.type === 'bar' ? (
+              <BarChart data={chart.data} layout="vertical" margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.2} />
+                <XAxis type="number" tick={{ fill: '#9CA3AF', fontSize: 11 }} tickFormatter={formatLargeNumber} />
+                <YAxis 
+                  type="category" 
+                  dataKey={xKey} 
+                  tick={{ fill: '#6B7280', fontSize: 11 }} 
+                  width={180}
+                  tickFormatter={(v) => typeof v === 'string' && v.length > 25 ? v.slice(0, 22) + '...' : v}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }}
+                  formatter={(value) => [formatDisplayNumber(value as number), '']}
+                />
+                {yKeys.map((key, i) => (
+                  <Bar key={key} dataKey={key} fill={colors[i % colors.length]} radius={[0, 4, 4, 0]} />
+                ))}
+              </BarChart>
+            ) : (
+              <LineChart data={chart.data} margin={{ left: 10, right: 30, top: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+                <XAxis dataKey={xKey} tick={{ fill: '#9CA3AF', fontSize: 12 }} />
+                <YAxis tick={{ fill: '#9CA3AF', fontSize: 12 }} tickFormatter={formatLargeNumber} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '8px', color: '#F3F4F6' }}
+                  formatter={(value) => [formatDisplayNumber(value as number), '']}
+                />
+                {yKeys.length > 1 && <Legend />}
+                {yKeys.map((key, i) => (
+                  <Line 
+                    key={key} 
+                    type="monotone" 
+                    dataKey={key} 
+                    stroke={colors[i % colors.length]} 
+                    strokeWidth={2}
+                    dot={{ fill: colors[i % colors.length], r: 4 }}
+                  />
+                ))}
+              </LineChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// V3 Table Display
+function TableDisplayV3({ table }: { table: DataTableV3 }) {
+  const [collapsed, setCollapsed] = useState(false);
+  
+  if (!table.data || table.data.length === 0) {
+    return null;
+  }
+  
+  const columns = table.columns || Object.keys(table.data[0]);
+  
+  return (
+    <div className="my-4 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800/50">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex items-center gap-2 font-medium text-gray-700 dark:text-gray-300"
+        >
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          <Table className="w-4 h-4 text-blue-500" />
+          {table.title}
+          <span className="text-xs text-gray-400 ml-2">({table.data.length} rows)</span>
+        </button>
+      </div>
+      
+      {!collapsed && (
+        <div className="overflow-x-auto max-h-80">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-100 dark:bg-gray-800 sticky top-0">
+              <tr>
+                {columns.map((col, i) => (
+                  <th key={i} className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {table.data.slice(0, 50).map((row, i) => (
+                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                  {columns.map((col, j) => {
+                    const { text, className } = formatCellValue(row[col], col);
+                    return (
+                      <td key={j} className={`px-3 py-2 whitespace-nowrap ${className || 'text-gray-700 dark:text-gray-300'}`}>
+                        {text}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AuditPanel({ response }: { response: AgentResponse }) {
   const [showSteps, setShowSteps] = useState(false);
   const [showThoughts, setShowThoughts] = useState(false);
@@ -830,8 +1166,20 @@ function AuditPanel({ response }: { response: AgentResponse }) {
 }
 
 function AssistantMessage({ message }: { message: ChatMessage }) {
-  const chartCount = message.response?.charts?.length || 0;
-  const tableCount = message.response?.data_tables?.length || 0;
+  // Handle V3 response
+  const v3Response = message.responseV3;
+  const v2Response = message.response;
+  
+  // V3 charts and tables
+  const v3Charts = v3Response?.charts || [];
+  const v3Tables = v3Response?.tables || [];
+  
+  // V2 charts and tables
+  const v2Charts = v2Response?.charts || [];
+  const v2Tables = v2Response?.data_tables || [];
+  
+  const hasV3Content = v3Response && (v3Response.response || v3Charts.length > 0 || v3Tables.length > 0);
+  const hasV2Content = v2Response && (v2Response.answer || v2Charts.length > 0 || v2Tables.length > 0);
   
   return (
     <div className="flex items-start gap-4">
@@ -841,7 +1189,67 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
       <div className="flex-1 min-w-0">
         {message.isLoading ? (
           <LoadingIndicator phase={message.loadingPhase} step={message.loadingStep} />
-        ) : (
+        ) : hasV3Content ? (
+          // V3 Response Layout
+          <div className="space-y-6">
+            {/* Thinking Display - Show the AI's reasoning */}
+            {v3Response.thinking && (
+              <ThinkingDisplayV3 thinking={v3Response.thinking} />
+            )}
+            
+            {/* Main narrative */}
+            <div className="prose prose-base dark:prose-invert max-w-none 
+                          prose-p:my-3 prose-p:leading-relaxed
+                          prose-strong:text-blue-600 dark:prose-strong:text-blue-400
+                          prose-headings:mt-5 prose-headings:mb-3
+                          prose-li:my-1
+                          prose-ul:my-3">
+              <ReactMarkdown>{v3Response.response}</ReactMarkdown>
+            </div>
+
+            {/* V3 Charts */}
+            {v3Charts.length > 0 && (
+              <div className={v3Charts.length >= 2 ? 'grid grid-cols-1 lg:grid-cols-2 gap-4' : ''}>
+                {v3Charts.map((chart, i) => (
+                  <ChartDisplayV3 key={i} chart={chart} />
+                ))}
+              </div>
+            )}
+
+            {/* V3 Tables */}
+            {v3Tables.length > 0 && (
+              <div className="space-y-4">
+                {v3Tables.map((table, i) => (
+                  <TableDisplayV3 key={i} table={table} />
+                ))}
+              </div>
+            )}
+
+            {/* Sources and confidence */}
+            {(v3Response.sources?.length > 0 || v3Response.confidence) && (
+              <div className="flex items-center gap-4 px-3 py-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-xs">
+                {v3Response.sources?.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-gray-500" />
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Sources: {v3Response.sources.join(' • ')}
+                    </span>
+                  </div>
+                )}
+                {v3Response.confidence && (
+                  <span className={`ml-auto px-2 py-0.5 rounded text-xs font-medium ${
+                    v3Response.confidence === 'high' ? 'bg-green-500/20 text-green-700' : 
+                    v3Response.confidence === 'medium' ? 'bg-yellow-500/20 text-yellow-700' : 
+                    'bg-red-500/20 text-red-700'
+                  }`}>
+                    {v3Response.confidence} confidence
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : hasV2Content ? (
+          // V2 Response Layout (legacy)
           <div className="space-y-6">
             {/* Main narrative */}
             <div className="prose prose-base dark:prose-invert max-w-none 
@@ -854,21 +1262,19 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
             </div>
 
             {/* Visualizations section */}
-            {(chartCount > 0 || tableCount > 0) && (
+            {(v2Charts.length > 0 || v2Tables.length > 0) && (
               <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                {/* Charts - use grid for multiple */}
-                {chartCount > 0 && (
-                  <div className={chartCount >= 2 ? 'grid grid-cols-1 lg:grid-cols-2 gap-4' : ''}>
-                    {message.response!.charts!.map((chart, i) => (
+                {v2Charts.length > 0 && (
+                  <div className={v2Charts.length >= 2 ? 'grid grid-cols-1 lg:grid-cols-2 gap-4' : ''}>
+                    {v2Charts.map((chart, i) => (
                       <ChartDisplay key={i} chart={chart} />
                     ))}
                   </div>
                 )}
 
-                {/* Tables */}
-                {tableCount > 0 && (
+                {v2Tables.length > 0 && (
                   <div className="mt-6 space-y-4">
-                    {message.response!.data_tables!.map((table, i) => (
+                    {v2Tables.map((table, i) => (
                       <DataTableDisplay key={i} table={table} />
                     ))}
                   </div>
@@ -876,10 +1282,15 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
               </div>
             )}
 
-            {/* Audit panel - more subtle */}
-            {message.response && (
-              <AuditPanel response={message.response} />
+            {/* Audit panel */}
+            {v2Response && (
+              <AuditPanel response={v2Response} />
             )}
+          </div>
+        ) : (
+          // Fallback - just show content
+          <div className="prose prose-base dark:prose-invert max-w-none">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
           </div>
         )}
       </div>
@@ -965,12 +1376,13 @@ export function ChatV2() {
     });
 
     try {
-      const response = await fetch(`${API_BASE}/api/v2/agent/ask`, {
+      // Use V3 agent API
+      const response = await fetch(`${API_BASE}/api/v3/agent/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: userMessage.content,
-          include_full_audit: true,
+          include_thinking: true,
         }),
       });
 
@@ -981,18 +1393,18 @@ export function ChatV2() {
         throw new Error(`Request failed: ${response.status}`);
       }
 
-      const data: AgentResponse = await response.json();
+      const data: AgentResponseV3 = await response.json();
 
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === loadingId
             ? {
                 ...msg,
-                content: data.answer,
+                content: data.response,
                 isLoading: false,
                 loadingPhase: undefined,
                 loadingStep: undefined,
-                response: data,
+                responseV3: data,
               }
             : msg
         )
