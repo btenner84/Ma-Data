@@ -111,10 +111,16 @@ export default function RiskScoresPage() {
     year: number;
   } | null>(null);
 
-  // Fetch filter options (v3 API with audit trail)
+  // Fetch filter options using v5 (Gold layer)
   const { data: filterOptions } = useQuery<RiskScoreFilters>({
-    queryKey: ["risk-filters-v3"],
+    queryKey: ["risk-filters-v5"],
     queryFn: async () => {
+      // Try v5 first (Gold layer), fall back to v3
+      const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
+      const v5Data = await v5Res.json();
+      if (!v5Data.error) {
+        return v5Data;
+      }
       const res = await fetch(`${API_BASE}/api/v3/risk/filters`);
       return res.json();
     },
@@ -512,7 +518,7 @@ export default function RiskScoresPage() {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
             </div>
           ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
+            <ResponsiveContainer width="100%" height={350} minHeight={300}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />

@@ -384,7 +384,7 @@ function MeasureRowChart({
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%" minHeight={180} minWidth={0}>
+          <ResponsiveContainer width="100%" height={180} minHeight={180} minWidth={0}>
             <LineChart data={chartData} margin={{ top: 10, right: 30, bottom: 10, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis
@@ -2360,10 +2360,19 @@ export default function StarsPage() {
   // Available star years (2014-2026)
   const availableStarYears = Array.from({ length: 13 }, (_, i) => 2026 - i);
 
-  // Fetch filter options for parent orgs
+  // Fetch filter options using v5 (Gold layer)
   const { data: filterOptions } = useQuery<FilterOptions>({
-    queryKey: ["enrollment-filters"],
+    queryKey: ["stars-filters-v5"],
     queryFn: async () => {
+      // Try v5 first (Gold layer), fall back to v3
+      const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
+      const v5Data = await v5Res.json();
+      if (!v5Data.error) {
+        return {
+          ...v5Data,
+          plan_types_simplified: v5Data.plan_types || [],
+        };
+      }
       const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
       return res.json();
     },
@@ -2768,7 +2777,7 @@ export default function StarsPage() {
           ) : timeseriesData?.error ? (
             <div className="flex items-center justify-center h-full text-gray-500">{timeseriesData.error}</div>
           ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%" minHeight={300} minWidth={0}>
+            <ResponsiveContainer width="100%" height={300} minHeight={300} minWidth={0}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />
