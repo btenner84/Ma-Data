@@ -69,9 +69,15 @@ def save_parquet(df: pd.DataFrame, key: str):
 
 
 def rebuild_fact_enrollment_national():
-    """Rebuild gold/fact_enrollment_national from Monthly Enrollment by Contract (exact totals)."""
+    """
+    Rebuild gold/fact_enrollment_national using hybrid approach:
+    - 2019-2026: Monthly Enrollment by Contract (exact totals)
+    - 2013-2018: CPSC aggregated to national (slightly lower due to suppression)
+    """
     print("\n" + "=" * 70)
-    print("REBUILDING: gold/fact_enrollment_national (from Monthly Enrollment by Contract)")
+    print("REBUILDING: gold/fact_enrollment_national (HYBRID)")
+    print("  - 2019-2026: Monthly Enrollment by Contract (exact)")
+    print("  - 2013-2018: CPSC aggregated (slight suppression)")
     print("=" * 70)
     
     import zipfile
@@ -100,17 +106,57 @@ def rebuild_fact_enrollment_national():
             snp_dict[key] = row.get('snp_type', 'Non-SNP')
     print(f"   Loaded {len(snp_dict):,} SNP mappings")
     
-    # Process all monthly enrollment by contract files
-    print("\n2. Processing Monthly Enrollment by Contract files...")
-    
-    # List all available files
-    response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix='raw/enrollment/by_contract/')
-    zip_files = [obj['Key'] for obj in response.get('Contents', []) if obj['Key'].endswith('.zip')]
-    
-    print(f"   Found {len(zip_files)} zip files")
-    
     all_rows = []
     
+    # --- PART 1: Load CPSC data for 2013-2018 ---
+    print("\n2. Loading CPSC data for 2013-2018 (aggregated to national)...")
+    cpsc_source = load_parquet("processed/unified/fact_enrollment_all_years.parquet")
+    
+    if not cpsc_source.empty:
+        cpsc_2013_2018 = cpsc_source[(cpsc_source['year'] >= 2013) & (cpsc_source['year'] <= 2018)].copy()
+        print(f"   Found {len(cpsc_2013_2018):,} rows for 2013-2018")
+        
+        for _, row in cpsc_2013_2018.iterrows():
+            all_rows.append({
+                'time_key': int(row['year']) * 100 + int(row['month']),
+                'entity_id': row.get('contract_id', ''),
+                'contract_id': row.get('contract_id', ''),
+                'plan_id': '000',
+                'year': int(row['year']),
+                'month': int(row['month']),
+                'enrollment': float(row.get('enrollment', 0)),
+                'plan_count': int(row.get('plan_count', 1)),
+                'parent_org': row.get('parent_org', ''),
+                'state': row.get('state'),
+                'plan_type': row.get('plan_type', ''),
+                'product_type': row.get('product_type', ''),
+                'snp_type': row.get('snp_type', 'Non-SNP'),
+                'group_type': row.get('group_type', 'Individual'),
+                '_source_file': 'cpsc_aggregated',
+            })
+        
+        print(f"   Added {len(all_rows):,} rows from CPSC")
+    
+    # --- PART 2: Process Monthly Enrollment by Contract for 2019+ ---
+    print("\n3. Processing Monthly Enrollment by Contract files (2019+)...")
+    
+    # List all available files - only process valid zips
+    response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix='raw/enrollment/by_contract/', MaxKeys=500)
+    all_keys = [obj['Key'] for obj in response.get('Contents', []) if obj['Key'].endswith('.zip')]
+    
+    # Filter to only valid zip files
+    zip_files = []
+    for key in all_keys:
+        try:
+            head = s3.get_object(Bucket=S3_BUCKET, Key=key, Range='bytes=0-4')
+            if head['Body'].read().startswith(b'PK'):
+                zip_files.append(key)
+        except:
+            pass
+    
+    print(f"   Found {len(zip_files)} valid zip files")
+    
+    monthly_contract_rows = []
     for zip_key in sorted(zip_files):
         # Extract year-month from path (e.g., raw/enrollment/by_contract/2024-01/...)
         parts = zip_key.split('/')
@@ -120,6 +166,10 @@ def rebuild_fact_enrollment_national():
         
         year, month = map(int, year_month.split('-'))
         
+        # Skip years we already have from CPSC
+        if year < 2019:
+            continue
+        
         try:
             obj = s3.get_object(Bucket=S3_BUCKET, Key=zip_key)
             zip_data = BytesIO(obj['Body'].read())
@@ -128,7 +178,19 @@ def rebuild_fact_enrollment_national():
                 for name in z.namelist():
                     if name.endswith('.csv'):
                         with z.open(name) as f:
-                            df = pd.read_csv(f)
+                            # Try multiple encodings
+                            csv_data = f.read()
+                            df = None
+                            for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                                try:
+                                    df = pd.read_csv(BytesIO(csv_data), encoding=encoding)
+                                    break
+                                except:
+                                    continue
+                            
+                            if df is None:
+                                print(f"   Could not decode {zip_key}")
+                                continue
                             
                             # Process enrollment data
                             for _, row in df.iterrows():
@@ -200,7 +262,9 @@ def rebuild_fact_enrollment_national():
         except Exception as e:
             print(f"   Error processing {zip_key}: {e}")
     
-    print(f"\n3. Building final table...")
+    print(f"\n4. Building final table...")
+    print(f"   CPSC rows (2013-2018): {len([r for r in all_rows if r['year'] <= 2018]):,}")
+    print(f"   Monthly rows (2019+): {len([r for r in all_rows if r['year'] >= 2019]):,}")
     result = pd.DataFrame(all_rows)
     result['_source_row'] = range(len(result))
     result['_pipeline_run_id'] = PIPELINE_RUN_ID
