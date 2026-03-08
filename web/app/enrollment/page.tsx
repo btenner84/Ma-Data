@@ -149,31 +149,67 @@ export default function EnrollmentPage() {
   };
 
   // Fetch timeseries data using v5 (Gold layer) - no fallback
+  // Supports multiple payers by making parallel requests
   const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
-    queryKey: ["enrollment-timeseries-v5", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy],
+    queryKey: ["enrollment-timeseries-v5", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, showIndustryTotal, groupBy],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedParentOrgs.length === 1) params.set("parent_org", selectedParentOrgs[0]);
-      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
-      if (selectedProductTypes.length > 0) {
-        const apiProductTypes = selectedProductTypes.map(t => t === "MA" ? "MAPD" : t);
-        params.set("product_types", apiProductTypes.join(","));
+      // Build base params (without parent_org)
+      const buildBaseParams = () => {
+        const params = new URLSearchParams();
+        if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
+        if (selectedProductTypes.length > 0) {
+          const apiProductTypes = selectedProductTypes.map(t => t === "MA" ? "MAPD" : t);
+          params.set("product_types", apiProductTypes.join(","));
+        }
+        if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
+        if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
+        if (selectedStates.length > 0) params.set("states", selectedStates.join(","));
+        if (selectedCounties.length > 0) params.set("counties", selectedCounties.join(","));
+        params.set("start_year", "2013");
+        params.set("end_year", "2026");
+        return params;
+      };
+
+      const series: Record<string, number[]> = {};
+      let years: number[] = [];
+      let auditId = "";
+
+      // Fetch industry total if showing it or no payers selected
+      if (showIndustryTotal || selectedParentOrgs.length === 0) {
+        const params = buildBaseParams();
+        const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}`);
+        const data = await res.json();
+        years = data.years || [];
+        series["Total"] = data.enrollment || [];
+        auditId = data.audit_id || "";
       }
-      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
-      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
-      if (selectedStates.length > 0) params.set("states", selectedStates.join(","));
-      if (selectedCounties.length > 0) params.set("counties", selectedCounties.join(","));
-      params.set("start_year", "2013");
-      params.set("end_year", "2026");
-      
-      const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}`);
-      const data = await res.json();
-      
+
+      // Fetch each selected payer in parallel
+      if (selectedParentOrgs.length > 0) {
+        const payerPromises = selectedParentOrgs.map(async (org) => {
+          const params = buildBaseParams();
+          params.set("parent_org", org);
+          const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}`);
+          const data = await res.json();
+          return { org, data };
+        });
+
+        const payerResults = await Promise.all(payerPromises);
+        
+        for (const { org, data } of payerResults) {
+          if (data.years && data.enrollment) {
+            if (years.length === 0) years = data.years;
+            series[org] = data.enrollment;
+          }
+        }
+      }
+
       return {
-        years: data.years,
-        total_enrollment: data.enrollment,
-        audit_id: data.audit_id,
-        filters: data.filters,
+        years,
+        series,
+        total_enrollment: series["Total"] || [],
+        audit_id: auditId,
+        filters: {},
       };
     },
   });
@@ -184,7 +220,7 @@ export default function EnrollmentPage() {
     series: rawTimeseriesData.series
       ? Object.fromEntries(
           Object.entries(rawTimeseriesData.series).filter(([key]) =>
-            showIndustryTotal || key !== 'Industry Total'
+            showIndustryTotal || (key !== 'Industry Total' && key !== 'Total')
           )
         )
       : undefined
