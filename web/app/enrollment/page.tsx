@@ -97,10 +97,22 @@ export default function EnrollmentPage() {
     value: number;
   } | null>(null);
 
-  // Fetch filter options
+  // Fetch filter options using v5 (Gold layer)
   const { data: filterOptions } = useQuery<FilterOptions>({
-    queryKey: ["enrollment-filters"],
+    queryKey: ["enrollment-filters-v5"],
     queryFn: async () => {
+      // Try v5 first (Gold layer), fall back to v3
+      const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
+      const v5Data = await v5Res.json();
+      if (!v5Data.error) {
+        return {
+          ...v5Data,
+          // Add compatibility fields
+          plan_types_simplified: v5Data.plan_types || [],
+          contracts: [], // Not needed for UI
+        };
+      }
+      // Fallback to v3
       const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
       return res.json();
     },
@@ -716,7 +728,7 @@ export default function EnrollmentPage() {
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
             </div>
           ) : chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%" minHeight={300}>
+            <ResponsiveContainer width="100%" height={380} minHeight={300}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis dataKey="year" tick={{ fill: '#6b7280' }} />
