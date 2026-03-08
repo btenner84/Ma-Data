@@ -44,14 +44,6 @@ except ImportError as e:
     print(f"Warning: Unified data layer not available: {e}")
     UNIFIED_DATA_AVAILABLE = False
 
-# Import chat router
-try:
-    from api.chat import router as chat_router
-    CHAT_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Chat module not available: {e}")
-    CHAT_AVAILABLE = False
-
 # Import audit router
 try:
     from api.audit_api import router as audit_router
@@ -59,22 +51,6 @@ try:
 except ImportError as e:
     print(f"Warning: Audit API not available: {e}")
     AUDIT_API_AVAILABLE = False
-
-# Import Agent V2 router (multi-step with full audit)
-try:
-    from api.routes.agent_v2_routes import router as agent_v2_router
-    AGENT_V2_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Agent V2 not available: {e}")
-    AGENT_V2_AVAILABLE = False
-
-# Import Agent V3 router (structured tools with thinking transparency)
-try:
-    from api.routes.agent_v3_routes import router as agent_v3_router
-    AGENT_V3_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Agent V3 not available: {e}")
-    AGENT_V3_AVAILABLE = False
 
 app = FastAPI(
     title="MA Intelligence Platform API",
@@ -92,21 +68,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register chat router
-if CHAT_AVAILABLE:
-    app.include_router(chat_router)
-
 # Register audit API router
 if AUDIT_API_AVAILABLE:
     app.include_router(audit_router)
-
-# Register Agent V2 router
-if AGENT_V2_AVAILABLE:
-    app.include_router(agent_v2_router)
-
-# Register Agent V3 router
-if AGENT_V3_AVAILABLE:
-    app.include_router(agent_v3_router)
 
 S3_BUCKET = os.environ.get("S3_BUCKET", "ma-data123")
 s3 = boto3.client('s3')
