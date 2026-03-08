@@ -66,8 +66,10 @@ export default function SummaryPage() {
   // Filter popup
   const [showFilters, setShowFilters] = useState(false);
   
-  // Stars year toggle
+  // Table year toggles
   const [starsYear, setStarsYear] = useState<number>(2026);
+  const [enrollmentYear, setEnrollmentYear] = useState<number>(2026);
+  const [riskYear, setRiskYear] = useState<number>(2024); // Risk data typically lags
 
   // Fetch filter options
   const { data: filterOptions } = useQuery<FilterOptions>({
@@ -112,10 +114,10 @@ export default function SummaryPage() {
 
   // Enrollment by plan type - use risk dimensions which has plan_type breakdown with enrollment
   const { data: enrollmentByPlanType } = useQuery({
-    queryKey: ["summary-enrollment-plantype", selectedPayer, states, endYear],
+    queryKey: ["summary-enrollment-plantype", selectedPayer, states, enrollmentYear],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.append("year", endYear.toString());
+      params.append("year", enrollmentYear.toString());
       if (selectedPayer) params.append("parent_orgs", selectedPayer);
       if (states.length) params.append("states", states.join(","));
       const res = await fetch(`${API_BASE}/api/v3/risk/by-dimensions?${params.toString()}`);
@@ -177,10 +179,10 @@ export default function SummaryPage() {
   });
 
   const { data: riskByProduct } = useQuery({
-    queryKey: ["summary-risk-product", selectedPayer, snpTypes, groupTypes, endYear],
+    queryKey: ["summary-risk-product", selectedPayer, snpTypes, groupTypes, riskYear],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.append("year", endYear.toString());
+      params.append("year", riskYear.toString());
       if (selectedPayer) params.append("parent_orgs", selectedPayer);
       const res = await fetch(`${API_BASE}/api/v3/risk/by-dimensions?${params.toString()}`);
       return res.json();
@@ -413,7 +415,7 @@ export default function SummaryPage() {
           {/* ENROLLMENT OVER TIME */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4">Enrollment Over Time</h2>
-            <div className="h-64">
+            <div style={{ width: '100%', height: 256, minHeight: 200 }}>
               {!isMounted || enrollmentLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
@@ -434,7 +436,18 @@ export default function SummaryPage() {
 
           {/* ENROLLMENT BY PLAN TYPE */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Enrollment by Plan Type ({endYear})</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Enrollment by Plan Type</h2>
+              <select
+                value={enrollmentYear}
+                onChange={(e) => setEnrollmentYear(Number(e.target.value))}
+                className="border rounded px-2 py-1 text-sm"
+              >
+                {filterOptions?.years?.slice(-10).reverse().map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -467,7 +480,7 @@ export default function SummaryPage() {
           {/* 4+ STAR % OVER TIME */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4">4+ Star Enrollment % Over Time</h2>
-            <div className="h-64">
+            <div style={{ width: '100%', height: 256, minHeight: 200 }}>
               {!isMounted || starsLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-600" />
@@ -516,16 +529,19 @@ export default function SummaryPage() {
                       ? starsDistribution?.columns?.[selectedPayer] 
                       : starsDistribution?.columns?.Industry;
                     const distribution = column?.distribution;
-                    if (!distribution) return (
+                    if (!distribution || Object.keys(distribution).length === 0) return (
                       <tr><td colSpan={4} className="py-4 text-center text-gray-500">No data</td></tr>
                     );
-                    const ratings = Object.keys(distribution).map(Number).sort((a, b) => b - a);
+                    const ratings = Object.keys(distribution).map(Number).filter(n => !isNaN(n)).sort((a, b) => b - a);
+                    if (ratings.length === 0) return (
+                      <tr><td colSpan={4} className="py-4 text-center text-gray-500">No data</td></tr>
+                    );
                     return ratings.map(rating => {
-                      const data = distribution[rating];
+                      const data = distribution[rating] || {};
                       return (
                         <tr key={rating} className="border-b hover:bg-gray-50">
                           <td className="py-2 px-3 font-medium">{rating} Stars</td>
-                          <td className="text-right py-2 px-3">{data.contracts?.toLocaleString() || "-"}</td>
+                          <td className="text-right py-2 px-3">{data.contracts ? data.contracts.toLocaleString() : "-"}</td>
                           <td className="text-right py-2 px-3">{formatNumber(data.enrollment)}</td>
                           <td className="text-right py-2 px-3">{formatPercent(data.pct)}</td>
                         </tr>
@@ -540,7 +556,7 @@ export default function SummaryPage() {
           {/* RISK SCORE OVER TIME */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4">Risk Score Over Time</h2>
-            <div className="h-64">
+            <div style={{ width: '100%', height: 256, minHeight: 200 }}>
               {!isMounted || riskLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
@@ -559,9 +575,20 @@ export default function SummaryPage() {
             </div>
           </div>
 
-          {/* RISK BY PRODUCT TYPE */}
+          {/* RISK BY PLAN TYPE */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Risk Score by Plan Type ({endYear})</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Risk Score by Plan Type</h2>
+              <select
+                value={riskYear}
+                onChange={(e) => setRiskYear(Number(e.target.value))}
+                className="border rounded px-2 py-1 text-sm"
+              >
+                {[2024, 2023, 2022, 2021, 2020, 2019, 2018].map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
