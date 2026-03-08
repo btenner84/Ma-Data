@@ -5791,6 +5791,38 @@ async def download_enrollment_raw(
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
 
+@app.get("/api/data-sources/enrollment-contract")
+async def download_enrollment_contract_raw(
+    year: int = 2024,
+    month: str = "12",
+    format: str = "raw"
+):
+    """
+    Download RAW Monthly Enrollment by Contract file from CMS.
+    Returns the original ZIP file from S3.
+    """
+    try:
+        # Find the raw enrollment by contract file
+        s3_key, filename = find_raw_file("raw/enrollment/by_contract/", year, month)
+        
+        if not s3_key:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Raw enrollment by contract file not found for {year}-{month}. Available years: 2013-2026"
+            )
+        
+        # Generate presigned URL for direct download
+        url = get_s3_presigned_url(s3_key, filename)
+        
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=url, status_code=302)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
 @app.get("/api/data-sources/snp")
 async def download_snp_raw(
     year: int = 2024,
@@ -6068,6 +6100,159 @@ async def list_available_raw_files():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+
+
+@app.get("/api/data-lineage")
+async def get_data_lineage():
+    """
+    Comprehensive data lineage showing all tables, their sources, and coverage.
+    Provides full audit trail from raw CMS files to gold layer tables.
+    """
+    try:
+        import boto3
+        from io import BytesIO
+        import pandas as pd
+        
+        s3 = boto3.client('s3')
+        bucket = 'ma-data123'
+        
+        lineage = {
+            "gold_tables": [],
+            "dimension_tables": [],
+            "raw_sources": [],
+            "processing_pipeline": []
+        }
+        
+        # 1. Gold Tables
+        gold_tables = [
+            ("gold/fact_enrollment_national.parquet", "Enrollment (National)", "Monthly Enrollment by Contract"),
+            ("gold/dim_plan.parquet", "Plan Dimensions", "CPSC Contract Info"),
+            ("gold/dim_entity.parquet", "Entity/Organization", "CPSC Contract Info"),
+        ]
+        
+        for key, name, source in gold_tables:
+            try:
+                obj = s3.get_object(Bucket=bucket, Key=key)
+                df = pd.read_parquet(BytesIO(obj['Body'].read()))
+                
+                years = sorted(df['year'].unique().tolist()) if 'year' in df.columns else []
+                source_col = [c for c in df.columns if 'source' in c.lower()]
+                
+                table_info = {
+                    "table": key,
+                    "name": name,
+                    "rows": len(df),
+                    "columns": list(df.columns),
+                    "years": years,
+                    "year_range": f"{min(years)}-{max(years)}" if years else "N/A",
+                    "source_tracking": source_col,
+                    "raw_source": source,
+                }
+                
+                # Get sample source files if available
+                if source_col and len(source_col) > 0:
+                    sample_sources = df[source_col[0]].dropna().unique()[:3].tolist()
+                    table_info["sample_source_files"] = sample_sources
+                
+                lineage["gold_tables"].append(table_info)
+            except Exception as e:
+                lineage["gold_tables"].append({"table": key, "name": name, "error": str(e)[:50]})
+        
+        # 2. Processed CPSC Coverage
+        cpsc_months = []
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='processed/fact_enrollment/', MaxKeys=500)
+        for obj in response.get('Contents', []):
+            if obj['Key'].endswith('.parquet'):
+                parts = obj['Key'].split('/')
+                if len(parts) >= 4 and parts[2].isdigit():
+                    cpsc_months.append(f"{parts[2]}-{parts[3]}")
+        
+        lineage["raw_sources"].append({
+            "source": "CPSC (Geographic)",
+            "location": "processed/fact_enrollment/YYYY/MM/data.parquet",
+            "coverage": f"{len(cpsc_months)} months",
+            "years": sorted(set([m.split('-')[0] for m in cpsc_months])),
+            "raw_origin": "raw/enrollment/cpsc/*/cpsc_enrollment_*.zip",
+            "cms_source": "CMS Monthly Enrollment by CPSC"
+        })
+        
+        # 3. Monthly by Contract Coverage
+        monthly_files = []
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='raw/enrollment/by_contract/', MaxKeys=500)
+        for obj in response.get('Contents', []):
+            if obj['Key'].endswith('.zip') and obj['Size'] > 50000:
+                import re
+                match = re.search(r'(\d{4})-(\d{2})', obj['Key'])
+                if match:
+                    monthly_files.append(f"{match.group(1)}-{match.group(2)}")
+        
+        lineage["raw_sources"].append({
+            "source": "Monthly Enrollment by Contract",
+            "location": "raw/enrollment/by_contract/YYYY-MM/*.zip",
+            "coverage": f"{len(monthly_files)} months",
+            "years": sorted(set([m.split('-')[0] for m in monthly_files])),
+            "cms_source": "CMS Monthly Enrollment by Contract"
+        })
+        
+        # 4. SNP Lookup
+        try:
+            obj = s3.get_object(Bucket=bucket, Key='processed/unified/snp_lookup.parquet')
+            df = pd.read_parquet(BytesIO(obj['Body'].read()))
+            lineage["dimension_tables"].append({
+                "table": "snp_lookup",
+                "name": "SNP Type Classification",
+                "rows": len(df),
+                "years": sorted(df['year'].unique().tolist()),
+                "snp_types": sorted(df['snp_type'].unique().tolist()),
+                "source_tracking": "_source_file",
+                "raw_origin": "raw/snp/*/snp_*.zip"
+            })
+        except:
+            pass
+        
+        # 5. Crosswalk Coverage
+        crosswalk_years = []
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='raw/crosswalks/', MaxKeys=50)
+        import re
+        for obj in response.get('Contents', []):
+            match = re.search(r'crosswalk_(\d{4})\.zip', obj['Key'])
+            if match:
+                crosswalk_years.append(int(match.group(1)))
+        
+        lineage["dimension_tables"].append({
+            "table": "crosswalk",
+            "name": "Contract Crosswalk",
+            "years": sorted(set(crosswalk_years)),
+            "purpose": "Track contract ID changes, mergers, acquisitions",
+            "raw_origin": "raw/crosswalks/crosswalk_YYYY.zip"
+        })
+        
+        # 6. Processing Pipeline Description
+        lineage["processing_pipeline"] = [
+            {
+                "step": 1,
+                "name": "Raw Ingestion",
+                "description": "Download ZIP files from CMS website",
+                "output": "raw/enrollment/cpsc/, raw/enrollment/by_contract/, raw/snp/, etc."
+            },
+            {
+                "step": 2,
+                "name": "Processing",
+                "description": "Extract CSVs, normalize columns, convert to Parquet",
+                "output": "processed/fact_enrollment/, processed/unified/"
+            },
+            {
+                "step": 3,
+                "name": "Gold Layer",
+                "description": "Aggregate, join dimensions, add source tracking",
+                "output": "gold/fact_enrollment_national.parquet, gold/dim_*.parquet"
+            }
+        ]
+        
+        return sanitize_for_json(lineage)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get lineage: {str(e)}")
 
 
 @app.get("/api/health")

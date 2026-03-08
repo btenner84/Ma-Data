@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight, BookOpen, FileSearch, ScrollText, DollarSign, Activity, Cog } from "lucide-react";
+import { Database, Download, FileText, Users, Star, TrendingUp, AlertTriangle, X, MapPin, ArrowRight, BookOpen, FileSearch, ScrollText, DollarSign, Activity, Cog, GitBranch, Layers, Table2, CheckCircle2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -60,31 +60,31 @@ const dataSources: DataSourceConfig[] = [
     description: "County-level enrollment with geographic detail",
     details: [
       "Contract-Plan-State-County level",
-      "Monthly snapshots",
-      "Some values suppressed (<10 enrollees)",
-      "Includes plan type & organization"
+      "Monthly snapshots (157 months)",
+      "~1.5% less than national (suppression)",
+      "State/County filtering enabled"
     ],
     icon: <MapPin className="w-7 h-7" />,
     color: "blue",
     table: "cpsc_enrollment",
-    years: generateYears(2013, 2025),
+    years: generateYears(2013, 2026),
     fileType: "ZIP (CSV)",
   },
   {
-    id: "enrollment-by-plan",
-    name: "Monthly Enrollment",
-    shortName: "Enrollment",
-    description: "Complete enrollment at contract-plan level",
+    id: "enrollment-by-contract",
+    name: "Monthly Enrollment by Contract",
+    shortName: "National",
+    description: "Exact national totals at contract level",
     details: [
-      "Contract + Plan level detail",
+      "Contract level detail (158 months)",
       "No geographic suppression",
       "Parent organization included",
-      "Most complete enrollment source"
+      "Most accurate for national totals"
     ],
     icon: <Users className="w-7 h-7" />,
     color: "green",
-    table: "enrollment_by_plan",
-    years: generateYears(2007, 2025),
+    table: "enrollment_by_contract",
+    years: generateYears(2013, 2026),
     fileType: "ZIP (CSV + Excel)",
   },
   {
@@ -96,12 +96,12 @@ const dataSources: DataSourceConfig[] = [
       "D-SNP (Dual Eligible)",
       "C-SNP (Chronic Condition)",
       "I-SNP (Institutional)",
-      "State-level enrollment"
+      "13,013 plan classifications"
     ],
     icon: <AlertTriangle className="w-7 h-7" />,
     color: "purple",
     table: "snp_enrollment",
-    years: generateYears(2007, 2024),
+    years: generateYears(2013, 2026),
     fileType: "ZIP (Excel + PDF)",
   },
   {
@@ -196,8 +196,8 @@ function getDownloadUrl(table: string, year: number): string {
   switch (table) {
     case "cpsc_enrollment":
       return `${API_BASE}/api/data-sources/cpsc?year=${year}&month=12&format=raw`;
-    case "enrollment_by_plan":
-      return `${API_BASE}/api/data-sources/enrollment?year=${year}&month=12&format=raw`;
+    case "enrollment_by_contract":
+      return `${API_BASE}/api/data-sources/enrollment-contract?year=${year}&month=12&format=raw`;
     case "snp_enrollment":
       return `${API_BASE}/api/data-sources/snp?year=${year}&month=12&format=raw`;
     case "stars_overall":
@@ -224,6 +224,49 @@ export default function DataSourcesPage() {
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/api/documents/list`);
       if (!res.ok) throw new Error("Failed to fetch documents");
+      return res.json();
+    },
+  });
+
+  // Fetch data lineage
+  const { data: lineageData } = useQuery<{
+    gold_tables: Array<{
+      table: string;
+      name: string;
+      rows: number;
+      columns: string[];
+      years: number[];
+      year_range: string;
+      source_tracking: string[];
+      raw_source: string;
+      sample_source_files?: string[];
+    }>;
+    dimension_tables: Array<{
+      table: string;
+      name: string;
+      rows?: number;
+      years: number[];
+      snp_types?: string[];
+      purpose?: string;
+    }>;
+    raw_sources: Array<{
+      source: string;
+      location: string;
+      coverage: string;
+      years: string[];
+      cms_source: string;
+    }>;
+    processing_pipeline: Array<{
+      step: number;
+      name: string;
+      description: string;
+      output: string;
+    }>;
+  }>({
+    queryKey: ["data-lineage"],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/data-lineage`);
+      if (!res.ok) throw new Error("Failed to fetch lineage");
       return res.json();
     },
   });
@@ -452,6 +495,140 @@ export default function DataSourcesPage() {
             </div>
           </div>
         </div>
+
+        {/* Data Lineage Section */}
+        {lineageData && (
+          <>
+            <div className="mt-16 mb-10">
+              <h2 className="text-2xl font-bold text-slate-900 mb-2">Data Lineage & Audit Trail</h2>
+              <p className="text-slate-500">
+                Complete traceability from raw CMS files to processed tables. Every data point tracks back to its source.
+              </p>
+            </div>
+
+            {/* Processing Pipeline */}
+            <div className="bg-gradient-to-r from-slate-50 to-slate-100 rounded-2xl border border-slate-200 p-6 mb-8">
+              <div className="flex items-center gap-2 mb-4">
+                <GitBranch className="w-5 h-5 text-slate-600" />
+                <h3 className="font-semibold text-slate-900">Processing Pipeline</h3>
+              </div>
+              <div className="flex items-center justify-between">
+                {lineageData.processing_pipeline.map((step, idx) => (
+                  <div key={step.step} className="flex items-center">
+                    <div className="text-center">
+                      <div className="w-10 h-10 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center mb-2 mx-auto">
+                        <span className="text-sm font-bold text-slate-600">{step.step}</span>
+                      </div>
+                      <p className="text-sm font-medium text-slate-900">{step.name}</p>
+                      <p className="text-xs text-slate-500 max-w-[150px]">{step.description}</p>
+                    </div>
+                    {idx < lineageData.processing_pipeline.length - 1 && (
+                      <ArrowRight className="w-6 h-6 text-slate-300 mx-4" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Gold Tables */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+              {lineageData.gold_tables.map((table) => (
+                <div key={table.table} className="bg-white rounded-xl border border-slate-200 p-5">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-emerald-100 p-2 rounded-lg">
+                        <Table2 className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-slate-900">{table.name}</h4>
+                        <p className="text-xs text-slate-500 font-mono">{table.table}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 text-emerald-600">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span className="text-xs font-medium">Tracked</span>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-slate-500">Rows:</span>
+                      <span className="ml-2 font-medium">{table.rows?.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Years:</span>
+                      <span className="ml-2 font-medium">{table.year_range}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-xs text-slate-500 mb-1">Raw Source:</p>
+                    <p className="text-xs font-mono text-slate-700">{table.raw_source}</p>
+                    {table.source_tracking && table.source_tracking.length > 0 && (
+                      <p className="text-xs text-emerald-600 mt-1">
+                        Source tracking: {table.source_tracking.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Raw Sources Coverage */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6 mb-8">
+              <div className="flex items-center gap-2 mb-4">
+                <Layers className="w-5 h-5 text-slate-600" />
+                <h3 className="font-semibold text-slate-900">Raw Data Coverage</h3>
+              </div>
+              <div className="space-y-4">
+                {lineageData.raw_sources.map((source) => (
+                  <div key={source.source} className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
+                    <div>
+                      <p className="font-medium text-slate-900">{source.source}</p>
+                      <p className="text-xs text-slate-500">{source.cms_source}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-slate-900">{source.coverage}</p>
+                      <p className="text-xs text-slate-500">
+                        {source.years[0]} - {source.years[source.years.length - 1]}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Dimension Tables */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Database className="w-5 h-5 text-slate-600" />
+                <h3 className="font-semibold text-slate-900">Dimension Tables</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {lineageData.dimension_tables.map((dim) => (
+                  <div key={dim.table} className="bg-slate-50 rounded-lg p-4">
+                    <p className="font-medium text-slate-900">{dim.name}</p>
+                    <p className="text-xs font-mono text-slate-500 mb-2">{dim.table}</p>
+                    {dim.rows && (
+                      <p className="text-sm text-slate-600">{dim.rows.toLocaleString()} rows</p>
+                    )}
+                    {dim.snp_types && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Types: {dim.snp_types.join(", ")}
+                      </p>
+                    )}
+                    {dim.purpose && (
+                      <p className="text-xs text-slate-500 mt-1">{dim.purpose}</p>
+                    )}
+                    <p className="text-xs text-slate-400 mt-2">
+                      Years: {dim.years[0]} - {dim.years[dim.years.length - 1]}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </main>
 
       {/* Download Modal */}
