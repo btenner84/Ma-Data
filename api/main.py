@@ -7039,6 +7039,143 @@ async def get_county_benchmarks(
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
+# ================================================================
+# V5 API ENDPOINTS - Proper Gold Layer Usage
+# ================================================================
+
+@app.get("/api/v5/filters")
+async def get_filters_v5():
+    """
+    Get all available filter options from Gold layer dimension tables.
+    Returns years, parent_orgs, plan_types, product_types, snp_types, group_types, states.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_filters_v5()
+    except Exception as e:
+        return {"error": str(e), "fallback": "/api/v3/enrollment/filters"}
+
+
+@app.get("/api/v5/enrollment/timeseries")
+async def get_enrollment_timeseries_v5(
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    product_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    states: Optional[str] = None,
+    start_year: int = 2015,
+    end_year: int = 2026
+):
+    """
+    Get enrollment timeseries using Gold layer with full filter support.
+    
+    All filters properly join to dimension tables for consistent filtering.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_enrollment_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            product_types=product_types.split(",") if product_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            states=states.split(",") if states else None,
+            start_year=start_year,
+            end_year=end_year
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v5/stars/timeseries")
+async def get_stars_timeseries_v5(
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    product_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    start_year: int = 2015,
+    end_year: int = 2026
+):
+    """
+    Get 4+ star enrollment percentage timeseries using Gold layer.
+    
+    Returns % of enrollment in 4+ star contracts over time.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_stars_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            product_types=product_types.split(",") if product_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            start_year=start_year,
+            end_year=end_year
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v5/risk/timeseries")
+async def get_risk_timeseries_v5(
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    start_year: int = 2015,
+    end_year: int = 2024
+):
+    """
+    Get risk score timeseries using Gold layer.
+    
+    Returns enrollment-weighted average risk score over time.
+    Note: Risk data only available through 2024.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_risk_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            start_year=start_year,
+            end_year=end_year
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v5/summary")
+async def get_summary_v5(
+    parent_org: Optional[str] = None,
+    year: int = 2026,
+    plan_types: Optional[str] = None,
+    product_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    group_types: Optional[str] = None
+):
+    """
+    Get comprehensive summary for a payer or industry using Gold layer.
+    
+    Returns enrollment, 4+ star %, and risk score for the specified filters.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_summary_v5(
+            parent_org=parent_org,
+            year=year,
+            plan_types=plan_types.split(",") if plan_types else None,
+            product_types=product_types.split(",") if product_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

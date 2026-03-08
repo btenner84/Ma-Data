@@ -399,7 +399,314 @@ class UnifiedDataService:
         return None
 
 
+    # =========================================================================
+    # V5 METHODS - Full Gold Layer Support
+    # =========================================================================
+    
+    def get_filters_v5(self) -> Dict:
+        """Get all available filter options from Gold layer."""
+        result = {}
+        
+        # Years from time dimension
+        sql = "SELECT DISTINCT year FROM gold_dim_time ORDER BY year"
+        years_result = self._execute_query(sql, ['gold_dim_time'], {})
+        result['years'] = [r['year'] for r in years_result.data.get('rows', [])]
+        
+        # Parent orgs from entity dimension
+        sql = "SELECT DISTINCT parent_org FROM gold_dim_entity WHERE parent_org IS NOT NULL ORDER BY parent_org"
+        parents_result = self._execute_query(sql, ['gold_dim_entity'], {})
+        result['parent_orgs'] = [r['parent_org'] for r in parents_result.data.get('rows', [])]
+        
+        # Plan attributes from plan dimension
+        sql = "SELECT DISTINCT plan_type FROM gold_dim_plan WHERE plan_type IS NOT NULL ORDER BY plan_type"
+        pt_result = self._execute_query(sql, ['gold_dim_plan'], {})
+        result['plan_types'] = [r['plan_type'] for r in pt_result.data.get('rows', [])]
+        
+        sql = "SELECT DISTINCT product_type FROM gold_dim_plan WHERE product_type IS NOT NULL ORDER BY product_type"
+        prod_result = self._execute_query(sql, ['gold_dim_plan'], {})
+        result['product_types'] = [r['product_type'] for r in prod_result.data.get('rows', [])]
+        
+        sql = "SELECT DISTINCT snp_type FROM gold_dim_plan WHERE snp_type IS NOT NULL ORDER BY snp_type"
+        snp_result = self._execute_query(sql, ['gold_dim_plan'], {})
+        result['snp_types'] = [r['snp_type'] for r in snp_result.data.get('rows', [])]
+        
+        sql = "SELECT DISTINCT group_type FROM gold_dim_plan WHERE group_type IS NOT NULL ORDER BY group_type"
+        grp_result = self._execute_query(sql, ['gold_dim_plan'], {})
+        result['group_types'] = [r['group_type'] for r in grp_result.data.get('rows', [])]
+        
+        # Geography from geography dimension
+        sql = "SELECT DISTINCT state FROM gold_dim_geography WHERE state IS NOT NULL ORDER BY state"
+        state_result = self._execute_query(sql, ['gold_dim_geography'], {})
+        result['states'] = [r['state'] for r in state_result.data.get('rows', [])]
+        
+        return result
+    
+    def get_enrollment_timeseries_v5(
+        self,
+        parent_org: Optional[str] = None,
+        plan_types: Optional[List[str]] = None,
+        product_types: Optional[List[str]] = None,
+        snp_types: Optional[List[str]] = None,
+        group_types: Optional[List[str]] = None,
+        states: Optional[List[str]] = None,
+        start_year: int = 2015,
+        end_year: int = 2026
+    ) -> Dict:
+        """Get enrollment timeseries with full filter support using Gold layer."""
+        
+        # Build WHERE conditions
+        conditions = [f"e.year >= {start_year}", f"e.year <= {end_year}"]
+        
+        if parent_org:
+            conditions.append(f"ent.parent_org = '{parent_org}'")
+        if plan_types:
+            pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
+            conditions.append(f"p.plan_type IN ({pt_list})")
+        if product_types:
+            prod_list = ", ".join([f"'{pt}'" for pt in product_types])
+            conditions.append(f"p.product_type IN ({prod_list})")
+        if snp_types:
+            snp_list = ", ".join([f"'{st}'" for st in snp_types])
+            conditions.append(f"p.snp_type IN ({snp_list})")
+        if group_types:
+            grp_list = ", ".join([f"'{gt}'" for gt in group_types])
+            conditions.append(f"p.group_type IN ({grp_list})")
+        if states:
+            state_list = ", ".join([f"'{s}'" for s in states])
+            conditions.append(f"g.state IN ({state_list})")
+        
+        where_clause = " AND ".join(conditions)
+        
+        # Use geographic table if state filter, otherwise national
+        if states:
+            sql = f"""
+                SELECT 
+                    e.year,
+                    SUM(e.enrollment) as enrollment,
+                    COUNT(DISTINCT e.contract_id) as contract_count
+                FROM gold_fact_enrollment_geographic e
+                LEFT JOIN gold_dim_entity ent ON e.contract_id = ent.contract_id
+                LEFT JOIN gold_dim_plan p ON e.contract_id = p.contract_id AND e.plan_id = p.plan_id
+                LEFT JOIN gold_dim_geography g ON e.state = g.state AND e.county = g.county
+                WHERE {where_clause}
+                GROUP BY e.year
+                ORDER BY e.year
+            """
+            tables = ['gold_fact_enrollment_geographic', 'gold_dim_entity', 'gold_dim_plan', 'gold_dim_geography']
+        else:
+            sql = f"""
+                SELECT 
+                    e.year,
+                    SUM(e.enrollment) as enrollment,
+                    COUNT(DISTINCT e.contract_id) as contract_count
+                FROM gold_fact_enrollment_national e
+                LEFT JOIN gold_dim_entity ent ON e.contract_id = ent.contract_id
+                LEFT JOIN gold_dim_plan p ON e.contract_id = p.contract_id AND e.plan_id = p.plan_id
+                WHERE {where_clause}
+                GROUP BY e.year
+                ORDER BY e.year
+            """
+            tables = ['gold_fact_enrollment_national', 'gold_dim_entity', 'gold_dim_plan']
+        
+        result = self._execute_query(sql, tables, {
+            'parent_org': parent_org,
+            'plan_types': plan_types,
+            'product_types': product_types,
+            'snp_types': snp_types,
+            'group_types': group_types,
+            'states': states,
+        })
+        
+        rows = result.data.get('rows', [])
+        return {
+            'years': [r['year'] for r in rows],
+            'enrollment': [r['enrollment'] for r in rows],
+            'contract_count': [r['contract_count'] for r in rows],
+            'audit_id': result.audit.query_id,
+            'filters': result.audit.filters_applied
+        }
+    
+    def get_stars_timeseries_v5(
+        self,
+        parent_org: Optional[str] = None,
+        plan_types: Optional[List[str]] = None,
+        product_types: Optional[List[str]] = None,
+        snp_types: Optional[List[str]] = None,
+        start_year: int = 2015,
+        end_year: int = 2026
+    ) -> Dict:
+        """Get 4+ star enrollment percentage timeseries with full filter support."""
+        
+        conditions = [f"s.year >= {start_year}", f"s.year <= {end_year}"]
+        
+        if parent_org:
+            conditions.append(f"ent.parent_org = '{parent_org}'")
+        if plan_types:
+            pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
+            conditions.append(f"p.plan_type IN ({pt_list})")
+        if product_types:
+            prod_list = ", ".join([f"'{pt}'" for pt in product_types])
+            conditions.append(f"p.product_type IN ({prod_list})")
+        if snp_types:
+            snp_list = ", ".join([f"'{st}'" for st in snp_types])
+            conditions.append(f"p.snp_type IN ({snp_list})")
+        
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT 
+                s.year,
+                SUM(e.enrollment) as total_enrollment,
+                SUM(CASE WHEN s.overall_rating >= 4 THEN e.enrollment ELSE 0 END) as fourplus_enrollment,
+                COUNT(DISTINCT s.contract_id) as contract_count
+            FROM gold_fact_stars s
+            LEFT JOIN gold_fact_enrollment_national e ON s.contract_id = e.contract_id AND s.year = e.year
+            LEFT JOIN gold_dim_entity ent ON s.contract_id = ent.contract_id
+            LEFT JOIN gold_dim_plan p ON s.contract_id = p.contract_id
+            WHERE s.overall_rating IS NOT NULL AND {where_clause}
+            GROUP BY s.year
+            ORDER BY s.year
+        """
+        
+        result = self._execute_query(sql, ['gold_fact_stars', 'gold_fact_enrollment_national', 'gold_dim_entity', 'gold_dim_plan'], {
+            'parent_org': parent_org,
+            'plan_types': plan_types,
+            'product_types': product_types,
+            'snp_types': snp_types,
+        })
+        
+        rows = result.data.get('rows', [])
+        return {
+            'years': [r['year'] for r in rows],
+            'pct_fourplus': [
+                round(r['fourplus_enrollment'] / r['total_enrollment'] * 100, 1) if r['total_enrollment'] > 0 else 0
+                for r in rows
+            ],
+            'total_enrollment': [r['total_enrollment'] for r in rows],
+            'contract_count': [r['contract_count'] for r in rows],
+            'audit_id': result.audit.query_id
+        }
+    
+    def get_risk_timeseries_v5(
+        self,
+        parent_org: Optional[str] = None,
+        plan_types: Optional[List[str]] = None,
+        snp_types: Optional[List[str]] = None,
+        start_year: int = 2015,
+        end_year: int = 2024
+    ) -> Dict:
+        """Get risk score timeseries with full filter support."""
+        
+        conditions = [f"r.year >= {start_year}", f"r.year <= {end_year}"]
+        
+        if parent_org:
+            conditions.append(f"ent.parent_org = '{parent_org}'")
+        if plan_types:
+            pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
+            conditions.append(f"p.plan_type IN ({pt_list})")
+        if snp_types:
+            snp_list = ", ".join([f"'{st}'" for st in snp_types])
+            conditions.append(f"p.snp_type IN ({snp_list})")
+        
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"""
+            SELECT 
+                r.year,
+                SUM(r.enrollment) as total_enrollment,
+                SUM(r.risk_score * r.enrollment) as weighted_risk_sum,
+                COUNT(DISTINCT r.contract_id) as contract_count
+            FROM gold_fact_risk_scores r
+            LEFT JOIN gold_dim_entity ent ON r.contract_id = ent.contract_id
+            LEFT JOIN gold_dim_plan p ON r.contract_id = p.contract_id AND r.plan_id = p.plan_id
+            WHERE r.risk_score IS NOT NULL AND {where_clause}
+            GROUP BY r.year
+            ORDER BY r.year
+        """
+        
+        result = self._execute_query(sql, ['gold_fact_risk_scores', 'gold_dim_entity', 'gold_dim_plan'], {
+            'parent_org': parent_org,
+            'plan_types': plan_types,
+            'snp_types': snp_types,
+        })
+        
+        rows = result.data.get('rows', [])
+        return {
+            'years': [r['year'] for r in rows],
+            'wavg_risk': [
+                round(r['weighted_risk_sum'] / r['total_enrollment'], 4) if r['total_enrollment'] > 0 else 0
+                for r in rows
+            ],
+            'total_enrollment': [r['total_enrollment'] for r in rows],
+            'contract_count': [r['contract_count'] for r in rows],
+            'audit_id': result.audit.query_id
+        }
+    
+    def get_summary_v5(
+        self,
+        parent_org: Optional[str] = None,
+        year: int = 2026,
+        plan_types: Optional[List[str]] = None,
+        product_types: Optional[List[str]] = None,
+        snp_types: Optional[List[str]] = None,
+        group_types: Optional[List[str]] = None
+    ) -> Dict:
+        """Get comprehensive summary for a payer or industry."""
+        
+        # Get enrollment
+        enrollment_ts = self.get_enrollment_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types,
+            product_types=product_types,
+            snp_types=snp_types,
+            group_types=group_types,
+            start_year=year,
+            end_year=year
+        )
+        
+        # Get stars
+        stars_ts = self.get_stars_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types,
+            product_types=product_types,
+            snp_types=snp_types,
+            start_year=year,
+            end_year=year
+        )
+        
+        # Get risk (use 2024 if year > 2024)
+        risk_year = min(year, 2024)
+        risk_ts = self.get_risk_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types,
+            snp_types=snp_types,
+            start_year=risk_year,
+            end_year=risk_year
+        )
+        
+        return {
+            'year': year,
+            'parent_org': parent_org or 'Industry',
+            'enrollment': enrollment_ts['enrollment'][0] if enrollment_ts['enrollment'] else 0,
+            'contract_count': enrollment_ts['contract_count'][0] if enrollment_ts['contract_count'] else 0,
+            'pct_fourplus': stars_ts['pct_fourplus'][0] if stars_ts['pct_fourplus'] else 0,
+            'wavg_risk': risk_ts['wavg_risk'][0] if risk_ts['wavg_risk'] else 0,
+            'filters': {
+                'plan_types': plan_types,
+                'product_types': product_types,
+                'snp_types': snp_types,
+                'group_types': group_types
+            }
+        }
+
+
+# Singleton instance
+_data_service_instance = None
+
 def get_data_service() -> UnifiedDataService:
     """Factory function to get a configured data service instance."""
-    use_gold = os.environ.get('USE_GOLD_LAYER', 'true').lower() == 'true'
-    return UnifiedDataService(use_gold=use_gold)
+    global _data_service_instance
+    if _data_service_instance is None:
+        use_gold = os.environ.get('USE_GOLD_LAYER', 'true').lower() == 'true'
+        _data_service_instance = UnifiedDataService(use_gold=use_gold)
+    return _data_service_instance

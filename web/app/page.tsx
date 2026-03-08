@@ -147,6 +147,8 @@ export default function SummaryPage() {
       if (snpTypes.length) params.append("snp_types", snpTypes.join(","));
       if (groupTypes.length) params.append("group_types", groupTypes.join(","));
       params.append("include_total", "true");
+      // Note: stars/fourplus-timeseries doesn't support year range - returns all available years
+      // We filter client-side below
       const res = await fetch(`${API_BASE}/api/stars/fourplus-timeseries?${params.toString()}`);
       return res.json();
     },
@@ -189,7 +191,7 @@ export default function SummaryPage() {
     },
   });
 
-  // Transform enrollment data for chart
+  // Transform enrollment data for chart (already filtered by year range in API)
   const enrollmentChartData = enrollmentTimeseries?.years?.map((year: number, i: number) => {
     // If series exists (payer selected), use that
     if (enrollmentTimeseries.series) {
@@ -201,28 +203,29 @@ export default function SummaryPage() {
     return { year, enrollment: enrollmentTimeseries.total_enrollment?.[i] || 0 };
   }) || [];
 
-  // Transform stars data for chart
+  // Transform stars data for chart - filter by year range client-side
   const starsChartData = starsTimeseries?.years?.map((year: number, i: number) => {
     if (starsTimeseries.series) {
-      // If payer selected, use that; otherwise use "Industry" total
       const key = selectedPayer || "Industry";
       const value = starsTimeseries.series[key]?.[i];
       return { year, fourplus: value };
     }
     return { year, fourplus: null };
-  }).filter((d: any) => d.fourplus !== null && d.fourplus !== undefined) || [];
+  })
+    .filter((d: any) => d.fourplus !== null && d.fourplus !== undefined)
+    .filter((d: any) => d.year >= startYear && d.year <= endYear) || [];
 
-  // Transform risk data for chart
+  // Transform risk data for chart - filter by year range client-side
   const riskChartData = riskTimeseries?.years?.map((year: number, i: number) => {
     if (riskTimeseries.series) {
-      // If payer selected, use that; otherwise use "Industry" total
       const key = selectedPayer || "Industry";
       const value = riskTimeseries.series[key]?.[i];
       return { year, risk: value };
     }
-    // Fallback for older API format
     return { year, risk: riskTimeseries.wavg?.[i] || riskTimeseries.avg_risk?.[i] };
-  }).filter((d: any) => d.risk !== null && d.risk !== undefined) || [];
+  })
+    .filter((d: any) => d.risk !== null && d.risk !== undefined)
+    .filter((d: any) => d.year >= startYear && d.year <= endYear) || [];
 
   // Filter payers for dropdown
   const filteredPayers = filterOptions?.parent_orgs?.filter(
