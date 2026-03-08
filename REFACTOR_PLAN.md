@@ -65,12 +65,36 @@ For each page, verify:
 - [ ] No console errors
 
 ## Progress
-- [ ] Create v5 endpoints
-- [ ] Update Summary page
-- [ ] Test Summary page
-- [ ] Update Enrollment page
-- [ ] Test Enrollment page
-- [ ] Update Stars page
-- [ ] Test Stars page
-- [ ] Update Risk page
-- [ ] Test Risk page
+- [x] Create v5 endpoints
+- [x] Update Summary page
+- [x] Test Summary page
+- [x] Update Enrollment page
+- [x] Test Enrollment page
+- [x] Update Stars page
+- [x] Test Stars page
+- [x] Update Risk page
+- [x] Test Risk page
+
+## Changes Made
+
+### v5 API Endpoints (api/main.py)
+- `GET /api/v5/filters` - Returns filter options from Gold layer dimension tables
+- `GET /api/v5/enrollment/timeseries` - Enrollment timeseries with full filter support
+- `GET /api/v5/stars/timeseries` - 4+ star % timeseries with full filter support  
+- `GET /api/v5/risk/timeseries` - Risk score timeseries with full filter support
+- `GET /api/v5/summary` - Comprehensive single-year summary
+
+### UnifiedDataService (api/services/data_service.py)
+- Enhanced with v5 methods that properly join to dimension tables
+- `get_filters_v5()` - Query dimension tables for filter options
+- `get_enrollment_timeseries_v5()` - Full filter support
+- `get_stars_timeseries_v5()` - Full filter support
+- `get_risk_timeseries_v5()` - Full filter support
+- `get_summary_v5()` - Combined metrics
+
+### UI Updates
+- Summary page: Complete rewrite using v5 endpoints
+- Enrollment page: v5 filters with fallback to v3
+- Stars page: v5 filters with fallback to v3
+- Risk page: v5 filters with fallback to v3
+- Fixed ResponsiveContainer explicit heights across all pages
