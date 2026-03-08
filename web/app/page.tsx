@@ -396,7 +396,7 @@ export default function SummaryPage() {
                   {enrollmentData.error}
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={240} minHeight={200}>
                   <LineChart data={enrollmentChartData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="year" />
@@ -422,7 +422,7 @@ export default function SummaryPage() {
                   {starsData.error}
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={240} minHeight={200}>
                   <LineChart data={starsChartData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="year" />
@@ -448,7 +448,7 @@ export default function SummaryPage() {
                   {riskData.error}
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={240} minHeight={200}>
                   <LineChart data={riskChartData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="year" />
