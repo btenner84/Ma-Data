@@ -155,7 +155,7 @@ class UnifiedDataService:
         start_time = datetime.now()
         
         try:
-            result = self.db.execute(sql)
+            result = self.db.conn.execute(sql)
             rows = result.fetchall()
             columns = [desc[0] for desc in result.description] if result.description else []
             
@@ -452,61 +452,56 @@ class UnifiedDataService:
         start_year: int = 2015,
         end_year: int = 2026
     ) -> Dict:
-        """Get enrollment timeseries with full filter support using Gold layer."""
+        """Get enrollment timeseries with full filter support using Gold layer.
         
-        # Build WHERE conditions
+        Note: Fact tables are denormalized - no JOINs needed for filtering.
+        Uses latest month per year (point-in-time snapshot, not cumulative).
+        """
+        
+        # Build WHERE conditions - query fact table directly (denormalized)
         conditions = [f"e.year >= {start_year}", f"e.year <= {end_year}"]
         
         if parent_org:
-            conditions.append(f"ent.parent_org = '{parent_org}'")
+            conditions.append(f"e.parent_org = '{parent_org}'")
         if plan_types:
             pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
-            conditions.append(f"p.plan_type IN ({pt_list})")
+            conditions.append(f"e.plan_type IN ({pt_list})")
         if product_types:
             prod_list = ", ".join([f"'{pt}'" for pt in product_types])
-            conditions.append(f"p.product_type IN ({prod_list})")
+            conditions.append(f"e.product_type IN ({prod_list})")
         if snp_types:
             snp_list = ", ".join([f"'{st}'" for st in snp_types])
-            conditions.append(f"p.snp_type IN ({snp_list})")
+            conditions.append(f"e.snp_type IN ({snp_list})")
         if group_types:
             grp_list = ", ".join([f"'{gt}'" for gt in group_types])
-            conditions.append(f"p.group_type IN ({grp_list})")
+            conditions.append(f"e.group_type IN ({grp_list})")
         if states:
             state_list = ", ".join([f"'{s}'" for s in states])
-            conditions.append(f"g.state IN ({state_list})")
+            conditions.append(f"e.state IN ({state_list})")
         
         where_clause = " AND ".join(conditions)
         
-        # Use geographic table if state filter, otherwise national
-        if states:
-            sql = f"""
-                SELECT 
-                    e.year,
-                    SUM(e.enrollment) as enrollment,
-                    COUNT(DISTINCT e.contract_id) as contract_count
-                FROM gold_fact_enrollment_geographic e
-                LEFT JOIN gold_dim_entity ent ON e.contract_id = ent.contract_id
-                LEFT JOIN gold_dim_plan p ON e.contract_id = p.contract_id AND e.plan_id = p.plan_id
-                LEFT JOIN gold_dim_geography g ON e.state = g.state AND e.county = g.county
-                WHERE {where_clause}
-                GROUP BY e.year
-                ORDER BY e.year
-            """
-            tables = ['gold_fact_enrollment_geographic', 'gold_dim_entity', 'gold_dim_plan', 'gold_dim_geography']
-        else:
-            sql = f"""
-                SELECT 
-                    e.year,
-                    SUM(e.enrollment) as enrollment,
-                    COUNT(DISTINCT e.contract_id) as contract_count
-                FROM gold_fact_enrollment_national e
-                LEFT JOIN gold_dim_entity ent ON e.contract_id = ent.contract_id
-                LEFT JOIN gold_dim_plan p ON e.contract_id = p.contract_id AND e.plan_id = p.plan_id
-                WHERE {where_clause}
-                GROUP BY e.year
-                ORDER BY e.year
-            """
-            tables = ['gold_fact_enrollment_national', 'gold_dim_entity', 'gold_dim_plan']
+        # Always use national table (now has state column for state filtering)
+        # Use latest month per year for point-in-time snapshot
+        table = 'gold_fact_enrollment_national'
+        sql = f"""
+            WITH latest_months AS (
+                SELECT year, MAX(month) as max_month
+                FROM {table}
+                WHERE year >= {start_year} AND year <= {end_year}
+                GROUP BY year
+            )
+            SELECT 
+                e.year,
+                SUM(e.enrollment) as enrollment,
+                COUNT(DISTINCT e.contract_id) as contract_count
+            FROM {table} e
+            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+            WHERE {where_clause}
+            GROUP BY e.year
+            ORDER BY e.year
+        """
+        tables = [table]
         
         result = self._execute_query(sql, tables, {
             'parent_org': parent_org,
@@ -535,40 +530,56 @@ class UnifiedDataService:
         start_year: int = 2015,
         end_year: int = 2026
     ) -> Dict:
-        """Get 4+ star enrollment percentage timeseries with full filter support."""
+        """Get 4+ star enrollment percentage timeseries with full filter support.
+        
+        Joins stars to enrollment (both denormalized) to calculate enrollment-weighted %.
+        Uses latest month per year for enrollment (point-in-time snapshot).
+        """
         
         conditions = [f"s.year >= {start_year}", f"s.year <= {end_year}"]
         
+        # Filter using parent_org from stars table (or enrollment)
         if parent_org:
-            conditions.append(f"ent.parent_org = '{parent_org}'")
+            conditions.append(f"s.parent_org = '{parent_org}'")
+        # Filter using dimension columns from enrollment table
         if plan_types:
             pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
-            conditions.append(f"p.plan_type IN ({pt_list})")
+            conditions.append(f"e.plan_type IN ({pt_list})")
         if product_types:
             prod_list = ", ".join([f"'{pt}'" for pt in product_types])
-            conditions.append(f"p.product_type IN ({prod_list})")
+            conditions.append(f"e.product_type IN ({prod_list})")
         if snp_types:
             snp_list = ", ".join([f"'{st}'" for st in snp_types])
-            conditions.append(f"p.snp_type IN ({snp_list})")
+            conditions.append(f"e.snp_type IN ({snp_list})")
         
         where_clause = " AND ".join(conditions)
         
         sql = f"""
+            WITH latest_months AS (
+                SELECT year, MAX(month) as max_month
+                FROM gold_fact_enrollment_national
+                WHERE year >= {start_year} AND year <= {end_year}
+                GROUP BY year
+            ),
+            enrollment_snapshot AS (
+                SELECT e.*
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+            )
             SELECT 
                 s.year,
                 SUM(e.enrollment) as total_enrollment,
                 SUM(CASE WHEN s.overall_rating >= 4 THEN e.enrollment ELSE 0 END) as fourplus_enrollment,
                 COUNT(DISTINCT s.contract_id) as contract_count
             FROM gold_fact_stars s
-            LEFT JOIN gold_fact_enrollment_national e ON s.contract_id = e.contract_id AND s.year = e.year
-            LEFT JOIN gold_dim_entity ent ON s.contract_id = ent.contract_id
-            LEFT JOIN gold_dim_plan p ON s.contract_id = p.contract_id
+            LEFT JOIN enrollment_snapshot e 
+                ON s.contract_id = e.contract_id AND s.year = e.year
             WHERE s.overall_rating IS NOT NULL AND {where_clause}
             GROUP BY s.year
             ORDER BY s.year
         """
         
-        result = self._execute_query(sql, ['gold_fact_stars', 'gold_fact_enrollment_national', 'gold_dim_entity', 'gold_dim_plan'], {
+        result = self._execute_query(sql, ['gold_fact_stars', 'gold_fact_enrollment_national'], {
             'parent_org': parent_org,
             'plan_types': plan_types,
             'product_types': product_types,
@@ -579,7 +590,7 @@ class UnifiedDataService:
         return {
             'years': [r['year'] for r in rows],
             'pct_fourplus': [
-                round(r['fourplus_enrollment'] / r['total_enrollment'] * 100, 1) if r['total_enrollment'] > 0 else 0
+                round(r['fourplus_enrollment'] / r['total_enrollment'] * 100, 1) if r['total_enrollment'] and r['total_enrollment'] > 0 else 0
                 for r in rows
             ],
             'total_enrollment': [r['total_enrollment'] for r in rows],
@@ -595,36 +606,37 @@ class UnifiedDataService:
         start_year: int = 2015,
         end_year: int = 2024
     ) -> Dict:
-        """Get risk score timeseries with full filter support."""
+        """Get risk score timeseries with full filter support.
         
-        conditions = [f"r.year >= {start_year}", f"r.year <= {end_year}"]
+        Note: Fact table is denormalized - no JOINs needed for filtering.
+        """
+        
+        conditions = [f"year >= {start_year}", f"year <= {end_year}"]
         
         if parent_org:
-            conditions.append(f"ent.parent_org = '{parent_org}'")
+            conditions.append(f"parent_org = '{parent_org}'")
         if plan_types:
             pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
-            conditions.append(f"p.plan_type IN ({pt_list})")
+            conditions.append(f"plan_type IN ({pt_list})")
         if snp_types:
             snp_list = ", ".join([f"'{st}'" for st in snp_types])
-            conditions.append(f"p.snp_type IN ({snp_list})")
+            conditions.append(f"snp_type IN ({snp_list})")
         
         where_clause = " AND ".join(conditions)
         
         sql = f"""
             SELECT 
-                r.year,
-                SUM(r.enrollment) as total_enrollment,
-                SUM(r.risk_score * r.enrollment) as weighted_risk_sum,
-                COUNT(DISTINCT r.contract_id) as contract_count
-            FROM gold_fact_risk_scores r
-            LEFT JOIN gold_dim_entity ent ON r.contract_id = ent.contract_id
-            LEFT JOIN gold_dim_plan p ON r.contract_id = p.contract_id AND r.plan_id = p.plan_id
-            WHERE r.risk_score IS NOT NULL AND {where_clause}
-            GROUP BY r.year
-            ORDER BY r.year
+                year,
+                SUM(enrollment) as total_enrollment,
+                SUM(risk_score * enrollment) as weighted_risk_sum,
+                COUNT(DISTINCT contract_id) as contract_count
+            FROM gold_fact_risk_scores
+            WHERE risk_score IS NOT NULL AND {where_clause}
+            GROUP BY year
+            ORDER BY year
         """
         
-        result = self._execute_query(sql, ['gold_fact_risk_scores', 'gold_dim_entity', 'gold_dim_plan'], {
+        result = self._execute_query(sql, ['gold_fact_risk_scores'], {
             'parent_org': parent_org,
             'plan_types': plan_types,
             'snp_types': snp_types,
@@ -634,7 +646,7 @@ class UnifiedDataService:
         return {
             'years': [r['year'] for r in rows],
             'wavg_risk': [
-                round(r['weighted_risk_sum'] / r['total_enrollment'], 4) if r['total_enrollment'] > 0 else 0
+                round(r['weighted_risk_sum'] / r['total_enrollment'], 4) if r['total_enrollment'] and r['total_enrollment'] > 0 else 0
                 for r in rows
             ],
             'total_enrollment': [r['total_enrollment'] for r in rows],

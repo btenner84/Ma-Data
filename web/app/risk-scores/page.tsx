@@ -138,10 +138,38 @@ export default function RiskScoresPage() {
     return params.toString();
   };
 
-  // Fetch timeseries data (v3 API with audit trail)
+  // Fetch timeseries data using v5 with fallback to v3
   const { data: rawTimeseriesData, isLoading } = useQuery<RiskScoreTimeSeriesV2>({
-    queryKey: ["risk-timeseries-v3", selectedPlanTypes, selectedGroupTypes, selectedSnpTypes, selectedParentOrgs, metric],
+    queryKey: ["risk-timeseries-v5", selectedPlanTypes, selectedGroupTypes, selectedSnpTypes, selectedParentOrgs, metric],
     queryFn: async () => {
+      // Try v5 first (single payer only for simplicity)
+      if (selectedParentOrgs.length <= 1) {
+        try {
+          const v5Params = new URLSearchParams();
+          if (selectedParentOrgs.length === 1) v5Params.set("parent_org", selectedParentOrgs[0]);
+          if (selectedPlanTypes.length > 0) v5Params.set("plan_types", selectedPlanTypes.join(","));
+          if (selectedSnpTypes.length > 0) v5Params.set("snp_types", selectedSnpTypes.join(","));
+          v5Params.set("start_year", "2006");
+          v5Params.set("end_year", "2024");
+          
+          const v5Res = await fetch(`${API_BASE}/api/v5/risk/timeseries?${v5Params.toString()}`);
+          const v5Data = await v5Res.json();
+          
+          if (v5Data.years?.length > 0) {
+            const payerKey = selectedParentOrgs.length === 1 ? selectedParentOrgs[0] : "Industry Total";
+            return {
+              years: v5Data.years,
+              series: { [payerKey]: v5Data.wavg_risk },
+              enrollment: { [payerKey]: v5Data.total_enrollment },
+              audit_id: v5Data.audit_id,
+            };
+          }
+        } catch (e) {
+          console.warn("v5 risk failed, falling back to v3:", e);
+        }
+      }
+      
+      // Fall back to v3
       const params = buildQueryParams();
       const res = await fetch(`${API_BASE}/api/v3/risk/timeseries?${params}`);
       return res.json();

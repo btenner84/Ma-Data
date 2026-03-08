@@ -97,22 +97,23 @@ export default function EnrollmentPage() {
     value: number;
   } | null>(null);
 
-  // Fetch filter options using v5 (Gold layer)
+  // Fetch filter options using v5 (Gold layer) with fallback to v3
   const { data: filterOptions } = useQuery<FilterOptions>({
     queryKey: ["enrollment-filters-v5"],
     queryFn: async () => {
-      // Try v5 first (Gold layer), fall back to v3
+      // Try v5 first (Gold layer)
       const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
       const v5Data = await v5Res.json();
-      if (!v5Data.error) {
+      // Check if v5 has actual data (not empty arrays)
+      const hasData = v5Data.years?.length > 0 || v5Data.parent_orgs?.length > 0;
+      if (!v5Data.error && hasData) {
         return {
           ...v5Data,
-          // Add compatibility fields
           plan_types_simplified: v5Data.plan_types || [],
-          contracts: [], // Not needed for UI
+          contracts: [],
         };
       }
-      // Fallback to v3
+      // Fall back to v3
       const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
       return res.json();
     },
@@ -155,10 +156,42 @@ export default function EnrollmentPage() {
     return params.toString();
   };
 
-  // Fetch timeseries data
+  // Fetch timeseries data using v5 (Gold layer) with fallback to v3
   const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
     queryKey: ["enrollment-timeseries", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy, dataSource],
     queryFn: async () => {
+      // Build v5 params
+      const v5Params = new URLSearchParams();
+      if (selectedParentOrgs.length === 1) v5Params.set("parent_org", selectedParentOrgs[0]);
+      if (selectedPlanTypes.length > 0) v5Params.set("plan_types", selectedPlanTypes.join(","));
+      if (selectedProductTypes.length > 0) {
+        const apiProductTypes = selectedProductTypes.map(t => t === "MA" ? "MAPD" : t);
+        v5Params.set("product_types", apiProductTypes.join(","));
+      }
+      if (selectedSnpTypes.length > 0) v5Params.set("snp_types", selectedSnpTypes.join(","));
+      if (selectedGroupTypes.length > 0) v5Params.set("group_types", selectedGroupTypes.join(","));
+      if (selectedStates.length > 0) v5Params.set("states", selectedStates.join(","));
+      v5Params.set("start_year", "2013");
+      v5Params.set("end_year", "2026");
+      
+      // Try v5 first
+      try {
+        const v5Res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${v5Params.toString()}`);
+        const v5Data = await v5Res.json();
+        if (v5Data.years?.length > 0) {
+          // Transform v5 response to match expected format
+          return {
+            years: v5Data.years,
+            total_enrollment: v5Data.enrollment,
+            audit_id: v5Data.audit_id,
+            filters: v5Data.filters,
+          };
+        }
+      } catch (e) {
+        console.warn("v5 enrollment failed, falling back to v3:", e);
+      }
+      
+      // Fall back to v3
       const params = buildQueryParams();
       const res = await fetch(`${API_BASE}/api/v3/enrollment/timeseries?${params}`);
       return res.json();
