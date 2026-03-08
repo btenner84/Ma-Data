@@ -738,7 +738,8 @@ class UnifiedDataService:
         """
         
         result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {'states': states})
-        counties = [row[0] for row in result] if result else []
+        rows = result.data.get('rows', []) if result and result.data else []
+        counties = [row['county'] for row in rows if 'county' in row]
         return {"counties": counties}
     
     def get_risk_contracts_v5(
