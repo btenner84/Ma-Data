@@ -68,19 +68,12 @@ export default function SummaryPage() {
   // UI state
   const [showFilters, setShowFilters] = useState(false);
 
-  // ========== FETCH FILTER OPTIONS (v5) ==========
+  // ========== FETCH FILTER OPTIONS (v5) - no fallback ==========
   const { data: filterOptions, isLoading: filtersLoading } = useQuery<FilterOptions>({
     queryKey: ["v5-filters"],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/api/v5/filters`);
-      const data = await res.json();
-      // Handle error response
-      if (data.error) {
-        console.warn("v5 filters failed, using fallback");
-        const fallback = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
-        return fallback.json();
-      }
-      return data;
+      return res.json();
     },
   });
 

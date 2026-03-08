@@ -111,17 +111,11 @@ export default function RiskScoresPage() {
     year: number;
   } | null>(null);
 
-  // Fetch filter options using v5 (Gold layer)
+  // Fetch filter options using v5 (Gold layer) - no fallback
   const { data: filterOptions } = useQuery<RiskScoreFilters>({
     queryKey: ["risk-filters-v5"],
     queryFn: async () => {
-      // Try v5 first (Gold layer), fall back to v3
-      const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
-      const v5Data = await v5Res.json();
-      if (!v5Data.error) {
-        return v5Data;
-      }
-      const res = await fetch(`${API_BASE}/api/v3/risk/filters`);
+      const res = await fetch(`${API_BASE}/api/v5/filters`);
       return res.json();
     },
   });
@@ -138,47 +132,34 @@ export default function RiskScoresPage() {
     return params.toString();
   };
 
-  // Fetch timeseries data using v5 with fallback to v3
+  // Fetch timeseries data using v5 - no fallback
   const { data: rawTimeseriesData, isLoading } = useQuery<RiskScoreTimeSeriesV2>({
     queryKey: ["risk-timeseries-v5", selectedPlanTypes, selectedGroupTypes, selectedSnpTypes, selectedParentOrgs, metric],
     queryFn: async () => {
-      // Try v5 first (single payer only for simplicity)
-      if (selectedParentOrgs.length <= 1) {
-        try {
-          const v5Params = new URLSearchParams();
-          if (selectedParentOrgs.length === 1) v5Params.set("parent_org", selectedParentOrgs[0]);
-          if (selectedPlanTypes.length > 0) v5Params.set("plan_types", selectedPlanTypes.join(","));
-          if (selectedSnpTypes.length > 0) v5Params.set("snp_types", selectedSnpTypes.join(","));
-          v5Params.set("start_year", "2006");
-          v5Params.set("end_year", "2024");
-          
-          const v5Res = await fetch(`${API_BASE}/api/v5/risk/timeseries?${v5Params.toString()}`);
-          const v5Data = await v5Res.json();
-          
-          if (v5Data.years?.length > 0) {
-            const payerKey = selectedParentOrgs.length === 1 ? selectedParentOrgs[0] : "Industry Total";
-            return {
-              years: v5Data.years,
-              series: { [payerKey]: v5Data.wavg_risk },
-              enrollment: { [payerKey]: v5Data.total_enrollment },
-              audit_id: v5Data.audit_id,
-            };
-          }
-        } catch (e) {
-          console.warn("v5 risk failed, falling back to v3:", e);
-        }
-      }
+      const params = new URLSearchParams();
+      if (selectedParentOrgs.length === 1) params.set("parent_org", selectedParentOrgs[0]);
+      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
+      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
+      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
+      params.set("start_year", "2006");
+      params.set("end_year", "2024");
       
-      // Fall back to v3
-      const params = buildQueryParams();
-      const res = await fetch(`${API_BASE}/api/v3/risk/timeseries?${params}`);
-      return res.json();
+      const res = await fetch(`${API_BASE}/api/v5/risk/timeseries?${params.toString()}`);
+      const data = await res.json();
+      
+      const payerKey = selectedParentOrgs.length === 1 ? selectedParentOrgs[0] : "Industry Total";
+      return {
+        years: data.years || [],
+        series: { [payerKey]: data.wavg_risk || [] },
+        enrollment: { [payerKey]: data.total_enrollment || [] },
+        audit_id: data.audit_id,
+      };
     },
   });
 
-  // Fetch contract details when a cell is clicked
+  // Fetch contract details when a cell is clicked - using v5
   const { data: contractDetails, isLoading: isLoadingDetails } = useQuery<ContractDetailsResponse>({
-    queryKey: ["risk-contracts", detailSelection?.year, detailSelection?.parentOrg, selectedPlanTypes, selectedGroupTypes, selectedSnpTypes],
+    queryKey: ["risk-contracts-v5", detailSelection?.year, detailSelection?.parentOrg, selectedPlanTypes, selectedGroupTypes, selectedSnpTypes],
     queryFn: async () => {
       if (!detailSelection) return null;
       const params = new URLSearchParams();
@@ -189,7 +170,7 @@ export default function RiskScoresPage() {
       if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
       if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
       if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
-      const res = await fetch(`${API_BASE}/api/v3/risk/contracts?${params}`);
+      const res = await fetch(`${API_BASE}/api/v5/risk/contracts?${params}`);
       return res.json();
     },
     enabled: !!detailSelection,

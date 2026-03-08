@@ -449,6 +449,7 @@ class UnifiedDataService:
         snp_types: Optional[List[str]] = None,
         group_types: Optional[List[str]] = None,
         states: Optional[List[str]] = None,
+        counties: Optional[List[str]] = None,
         start_year: int = 2015,
         end_year: int = 2026
     ) -> Dict:
@@ -456,6 +457,7 @@ class UnifiedDataService:
         
         Note: Fact tables are denormalized - no JOINs needed for filtering.
         Uses latest month per year (point-in-time snapshot, not cumulative).
+        Uses geographic table when county filtering is needed.
         """
         
         # Build WHERE conditions - query fact table directly (denormalized)
@@ -478,12 +480,14 @@ class UnifiedDataService:
         if states:
             state_list = ", ".join([f"'{s}'" for s in states])
             conditions.append(f"e.state IN ({state_list})")
+        if counties:
+            county_list = ", ".join([f"'{c}'" for c in counties])
+            conditions.append(f"e.county IN ({county_list})")
         
         where_clause = " AND ".join(conditions)
         
-        # Always use national table (now has state column for state filtering)
-        # Use latest month per year for point-in-time snapshot
-        table = 'gold_fact_enrollment_national'
+        # Use geographic table if county filtering, otherwise national
+        table = 'gold_fact_enrollment_geographic' if counties else 'gold_fact_enrollment_national'
         sql = f"""
             WITH latest_months AS (
                 SELECT year, MAX(month) as max_month
@@ -527,6 +531,7 @@ class UnifiedDataService:
         plan_types: Optional[List[str]] = None,
         product_types: Optional[List[str]] = None,
         snp_types: Optional[List[str]] = None,
+        group_types: Optional[List[str]] = None,
         start_year: int = 2015,
         end_year: int = 2026
     ) -> Dict:
@@ -551,6 +556,9 @@ class UnifiedDataService:
         if snp_types:
             snp_list = ", ".join([f"'{st}'" for st in snp_types])
             conditions.append(f"e.snp_type IN ({snp_list})")
+        if group_types:
+            grp_list = ", ".join([f"'{gt}'" for gt in group_types])
+            conditions.append(f"e.group_type IN ({grp_list})")
         
         where_clause = " AND ".join(conditions)
         
@@ -603,6 +611,7 @@ class UnifiedDataService:
         parent_org: Optional[str] = None,
         plan_types: Optional[List[str]] = None,
         snp_types: Optional[List[str]] = None,
+        group_types: Optional[List[str]] = None,
         start_year: int = 2015,
         end_year: int = 2024
     ) -> Dict:
@@ -621,6 +630,9 @@ class UnifiedDataService:
         if snp_types:
             snp_list = ", ".join([f"'{st}'" for st in snp_types])
             conditions.append(f"snp_type IN ({snp_list})")
+        if group_types:
+            grp_list = ", ".join([f"'{gt}'" for gt in group_types])
+            conditions.append(f"group_type IN ({grp_list})")
         
         where_clause = " AND ".join(conditions)
         
@@ -710,6 +722,80 @@ class UnifiedDataService:
                 'group_types': group_types
             }
         }
+    
+    def get_counties_v5(self, states: List[str]) -> Dict:
+        """Get counties for specified states from Gold layer geographic data."""
+        if not states:
+            return {"counties": []}
+        
+        states_str = ", ".join([f"'{s}'" for s in states])
+        sql = f"""
+        SELECT DISTINCT county
+        FROM gold_fact_enrollment_geographic
+        WHERE state IN ({states_str})
+          AND county IS NOT NULL
+        ORDER BY county
+        """
+        
+        result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {'states': states})
+        counties = [row[0] for row in result] if result else []
+        return {"counties": counties}
+    
+    def get_risk_contracts_v5(
+        self,
+        year: int,
+        parent_org: Optional[str] = None,
+        plan_types: Optional[List[str]] = None,
+        snp_types: Optional[List[str]] = None,
+        group_types: Optional[List[str]] = None
+    ) -> Dict:
+        """Get risk score details by contract for a specific year."""
+        
+        where_clauses = [f"year = {year}"]
+        
+        if parent_org:
+            where_clauses.append(f"parent_org = '{parent_org}'")
+        
+        if plan_types:
+            plan_types_str = ", ".join([f"'{pt}'" for pt in plan_types])
+            where_clauses.append(f"plan_type IN ({plan_types_str})")
+        
+        if snp_types:
+            snp_types_str = ", ".join([f"'{st}'" for st in snp_types])
+            where_clauses.append(f"snp_type IN ({snp_types_str})")
+        
+        where_clause = " AND ".join(where_clauses)
+        
+        sql = f"""
+        SELECT 
+            contract_id,
+            parent_org,
+            plan_type,
+            snp_type,
+            SUM(enrollment) as total_enrollment,
+            SUM(risk_score * enrollment) / NULLIF(SUM(enrollment), 0) as wavg_risk
+        FROM gold_fact_risk_scores
+        WHERE {where_clause}
+        GROUP BY contract_id, parent_org, plan_type, snp_type
+        ORDER BY total_enrollment DESC
+        LIMIT 100
+        """
+        
+        result = self._execute_query(sql)
+        
+        contracts = []
+        if result:
+            for row in result:
+                contracts.append({
+                    "contract_id": row[0],
+                    "parent_org": row[1],
+                    "plan_type": row[2],
+                    "snp_type": row[3],
+                    "enrollment": row[4],
+                    "wavg_risk": round(row[5], 3) if row[5] else None
+                })
+        
+        return {"contracts": contracts, "year": year}
 
 
 # Singleton instance

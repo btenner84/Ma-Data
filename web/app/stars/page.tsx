@@ -2360,24 +2360,16 @@ export default function StarsPage() {
   // Available star years (2014-2026)
   const availableStarYears = Array.from({ length: 13 }, (_, i) => 2026 - i);
 
-  // Fetch filter options using v5 (Gold layer) with fallback to v3
+  // Fetch filter options using v5 (Gold layer) - no fallback
   const { data: filterOptions } = useQuery<FilterOptions>({
     queryKey: ["stars-filters-v5"],
     queryFn: async () => {
-      // Try v5 first (Gold layer)
-      const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
-      const v5Data = await v5Res.json();
-      // Check if v5 has actual data (not empty arrays)
-      const hasData = v5Data.years?.length > 0 || v5Data.parent_orgs?.length > 0;
-      if (!v5Data.error && hasData) {
-        return {
-          ...v5Data,
-          plan_types_simplified: v5Data.plan_types || [],
-        };
-      }
-      // Fall back to v3
-      const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
-      return res.json();
+      const res = await fetch(`${API_BASE}/api/v5/filters`);
+      const data = await res.json();
+      return {
+        ...data,
+        plan_types_simplified: data.plan_types || [],
+      };
     },
   });
 
@@ -2398,43 +2390,30 @@ export default function StarsPage() {
     return params.toString();
   };
 
-  // Fetch 4+ star time series using v5 with fallback
+  // Fetch 4+ star time series using v5 - no fallback
   const { data: rawTimeseriesData, isLoading: timeseriesLoading } = useQuery<FourPlusTimeseriesData>({
-    queryKey: ["stars-fourplus-timeseries", graphPayers, selectedPlanTypes, selectedGroupTypes, selectedSnpTypes],
+    queryKey: ["stars-fourplus-timeseries-v5", graphPayers, selectedPlanTypes, selectedGroupTypes, selectedSnpTypes],
     queryFn: async () => {
-      // Try v5 first (single payer only supported)
-      if (graphPayers.length <= 1) {
-        try {
-          const v5Params = new URLSearchParams();
-          if (graphPayers.length === 1 && graphPayers[0] !== "Industry") {
-            v5Params.set("parent_org", graphPayers[0]);
-          }
-          if (selectedPlanTypes.length > 0) v5Params.set("plan_types", selectedPlanTypes.join(","));
-          if (selectedSnpTypes.length > 0) v5Params.set("snp_types", selectedSnpTypes.join(","));
-          v5Params.set("start_year", "2015");
-          v5Params.set("end_year", "2026");
-          
-          const v5Res = await fetch(`${API_BASE}/api/v5/stars/timeseries?${v5Params.toString()}`);
-          const v5Data = await v5Res.json();
-          
-          if (v5Data.years?.length > 0) {
-            const payerKey = graphPayers.length === 1 ? graphPayers[0] : "Industry";
-            return {
-              years: v5Data.years,
-              series: { [payerKey]: v5Data.pct_fourplus },
-              audit_id: v5Data.audit_id,
-              filters: { plan_types: null, product_types: null, group_types: null, snp_types: null },
-            };
-          }
-        } catch (e) {
-          console.warn("v5 stars failed, falling back:", e);
-        }
+      const params = new URLSearchParams();
+      if (graphPayers.length === 1 && graphPayers[0] !== "Industry") {
+        params.set("parent_org", graphPayers[0]);
       }
+      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
+      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
+      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
+      params.set("start_year", "2015");
+      params.set("end_year", "2026");
       
-      // Fall back to old endpoint
-      const params = buildTimeseriesParams();
-      const res = await fetch(`${API_BASE}/api/stars/fourplus-timeseries?${params}`);
-      return res.json();
+      const res = await fetch(`${API_BASE}/api/v5/stars/timeseries?${params.toString()}`);
+      const data = await res.json();
+      
+      const payerKey = graphPayers.length === 1 ? graphPayers[0] : "Industry";
+      return {
+        years: data.years || [],
+        series: { [payerKey]: data.pct_fourplus || [] },
+        audit_id: data.audit_id,
+        filters: { plan_types: null, product_types: null, group_types: null, snp_types: null },
+      };
     },
   });
 

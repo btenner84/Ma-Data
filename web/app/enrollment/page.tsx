@@ -97,32 +97,24 @@ export default function EnrollmentPage() {
     value: number;
   } | null>(null);
 
-  // Fetch filter options using v5 (Gold layer) with fallback to v3
+  // Fetch filter options using v5 (Gold layer) - no fallback
   const { data: filterOptions } = useQuery<FilterOptions>({
     queryKey: ["enrollment-filters-v5"],
     queryFn: async () => {
-      // Try v5 first (Gold layer)
-      const v5Res = await fetch(`${API_BASE}/api/v5/filters`);
-      const v5Data = await v5Res.json();
-      // Check if v5 has actual data (not empty arrays)
-      const hasData = v5Data.years?.length > 0 || v5Data.parent_orgs?.length > 0;
-      if (!v5Data.error && hasData) {
-        return {
-          ...v5Data,
-          plan_types_simplified: v5Data.plan_types || [],
-          contracts: [],
-        };
-      }
-      // Fall back to v3
-      const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
-      return res.json();
+      const res = await fetch(`${API_BASE}/api/v5/filters`);
+      const data = await res.json();
+      return {
+        ...data,
+        plan_types_simplified: data.plan_types || [],
+        contracts: [],
+      };
     },
   });
 
-  // Fetch counties when states change
+  // Fetch counties when states change - using v5
   useEffect(() => {
     if (selectedStates.length > 0) {
-      fetch(`${API_BASE}/api/v3/enrollment/counties?states=${selectedStates.join(',')}`)
+      fetch(`${API_BASE}/api/v5/counties?states=${selectedStates.join(',')}`)
         .then(res => res.json())
         .then(data => setAvailableCounties(data.counties || []))
         .catch(() => setAvailableCounties([]));
@@ -156,45 +148,33 @@ export default function EnrollmentPage() {
     return params.toString();
   };
 
-  // Fetch timeseries data using v5 (Gold layer) with fallback to v3
+  // Fetch timeseries data using v5 (Gold layer) - no fallback
   const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
-    queryKey: ["enrollment-timeseries", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy, dataSource],
+    queryKey: ["enrollment-timeseries-v5", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, groupBy],
     queryFn: async () => {
-      // Build v5 params
-      const v5Params = new URLSearchParams();
-      if (selectedParentOrgs.length === 1) v5Params.set("parent_org", selectedParentOrgs[0]);
-      if (selectedPlanTypes.length > 0) v5Params.set("plan_types", selectedPlanTypes.join(","));
+      const params = new URLSearchParams();
+      if (selectedParentOrgs.length === 1) params.set("parent_org", selectedParentOrgs[0]);
+      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
       if (selectedProductTypes.length > 0) {
         const apiProductTypes = selectedProductTypes.map(t => t === "MA" ? "MAPD" : t);
-        v5Params.set("product_types", apiProductTypes.join(","));
+        params.set("product_types", apiProductTypes.join(","));
       }
-      if (selectedSnpTypes.length > 0) v5Params.set("snp_types", selectedSnpTypes.join(","));
-      if (selectedGroupTypes.length > 0) v5Params.set("group_types", selectedGroupTypes.join(","));
-      if (selectedStates.length > 0) v5Params.set("states", selectedStates.join(","));
-      v5Params.set("start_year", "2013");
-      v5Params.set("end_year", "2026");
+      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
+      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
+      if (selectedStates.length > 0) params.set("states", selectedStates.join(","));
+      if (selectedCounties.length > 0) params.set("counties", selectedCounties.join(","));
+      params.set("start_year", "2013");
+      params.set("end_year", "2026");
       
-      // Try v5 first
-      try {
-        const v5Res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${v5Params.toString()}`);
-        const v5Data = await v5Res.json();
-        if (v5Data.years?.length > 0) {
-          // Transform v5 response to match expected format
-          return {
-            years: v5Data.years,
-            total_enrollment: v5Data.enrollment,
-            audit_id: v5Data.audit_id,
-            filters: v5Data.filters,
-          };
-        }
-      } catch (e) {
-        console.warn("v5 enrollment failed, falling back to v3:", e);
-      }
+      const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}`);
+      const data = await res.json();
       
-      // Fall back to v3
-      const params = buildQueryParams();
-      const res = await fetch(`${API_BASE}/api/v3/enrollment/timeseries?${params}`);
-      return res.json();
+      return {
+        years: data.years,
+        total_enrollment: data.enrollment,
+        audit_id: data.audit_id,
+        filters: data.filters,
+      };
     },
   });
 
@@ -964,7 +944,7 @@ GROUP BY year`}
                   if (selectedPlanTypes.length > 0) {
                     params.set('plan_types', selectedPlanTypes.join(','));
                   }
-                  window.open(`${API_BASE}/api/v3/enrollment/audit-download?${params.toString()}`, '_blank');
+                  window.open(`${API_BASE}/api/v5/enrollment/audit-download?${params.toString()}`, '_blank');
                 }}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
               >

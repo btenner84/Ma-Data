@@ -7065,13 +7065,14 @@ async def get_enrollment_timeseries_v5(
     snp_types: Optional[str] = None,
     group_types: Optional[str] = None,
     states: Optional[str] = None,
+    counties: Optional[str] = None,
     start_year: int = 2015,
     end_year: int = 2026
 ):
     """
     Get enrollment timeseries using Gold layer with full filter support.
     
-    All filters properly join to dimension tables for consistent filtering.
+    Supports all dimension filters including geographic (state/county).
     """
     try:
         from api.services.data_service import get_data_service
@@ -7083,6 +7084,7 @@ async def get_enrollment_timeseries_v5(
             snp_types=snp_types.split(",") if snp_types else None,
             group_types=group_types.split(",") if group_types else None,
             states=states.split(",") if states else None,
+            counties=counties.split(",") if counties else None,
             start_year=start_year,
             end_year=end_year
         )
@@ -7096,6 +7098,7 @@ async def get_stars_timeseries_v5(
     plan_types: Optional[str] = None,
     product_types: Optional[str] = None,
     snp_types: Optional[str] = None,
+    group_types: Optional[str] = None,
     start_year: int = 2015,
     end_year: int = 2026
 ):
@@ -7112,6 +7115,7 @@ async def get_stars_timeseries_v5(
             plan_types=plan_types.split(",") if plan_types else None,
             product_types=product_types.split(",") if product_types else None,
             snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None,
             start_year=start_year,
             end_year=end_year
         )
@@ -7124,6 +7128,7 @@ async def get_risk_timeseries_v5(
     parent_org: Optional[str] = None,
     plan_types: Optional[str] = None,
     snp_types: Optional[str] = None,
+    group_types: Optional[str] = None,
     start_year: int = 2015,
     end_year: int = 2024
 ):
@@ -7140,6 +7145,7 @@ async def get_risk_timeseries_v5(
             parent_org=parent_org,
             plan_types=plan_types.split(",") if plan_types else None,
             snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None,
             start_year=start_year,
             end_year=end_year
         )
@@ -7171,6 +7177,91 @@ async def get_summary_v5(
             product_types=product_types.split(",") if product_types else None,
             snp_types=snp_types.split(",") if snp_types else None,
             group_types=group_types.split(",") if group_types else None
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/v5/counties")
+async def get_counties_v5(states: str):
+    """
+    Get counties for specified states from Gold layer.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_counties_v5(states=states.split(","))
+    except Exception as e:
+        return {"error": str(e), "counties": []}
+
+
+@app.get("/api/v5/risk/contracts")
+async def get_risk_contracts_v5(
+    year: int,
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    group_types: Optional[str] = None
+):
+    """
+    Get risk score details by contract for a specific year.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_risk_contracts_v5(
+            year=year,
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None
+        )
+    except Exception as e:
+        return {"error": str(e), "contracts": []}
+
+
+@app.get("/api/v5/enrollment/audit-download")
+async def get_enrollment_audit_download_v5(
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    product_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    states: Optional[str] = None
+):
+    """
+    Download enrollment audit data as CSV.
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+    
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        data = service.get_enrollment_timeseries_v5(
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            product_types=product_types.split(",") if product_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            states=states.split(",") if states else None,
+            start_year=2013,
+            end_year=2026
+        )
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Year", "Enrollment"])
+        for i, year in enumerate(data.get("years", [])):
+            enrollment = data.get("enrollment", [])[i] if i < len(data.get("enrollment", [])) else 0
+            writer.writerow([year, enrollment])
+        
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=enrollment_audit.csv"}
         )
     except Exception as e:
         return {"error": str(e)}

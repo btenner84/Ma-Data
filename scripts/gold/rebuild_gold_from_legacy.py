@@ -6,20 +6,47 @@ Rebuild Gold Layer from Legacy Tables
 Rebuilds the Gold layer fact tables from the validated legacy tables
 in processed/unified/ which have all dimension columns populated.
 
-This ensures all filtering works: plan_type, product_type, snp_type, group_type, state.
+This ensures all filtering works: plan_type, product_type, snp_type, group_type, state, county.
 """
 
 import boto3
 import pandas as pd
+import duckdb
 from io import BytesIO
 from datetime import datetime
 import os
 import sys
+import configparser
 
 S3_BUCKET = os.environ.get("S3_BUCKET", "ma-data123")
 PIPELINE_RUN_ID = f"gold_rebuild_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 s3 = boto3.client('s3')
+
+def get_duckdb_conn():
+    """Create DuckDB connection with S3 access."""
+    conn = duckdb.connect(':memory:')
+    conn.execute('INSTALL httpfs; LOAD httpfs;')
+    
+    # Get AWS credentials
+    aws_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
+    aws_secret = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+    
+    if not aws_key:
+        try:
+            creds = configparser.ConfigParser()
+            creds.read(os.path.expanduser('~/.aws/credentials'))
+            aws_key = creds['default'].get('aws_access_key_id', '')
+            aws_secret = creds['default'].get('aws_secret_access_key', '')
+        except:
+            pass
+    
+    conn.execute(f"""
+        SET s3_region = 'us-east-1';
+        SET s3_access_key_id = '{aws_key}';
+        SET s3_secret_access_key = '{aws_secret}';
+    """)
+    return conn
 
 
 def load_parquet(key: str) -> pd.DataFrame:
@@ -170,6 +197,98 @@ def rebuild_dim_plan():
     return True
 
 
+def rebuild_fact_enrollment_geographic():
+    """Rebuild gold/fact_enrollment_geographic with dimension columns from CPSC + lookups."""
+    print("\n" + "=" * 70)
+    print("REBUILDING: gold/fact_enrollment_geographic")
+    print("=" * 70)
+    
+    conn = get_duckdb_conn()
+    
+    print("\n1. Loading CPSC data with dimension lookups...")
+    
+    # Query to join CPSC data with dimension lookups
+    sql = f"""
+    WITH cpsc AS (
+        SELECT 
+            year, month, contract_id, plan_id, fips_code, state, county, 
+            enrollment, parent_org, plan_type, is_snp
+        FROM read_parquet('s3://{S3_BUCKET}/processed/fact_enrollment/*/*/data.parquet')
+    ),
+    snp AS (
+        SELECT contract_id, plan_id, year, snp_type
+        FROM read_parquet('s3://{S3_BUCKET}/processed/unified/snp_lookup.parquet')
+    ),
+    contracts AS (
+        SELECT contract_id, year, product_type
+        FROM read_parquet('s3://{S3_BUCKET}/processed/unified/dim_contract_v2.parquet')
+    )
+    SELECT 
+        c.year * 100 + c.month as time_key,
+        c.contract_id as entity_id,
+        c.contract_id,
+        c.plan_id,
+        c.fips_code as geo_key,
+        c.year,
+        c.month,
+        c.state,
+        c.county,
+        c.fips_code,
+        c.enrollment,
+        CASE WHEN c.enrollment < 10 THEN true ELSE false END as is_suppressed,
+        1 as plan_count,
+        c.parent_org,
+        c.plan_type,
+        COALESCE(ct.product_type, 
+                 CASE WHEN c.contract_id LIKE 'S%' THEN 'PDP' 
+                      ELSE 'MAPD' END) as product_type,
+        COALESCE(s.snp_type, 
+                 CASE WHEN c.is_snp = 'Yes' OR c.is_snp = true THEN 'SNP-Unknown' 
+                      ELSE 'Non-SNP' END) as snp_type,
+        CASE WHEN CAST(c.plan_id AS INTEGER) >= 800 THEN 'Group' ELSE 'Individual' END as group_type,
+        'cpsc_rebuild' as _source_file,
+        ROW_NUMBER() OVER () as _source_row,
+        '{PIPELINE_RUN_ID}' as _pipeline_run_id,
+        CURRENT_TIMESTAMP as _loaded_at
+    FROM cpsc c
+    LEFT JOIN snp s ON c.contract_id = s.contract_id AND c.plan_id = s.plan_id AND c.year = s.year
+    LEFT JOIN contracts ct ON c.contract_id = ct.contract_id AND c.year = ct.year
+    WHERE c.year >= 2013
+    """
+    
+    print("   Running query (this may take a few minutes)...")
+    sys.stdout.flush()
+    
+    try:
+        result = conn.execute(sql).fetchdf()
+        print(f"   Loaded {len(result):,} rows")
+        
+        print("\n2. Validating dimension columns...")
+        for col in ['plan_type', 'product_type', 'snp_type', 'group_type']:
+            non_null = result[col].notna().sum()
+            pct = non_null / len(result) * 100
+            print(f"   {col}: {non_null:,} / {len(result):,} ({pct:.1f}% populated)")
+        
+        print("\n3. Saving to Gold layer (partitioned)...")
+        
+        # Save as single file for simplicity (could partition by year)
+        buffer = BytesIO()
+        result.to_parquet(buffer, index=False, compression='snappy')
+        buffer.seek(0)
+        
+        output_key = "gold/fact_enrollment_geographic.parquet"
+        s3.put_object(Bucket=S3_BUCKET, Key=output_key, Body=buffer.getvalue())
+        print(f"   Saved to s3://{S3_BUCKET}/{output_key} ({len(result):,} rows)")
+        
+        return True
+        
+    except Exception as e:
+        print(f"   ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def validate_gold_layer():
     """Validate the rebuilt Gold layer."""
     print("\n" + "=" * 70)
@@ -186,18 +305,32 @@ def validate_gold_layer():
     print(f"   Dec 2024 rows: {len(dec_2024):,}")
     print(f"   Dec 2024 enrollment: {dec_2024['enrollment'].sum():,.0f}")
     
-    print("\n2. Checking dimension column coverage...")
+    print("\n2. Checking dimension column coverage (national)...")
     for col in ['plan_type', 'product_type', 'snp_type', 'group_type']:
         non_null = dec_2024[col].notna().sum()
         pct = non_null / len(dec_2024) * 100 if len(dec_2024) > 0 else 0
         status = "OK" if pct > 50 else "WARN"
         print(f"   [{status}] {col}: {pct:.1f}% populated")
     
-    print("\n3. Checking dim_geography...")
+    print("\n3. Checking fact_enrollment_geographic...")
+    geo_fact = load_parquet("gold/fact_enrollment_geographic.parquet")
+    if not geo_fact.empty:
+        dec_2024_geo = geo_fact[(geo_fact['year'] == 2024) & (geo_fact['month'] == 12)]
+        print(f"   Dec 2024 rows: {len(dec_2024_geo):,}")
+        print(f"   Dec 2024 counties: {dec_2024_geo['county'].nunique():,}")
+        for col in ['plan_type', 'product_type', 'snp_type', 'group_type']:
+            non_null = dec_2024_geo[col].notna().sum()
+            pct = non_null / len(dec_2024_geo) * 100 if len(dec_2024_geo) > 0 else 0
+            status = "OK" if pct > 50 else "WARN"
+            print(f"   [{status}] {col}: {pct:.1f}% populated")
+    else:
+        print("   Not rebuilt (optional)")
+    
+    print("\n4. Checking dim_geography...")
     geo_df = load_parquet("gold/dim_geography.parquet")
     print(f"   States: {len(geo_df)}")
     
-    print("\n4. Checking dim_plan...")
+    print("\n5. Checking dim_plan...")
     plan_df = load_parquet("gold/dim_plan.parquet")
     print(f"   Plan dimension rows: {len(plan_df):,}")
     
@@ -205,6 +338,12 @@ def validate_gold_layer():
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--geographic', action='store_true', help='Also rebuild geographic table (slow)')
+    parser.add_argument('--all', action='store_true', help='Rebuild everything including geographic')
+    args = parser.parse_args()
+    
     print("=" * 70)
     print("REBUILD GOLD LAYER FROM LEGACY TABLES")
     print("=" * 70)
@@ -222,6 +361,11 @@ def main():
     
     if not rebuild_dim_plan():
         success = False
+    
+    # Optionally rebuild geographic table (takes longer)
+    if args.geographic or args.all:
+        if not rebuild_fact_enrollment_geographic():
+            success = False
     
     if success:
         validate_gold_layer()
