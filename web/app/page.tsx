@@ -39,23 +39,25 @@ function formatRisk(num: number | null | undefined): string {
 }
 
 interface FilterOptions {
+  years: number[];
   parent_orgs: string[];
+  plan_types: string[];
   product_types: string[];
   snp_types: string[];
   group_types: string[];
   states: string[];
-  years: number[];
 }
 
 export default function SummaryPage() {
   const isMounted = useIsMounted();
   
-  // Selected entity (null = Industry)
+  // Selected payer (null = Industry)
   const [selectedPayer, setSelectedPayer] = useState<string | null>(null);
   const [payerSearch, setPayerSearch] = useState("");
   const [showPayerDropdown, setShowPayerDropdown] = useState(false);
   
   // Filters
+  const [planTypes, setPlanTypes] = useState<string[]>([]);
   const [productTypes, setProductTypes] = useState<string[]>([]);
   const [snpTypes, setSnpTypes] = useState<string[]>([]);
   const [groupTypes, setGroupTypes] = useState<string[]>([]);
@@ -63,177 +65,107 @@ export default function SummaryPage() {
   const [startYear, setStartYear] = useState<number>(2017);
   const [endYear, setEndYear] = useState<number>(2026);
   
-  // Filter popup
+  // UI state
   const [showFilters, setShowFilters] = useState(false);
-  
-  // Table year toggles
-  const [starsYear, setStarsYear] = useState<number>(2026);
-  const [enrollmentYear, setEnrollmentYear] = useState<number>(2026);
-  const [riskYear, setRiskYear] = useState<number>(2024); // Risk data typically lags
 
-  // Fetch filter options
-  const { data: filterOptions } = useQuery<FilterOptions>({
-    queryKey: ["summary-filters"],
+  // ========== FETCH FILTER OPTIONS (v5) ==========
+  const { data: filterOptions, isLoading: filtersLoading } = useQuery<FilterOptions>({
+    queryKey: ["v5-filters"],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
+      const res = await fetch(`${API_BASE}/api/v5/filters`);
       const data = await res.json();
-      return {
-        parent_orgs: data.parent_orgs || [],
-        product_types: data.product_types || [],
-        snp_types: data.snp_types || [],
-        group_types: data.group_types || [],
-        states: data.states || [],
-        years: data.years || [],
-      };
+      // Handle error response
+      if (data.error) {
+        console.warn("v5 filters failed, using fallback");
+        const fallback = await fetch(`${API_BASE}/api/v3/enrollment/filters`);
+        return fallback.json();
+      }
+      return data;
     },
   });
 
-  // Build enrollment query params
-  const buildEnrollmentParams = () => {
+  // Build query params for v5 endpoints
+  const buildParams = () => {
     const params = new URLSearchParams();
-    if (selectedPayer) params.append("parent_orgs", selectedPayer);
+    if (selectedPayer) params.append("parent_org", selectedPayer);
+    if (planTypes.length) params.append("plan_types", planTypes.join(","));
     if (productTypes.length) params.append("product_types", productTypes.join(","));
     if (snpTypes.length) params.append("snp_types", snpTypes.join(","));
     if (groupTypes.length) params.append("group_types", groupTypes.join(","));
     if (states.length) params.append("states", states.join(","));
     params.append("start_year", startYear.toString());
     params.append("end_year", endYear.toString());
-    params.append("data_source", "national");
-    params.append("include_total", "false");
     return params.toString();
   };
 
-  // ========== ENROLLMENT DATA ==========
-  const { data: enrollmentTimeseries, isLoading: enrollmentLoading } = useQuery({
-    queryKey: ["summary-enrollment-ts", selectedPayer, productTypes, snpTypes, groupTypes, states, startYear, endYear],
+  // ========== ENROLLMENT TIMESERIES (v5) ==========
+  const { data: enrollmentData, isLoading: enrollmentLoading } = useQuery({
+    queryKey: ["v5-enrollment", selectedPayer, planTypes, productTypes, snpTypes, groupTypes, states, startYear, endYear],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v3/enrollment/timeseries?${buildEnrollmentParams()}`);
+      const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${buildParams()}`);
       return res.json();
     },
   });
 
-  // Enrollment by plan type - use risk dimensions which has plan_type breakdown with enrollment
-  const { data: enrollmentByPlanType } = useQuery({
-    queryKey: ["summary-enrollment-plantype", selectedPayer, states, enrollmentYear],
+  // ========== STARS TIMESERIES (v5) ==========
+  const { data: starsData, isLoading: starsLoading } = useQuery({
+    queryKey: ["v5-stars", selectedPayer, planTypes, productTypes, snpTypes, startYear, endYear],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.append("year", enrollmentYear.toString());
-      if (selectedPayer) params.append("parent_orgs", selectedPayer);
-      if (states.length) params.append("states", states.join(","));
-      const res = await fetch(`${API_BASE}/api/v3/risk/by-dimensions?${params.toString()}`);
-      const data = await res.json();
-      // Aggregate by plan_type
-      if (!data.data) return { data: [] };
-      const byPlanType: Record<string, number> = {};
-      data.data.forEach((row: any) => {
-        const pt = row.plan_type || "Unknown";
-        byPlanType[pt] = (byPlanType[pt] || 0) + (row.enrollment || 0);
-      });
-      return {
-        data: Object.entries(byPlanType)
-          .map(([plan_type, enrollment]) => ({ plan_type, total_enrollment: enrollment }))
-          .sort((a, b) => b.total_enrollment - a.total_enrollment)
-      };
-    },
-  });
-
-  // ========== STARS DATA ==========
-  const { data: starsTimeseries, isLoading: starsLoading } = useQuery({
-    queryKey: ["summary-stars-ts", selectedPayer, productTypes, snpTypes, groupTypes, startYear, endYear],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedPayer) params.append("parent_orgs", selectedPayer);
-      if (productTypes.length) params.append("plan_types", productTypes.join(","));
+      if (selectedPayer) params.append("parent_org", selectedPayer);
+      if (planTypes.length) params.append("plan_types", planTypes.join(","));
+      if (productTypes.length) params.append("product_types", productTypes.join(","));
       if (snpTypes.length) params.append("snp_types", snpTypes.join(","));
-      if (groupTypes.length) params.append("group_types", groupTypes.join(","));
-      params.append("include_total", "true");
-      // Note: stars/fourplus-timeseries doesn't support year range - returns all available years
-      // We filter client-side below
-      const res = await fetch(`${API_BASE}/api/stars/fourplus-timeseries?${params.toString()}`);
+      params.append("start_year", startYear.toString());
+      params.append("end_year", endYear.toString());
+      const res = await fetch(`${API_BASE}/api/v5/stars/timeseries?${params.toString()}`);
       return res.json();
     },
   });
 
-  const { data: starsDistribution } = useQuery({
-    queryKey: ["summary-stars-dist", selectedPayer, starsYear],
+  // ========== RISK TIMESERIES (v5) ==========
+  const { data: riskData, isLoading: riskLoading } = useQuery({
+    queryKey: ["v5-risk", selectedPayer, planTypes, snpTypes, startYear, endYear],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.append("star_year", starsYear.toString());
-      if (selectedPayer) params.append("parent_orgs", selectedPayer);
-      const res = await fetch(`${API_BASE}/api/stars/distribution?${params.toString()}`);
-      return res.json();
-    },
-  });
-
-  // ========== RISK DATA ==========
-  const { data: riskTimeseries, isLoading: riskLoading } = useQuery({
-    queryKey: ["summary-risk-ts", selectedPayer, productTypes, snpTypes, groupTypes, startYear, endYear],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedPayer) params.append("parent_orgs", selectedPayer);
-      if (productTypes.length) params.append("plan_types", productTypes.join(","));
+      if (selectedPayer) params.append("parent_org", selectedPayer);
+      if (planTypes.length) params.append("plan_types", planTypes.join(","));
       if (snpTypes.length) params.append("snp_types", snpTypes.join(","));
-      if (groupTypes.length) params.append("group_types", groupTypes.join(","));
-      params.append("include_industry_total", "true");
-      const res = await fetch(`${API_BASE}/api/v3/risk/timeseries?${params.toString()}`);
+      params.append("start_year", startYear.toString());
+      params.append("end_year", Math.min(endYear, 2024).toString()); // Risk only to 2024
+      const res = await fetch(`${API_BASE}/api/v5/risk/timeseries?${params.toString()}`);
       return res.json();
     },
   });
 
-  const { data: riskByProduct } = useQuery({
-    queryKey: ["summary-risk-product", selectedPayer, snpTypes, groupTypes, riskYear],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append("year", riskYear.toString());
-      if (selectedPayer) params.append("parent_orgs", selectedPayer);
-      const res = await fetch(`${API_BASE}/api/v3/risk/by-dimensions?${params.toString()}`);
-      return res.json();
-    },
-  });
+  // Transform data for charts
+  const enrollmentChartData = enrollmentData?.years?.map((year: number, i: number) => ({
+    year,
+    enrollment: enrollmentData.enrollment?.[i] || 0,
+  })) || [];
 
-  // Transform enrollment data for chart (already filtered by year range in API)
-  const enrollmentChartData = enrollmentTimeseries?.years?.map((year: number, i: number) => {
-    // If series exists (payer selected), use that
-    if (enrollmentTimeseries.series) {
-      const seriesKeys = Object.keys(enrollmentTimeseries.series);
-      const key = seriesKeys[0];
-      return { year, enrollment: enrollmentTimeseries.series[key]?.[i] || 0 };
-    }
-    // Otherwise use total_enrollment
-    return { year, enrollment: enrollmentTimeseries.total_enrollment?.[i] || 0 };
-  }) || [];
+  const starsChartData = starsData?.years?.map((year: number, i: number) => ({
+    year,
+    pct_fourplus: starsData.pct_fourplus?.[i] || 0,
+  })) || [];
 
-  // Transform stars data for chart - filter by year range client-side
-  const starsChartData = starsTimeseries?.years?.map((year: number, i: number) => {
-    if (starsTimeseries.series) {
-      const key = selectedPayer || "Industry";
-      const value = starsTimeseries.series[key]?.[i];
-      return { year, fourplus: value };
-    }
-    return { year, fourplus: null };
-  })
-    .filter((d: any) => d.fourplus !== null && d.fourplus !== undefined)
-    .filter((d: any) => d.year >= startYear && d.year <= endYear) || [];
-
-  // Transform risk data for chart - filter by year range client-side
-  const riskChartData = riskTimeseries?.years?.map((year: number, i: number) => {
-    if (riskTimeseries.series) {
-      const key = selectedPayer || "Industry";
-      const value = riskTimeseries.series[key]?.[i];
-      return { year, risk: value };
-    }
-    return { year, risk: riskTimeseries.wavg?.[i] || riskTimeseries.avg_risk?.[i] };
-  })
-    .filter((d: any) => d.risk !== null && d.risk !== undefined)
-    .filter((d: any) => d.year >= startYear && d.year <= endYear) || [];
+  const riskChartData = riskData?.years?.map((year: number, i: number) => ({
+    year,
+    risk: riskData.wavg_risk?.[i] || 0,
+  })) || [];
 
   // Filter payers for dropdown
   const filteredPayers = filterOptions?.parent_orgs?.filter(
-    p => p.toLowerCase().includes(payerSearch.toLowerCase())
+    p => p?.toLowerCase().includes(payerSearch.toLowerCase())
   ).slice(0, 20) || [];
 
   const displayName = selectedPayer || "Industry";
-  const activeFilterCount = productTypes.length + snpTypes.length + groupTypes.length + states.length;
+  const activeFilterCount = planTypes.length + productTypes.length + snpTypes.length + groupTypes.length + states.length;
+
+  // Get latest values for summary cards
+  const latestEnrollment = enrollmentData?.enrollment?.[enrollmentData.enrollment.length - 1] || 0;
+  const latestStars = starsData?.pct_fourplus?.[starsData.pct_fourplus.length - 1] || 0;
+  const latestRisk = riskData?.wavg_risk?.[riskData.wavg_risk.length - 1] || 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -323,12 +255,32 @@ export default function SummaryPage() {
           {/* Filter Panel */}
           {showFilters && (
             <div className="mt-4 p-4 bg-gray-50 rounded-lg border">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                {/* Plan Type */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Plan Type</label>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {(filterOptions?.plan_types || ['HMO', 'PPO', 'PFFS', 'MSA']).map(pt => (
+                      <label key={pt} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={planTypes.includes(pt)}
+                          onChange={(e) => {
+                            if (e.target.checked) setPlanTypes([...planTypes, pt]);
+                            else setPlanTypes(planTypes.filter(x => x !== pt));
+                          }}
+                        />
+                        {pt}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Product Type */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Product Type</label>
                   <div className="space-y-1">
-                    {['MAPD', 'MA-only', 'PDP'].map(pt => (
+                    {(filterOptions?.product_types || ['MAPD', 'MA-only', 'PDP']).map(pt => (
                       <label key={pt} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -348,7 +300,7 @@ export default function SummaryPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">SNP Type</label>
                   <div className="space-y-1">
-                    {['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP'].map(st => (
+                    {(filterOptions?.snp_types || ['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP']).map(st => (
                       <label key={st} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -368,7 +320,7 @@ export default function SummaryPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Group Type</label>
                   <div className="space-y-1">
-                    {['Individual', 'Group'].map(gt => (
+                    {(filterOptions?.group_types || ['Individual', 'Group']).map(gt => (
                       <label key={gt} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -391,7 +343,7 @@ export default function SummaryPage() {
                     multiple
                     value={states}
                     onChange={(e) => setStates(Array.from(e.target.selectedOptions, o => o.value))}
-                    className="w-full border rounded text-sm h-24"
+                    className="w-full border rounded text-sm h-32"
                   >
                     {filterOptions?.states?.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
@@ -400,7 +352,7 @@ export default function SummaryPage() {
 
               {activeFilterCount > 0 && (
                 <button
-                  onClick={() => { setProductTypes([]); setSnpTypes([]); setGroupTypes([]); setStates([]); }}
+                  onClick={() => { setPlanTypes([]); setProductTypes([]); setSnpTypes([]); setGroupTypes([]); setStates([]); }}
                   className="mt-3 text-sm text-red-600 hover:text-red-800"
                 >
                   Clear all filters
@@ -411,17 +363,37 @@ export default function SummaryPage() {
         </div>
       </div>
 
-      {/* Main Content Grid */}
+      {/* Summary Cards */}
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="text-sm text-gray-500">Total Enrollment ({endYear})</div>
+            <div className="text-2xl font-bold text-blue-600">{formatNumber(latestEnrollment)}</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="text-sm text-gray-500">4+ Star Enrollment %</div>
+            <div className="text-2xl font-bold text-yellow-600">{formatPercent(latestStars)}</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="text-sm text-gray-500">Avg Risk Score</div>
+            <div className="text-2xl font-bold text-green-600">{formatRisk(latestRisk)}</div>
+          </div>
+        </div>
+
+        {/* Charts - 3 across */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* ENROLLMENT OVER TIME */}
+          {/* ENROLLMENT CHART */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4">Enrollment Over Time</h2>
             <div style={{ width: '100%', height: 256, minHeight: 200 }}>
               {!isMounted || enrollmentLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+                </div>
+              ) : enrollmentData?.error ? (
+                <div className="flex items-center justify-center h-full text-red-500 text-sm">
+                  {enrollmentData.error}
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -437,56 +409,17 @@ export default function SummaryPage() {
             </div>
           </div>
 
-          {/* ENROLLMENT BY PLAN TYPE */}
+          {/* STARS CHART */}
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Enrollment by Plan Type</h2>
-              <select
-                value={enrollmentYear}
-                onChange={(e) => setEnrollmentYear(Number(e.target.value))}
-                className="border rounded px-2 py-1 text-sm"
-              >
-                {filterOptions?.years?.slice(-10).reverse().map(y => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-gray-50">
-                    <th className="text-left py-2 px-3">Plan Type</th>
-                    <th className="text-right py-2 px-3">Enrollment</th>
-                    <th className="text-right py-2 px-3">Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const data = enrollmentByPlanType?.data;
-                    if (!data || data.length === 0) return (
-                      <tr><td colSpan={3} className="py-4 text-center text-gray-500">No data</td></tr>
-                    );
-                    const total = data.reduce((sum: number, r: any) => sum + (r.total_enrollment || 0), 0);
-                    return data.map((row: any, i: number) => (
-                      <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-3 font-medium">{row.plan_type}</td>
-                        <td className="text-right py-2 px-3">{formatNumber(row.total_enrollment)}</td>
-                        <td className="text-right py-2 px-3">{formatPercent(total > 0 ? (row.total_enrollment / total) * 100 : 0)}</td>
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* 4+ STAR % OVER TIME */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">4+ Star Enrollment % Over Time</h2>
+            <h2 className="text-lg font-semibold mb-4">4+ Star % Over Time</h2>
             <div style={{ width: '100%', height: 256, minHeight: 200 }}>
               {!isMounted || starsLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-600" />
+                </div>
+              ) : starsData?.error ? (
+                <div className="flex items-center justify-center h-full text-red-500 text-sm">
+                  {starsData.error}
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -495,74 +428,24 @@ export default function SummaryPage() {
                     <XAxis dataKey="year" />
                     <YAxis tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
                     <Tooltip formatter={(v) => [`${(v as number).toFixed(1)}%`, "4+ Star %"]} />
-                    <Line type="monotone" dataKey="fourplus" stroke="#eab308" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="pct_fourplus" stroke="#eab308" strokeWidth={2} dot={{ r: 3 }} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
 
-          {/* STARS DISTRIBUTION */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Star Rating Distribution</h2>
-              <select
-                value={starsYear}
-                onChange={(e) => setStarsYear(Number(e.target.value))}
-                className="border rounded px-2 py-1 text-sm"
-              >
-                {filterOptions?.years?.slice(-10).reverse().map(y => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-gray-50">
-                    <th className="text-left py-2 px-3">Rating</th>
-                    <th className="text-right py-2 px-3">Contracts</th>
-                    <th className="text-right py-2 px-3">Enrollment</th>
-                    <th className="text-right py-2 px-3">Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const column = selectedPayer 
-                      ? starsDistribution?.columns?.[selectedPayer] 
-                      : starsDistribution?.columns?.Industry;
-                    const distribution = column?.distribution;
-                    if (!distribution || Object.keys(distribution).length === 0) return (
-                      <tr><td colSpan={4} className="py-4 text-center text-gray-500">No data</td></tr>
-                    );
-                    const ratings = Object.keys(distribution).map(Number).filter(n => !isNaN(n)).sort((a, b) => b - a);
-                    if (ratings.length === 0) return (
-                      <tr><td colSpan={4} className="py-4 text-center text-gray-500">No data</td></tr>
-                    );
-                    return ratings.map(rating => {
-                      const data = distribution[rating] || {};
-                      return (
-                        <tr key={rating} className="border-b hover:bg-gray-50">
-                          <td className="py-2 px-3 font-medium">{rating} Stars</td>
-                          <td className="text-right py-2 px-3">{data.contracts ? data.contracts.toLocaleString() : "-"}</td>
-                          <td className="text-right py-2 px-3">{formatNumber(data.enrollment)}</td>
-                          <td className="text-right py-2 px-3">{formatPercent(data.pct)}</td>
-                        </tr>
-                      );
-                    });
-                  })()}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* RISK SCORE OVER TIME */}
+          {/* RISK CHART */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4">Risk Score Over Time</h2>
             <div style={{ width: '100%', height: 256, minHeight: 200 }}>
               {!isMounted || riskLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600" />
+                </div>
+              ) : riskData?.error ? (
+                <div className="flex items-center justify-center h-full text-red-500 text-sm">
+                  {riskData.error}
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -578,66 +461,106 @@ export default function SummaryPage() {
             </div>
           </div>
 
-          {/* RISK BY PLAN TYPE */}
+        </div>
+
+        {/* Data Tables - Below charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+          
+          {/* ENROLLMENT TABLE */}
           <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Risk Score by Plan Type</h2>
-              <select
-                value={riskYear}
-                onChange={(e) => setRiskYear(Number(e.target.value))}
-                className="border rounded px-2 py-1 text-sm"
-              >
-                {[2024, 2023, 2022, 2021, 2020, 2019, 2018].map(y => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            </div>
-            <div className="overflow-x-auto">
+            <h2 className="text-lg font-semibold mb-4">Enrollment by Year</h2>
+            <div className="overflow-x-auto max-h-64 overflow-y-auto">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 bg-white">
                   <tr className="border-b bg-gray-50">
-                    <th className="text-left py-2 px-3">Plan Type</th>
+                    <th className="text-left py-2 px-3">Year</th>
+                    <th className="text-right py-2 px-3">Enrollment</th>
+                    <th className="text-right py-2 px-3">Contracts</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {enrollmentChartData.length > 0 ? (
+                    [...enrollmentChartData].reverse().map((row: any) => (
+                      <tr key={row.year} className="border-b hover:bg-gray-50">
+                        <td className="py-2 px-3 font-medium">{row.year}</td>
+                        <td className="text-right py-2 px-3">{formatNumber(row.enrollment)}</td>
+                        <td className="text-right py-2 px-3">{enrollmentData?.contract_count?.[enrollmentData.years.indexOf(row.year)]?.toLocaleString() || "-"}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan={3} className="py-4 text-center text-gray-500">No data</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* STARS TABLE */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold mb-4">4+ Star % by Year</h2>
+            <div className="overflow-x-auto max-h-64 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b bg-gray-50">
+                    <th className="text-left py-2 px-3">Year</th>
+                    <th className="text-right py-2 px-3">4+ Star %</th>
+                    <th className="text-right py-2 px-3">Enrollment</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {starsChartData.length > 0 ? (
+                    [...starsChartData].reverse().map((row: any, i: number) => (
+                      <tr key={row.year} className="border-b hover:bg-gray-50">
+                        <td className="py-2 px-3 font-medium">{row.year}</td>
+                        <td className="text-right py-2 px-3">{formatPercent(row.pct_fourplus)}</td>
+                        <td className="text-right py-2 px-3">{formatNumber(starsData?.total_enrollment?.[starsData.years.indexOf(row.year)])}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan={3} className="py-4 text-center text-gray-500">No data</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* RISK TABLE */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold mb-4">Risk Score by Year</h2>
+            <div className="overflow-x-auto max-h-64 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b bg-gray-50">
+                    <th className="text-left py-2 px-3">Year</th>
                     <th className="text-right py-2 px-3">Avg Risk</th>
                     <th className="text-right py-2 px-3">Enrollment</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(() => {
-                    const data = riskByProduct?.data;
-                    if (!data || data.length === 0) return (
-                      <tr><td colSpan={3} className="py-4 text-center text-gray-500">No data</td></tr>
-                    );
-                    // Aggregate by plan_type
-                    const byPlanType: Record<string, { enrollment: number, weightedSum: number }> = {};
-                    data.forEach((row: any) => {
-                      const pt = row.plan_type || "Unknown";
-                      if (!byPlanType[pt]) byPlanType[pt] = { enrollment: 0, weightedSum: 0 };
-                      const enr = row.enrollment || 0;
-                      const wavg = row.wavg || row.simple_avg || 0;
-                      byPlanType[pt].enrollment += enr;
-                      byPlanType[pt].weightedSum += enr * wavg;
-                    });
-                    const rows = Object.entries(byPlanType)
-                      .map(([pt, d]) => ({
-                        plan_type: pt,
-                        enrollment: d.enrollment,
-                        wavg: d.enrollment > 0 ? d.weightedSum / d.enrollment : 0
-                      }))
-                      .sort((a, b) => b.enrollment - a.enrollment);
-                    return rows.map((row, i) => (
-                      <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-3 font-medium">{row.plan_type}</td>
-                        <td className="text-right py-2 px-3">{formatRisk(row.wavg)}</td>
-                        <td className="text-right py-2 px-3">{formatNumber(row.enrollment)}</td>
+                  {riskChartData.length > 0 ? (
+                    [...riskChartData].reverse().map((row: any, i: number) => (
+                      <tr key={row.year} className="border-b hover:bg-gray-50">
+                        <td className="py-2 px-3 font-medium">{row.year}</td>
+                        <td className="text-right py-2 px-3">{formatRisk(row.risk)}</td>
+                        <td className="text-right py-2 px-3">{formatNumber(riskData?.total_enrollment?.[riskData.years.indexOf(row.year)])}</td>
                       </tr>
-                    ));
-                  })()}
+                    ))
+                  ) : (
+                    <tr><td colSpan={3} className="py-4 text-center text-gray-500">No data</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
 
         </div>
+
+        {/* Audit Info */}
+        {(enrollmentData?.audit_id || starsData?.audit_id || riskData?.audit_id) && (
+          <div className="mt-4 text-xs text-gray-400 text-right">
+            Query IDs: {[enrollmentData?.audit_id, starsData?.audit_id, riskData?.audit_id].filter(Boolean).join(", ")}
+          </div>
+        )}
       </div>
 
       {/* Click outside to close dropdowns */}
