@@ -192,14 +192,32 @@ const colorConfig: Record<string, {
   teal: { bg: "bg-teal-500", bgHover: "hover:bg-teal-600", border: "border-teal-200", text: "text-teal-600", light: "bg-teal-50", icon: "bg-teal-100", ring: "ring-teal-500" },
 };
 
-function getDownloadUrl(table: string, year: number): string {
+const MONTHS = [
+  { value: "01", label: "January" },
+  { value: "02", label: "February" },
+  { value: "03", label: "March" },
+  { value: "04", label: "April" },
+  { value: "05", label: "May" },
+  { value: "06", label: "June" },
+  { value: "07", label: "July" },
+  { value: "08", label: "August" },
+  { value: "09", label: "September" },
+  { value: "10", label: "October" },
+  { value: "11", label: "November" },
+  { value: "12", label: "December" },
+];
+
+const isMonthlySource = (table: string) => 
+  ["cpsc_enrollment", "enrollment_by_contract", "snp_enrollment"].includes(table);
+
+function getDownloadUrl(table: string, year: number, month: string = "12"): string {
   switch (table) {
     case "cpsc_enrollment":
-      return `${API_BASE}/api/data-sources/cpsc?year=${year}&month=12&format=raw`;
+      return `${API_BASE}/api/data-sources/cpsc?year=${year}&month=${month}&format=raw`;
     case "enrollment_by_contract":
-      return `${API_BASE}/api/data-sources/enrollment-contract?year=${year}&month=12&format=raw`;
+      return `${API_BASE}/api/data-sources/enrollment-contract?year=${year}&month=${month}&format=raw`;
     case "snp_enrollment":
-      return `${API_BASE}/api/data-sources/snp?year=${year}&month=12&format=raw`;
+      return `${API_BASE}/api/data-sources/snp?year=${year}&month=${month}&format=raw`;
     case "stars_overall":
       return `${API_BASE}/api/data-sources/stars?year=${year}&format=raw`;
     case "risk_scores":
@@ -217,6 +235,7 @@ export default function DataSourcesPage() {
   const [selectedSource, setSelectedSource] = useState<DataSourceConfig | null>(null);
   const [selectedDocCategory, setSelectedDocCategory] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
   // Fetch CMS documents list
   const { data: documentsData } = useQuery<DocumentsResponse>({
@@ -271,14 +290,22 @@ export default function DataSourcesPage() {
     },
   });
 
-  const handleDownload = (source: DataSourceConfig, year: number) => {
-    const key = `${source.id}-${year}`;
+  const handleDownload = (source: DataSourceConfig, year: number, month: string = "12") => {
+    const key = `${source.id}-${year}-${month}`;
     setDownloading(key);
     
-    const url = getDownloadUrl(source.table, year);
+    const url = getDownloadUrl(source.table, year, month);
     window.open(url, '_blank');
     
     setTimeout(() => setDownloading(null), 2000);
+  };
+  
+  const handleYearClick = (source: DataSourceConfig, year: number) => {
+    if (isMonthlySource(source.table)) {
+      setSelectedYear(year);
+    } else {
+      handleDownload(source, year);
+    }
   };
 
   const handleDocumentDownload = (docType: string, year: number) => {
@@ -635,7 +662,7 @@ export default function DataSourcesPage() {
       {selectedSource && (
         <div 
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => setSelectedSource(null)}
+          onClick={() => { setSelectedSource(null); setSelectedYear(null); }}
         >
           <div 
             className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden"
@@ -654,7 +681,7 @@ export default function DataSourcesPage() {
                   </div>
                 </div>
                 <button 
-                  onClick={() => setSelectedSource(null)}
+                  onClick={() => { setSelectedSource(null); setSelectedYear(null); }}
                   className="p-2 hover:bg-slate-200 rounded-lg transition-colors"
                 >
                   <X className="w-5 h-5 text-slate-400" />
@@ -679,36 +706,91 @@ export default function DataSourcesPage() {
 
               {/* Year Selection */}
               <div>
-                <h4 className="text-sm font-medium text-slate-700 mb-3">Select year to download:</h4>
-                <div className="grid grid-cols-5 gap-2">
-                  {selectedSource.years.map((year) => {
-                    const isDownloading = downloading === `${selectedSource.id}-${year}`;
-                    const colors = colorConfig[selectedSource.color];
-                    
-                    return (
-                      <button
-                        key={year}
-                        onClick={() => handleDownload(selectedSource, year)}
-                        disabled={isDownloading}
-                        className={`
-                          py-2.5 px-3 rounded-lg text-sm font-medium transition-all
-                          ${isDownloading 
-                            ? 'bg-green-100 text-green-700 border border-green-300' 
-                            : `bg-slate-50 text-slate-700 border border-slate-200 hover:${colors.light} hover:${colors.text} hover:border-${selectedSource.color}-200`
-                          }
-                        `}
-                      >
-                        {isDownloading ? (
-                          <div className="flex items-center justify-center">
-                            <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
-                          </div>
-                        ) : (
-                          year
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
+                <h4 className="text-sm font-medium text-slate-700 mb-3">
+                  {isMonthlySource(selectedSource.table) 
+                    ? (selectedYear ? `Select month for ${selectedYear}:` : "Select year:")
+                    : "Select year to download:"}
+                </h4>
+                
+                {/* Show months if year is selected for monthly sources */}
+                {isMonthlySource(selectedSource.table) && selectedYear ? (
+                  <div>
+                    <button
+                      onClick={() => setSelectedYear(null)}
+                      className="mb-3 text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                    >
+                      ← Back to years
+                    </button>
+                    <div className="grid grid-cols-3 gap-2">
+                      {MONTHS.map((month) => {
+                        const isDownloading = downloading === `${selectedSource.id}-${selectedYear}-${month.value}`;
+                        const colors = colorConfig[selectedSource.color];
+                        
+                        return (
+                          <button
+                            key={month.value}
+                            onClick={() => handleDownload(selectedSource, selectedYear, month.value)}
+                            disabled={isDownloading}
+                            className={`
+                              py-2.5 px-3 rounded-lg text-sm font-medium transition-all
+                              ${isDownloading 
+                                ? 'bg-green-100 text-green-700 border border-green-300' 
+                                : `bg-slate-50 text-slate-700 border border-slate-200 hover:${colors.light} hover:${colors.text} hover:border-${selectedSource.color}-200`
+                              }
+                            `}
+                          >
+                            {isDownloading ? (
+                              <div className="flex items-center justify-center">
+                                <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                              </div>
+                            ) : (
+                              month.label
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-5 gap-2">
+                    {selectedSource.years.map((year) => {
+                      const isDownloading = downloading === `${selectedSource.id}-${year}`;
+                      const colors = colorConfig[selectedSource.color];
+                      const isSelected = selectedYear === year;
+                      
+                      return (
+                        <button
+                          key={year}
+                          onClick={() => handleYearClick(selectedSource, year)}
+                          disabled={isDownloading}
+                          className={`
+                            py-2.5 px-3 rounded-lg text-sm font-medium transition-all
+                            ${isDownloading 
+                              ? 'bg-green-100 text-green-700 border border-green-300' 
+                              : isSelected
+                              ? `${colors.bg} text-white`
+                              : `bg-slate-50 text-slate-700 border border-slate-200 hover:${colors.light} hover:${colors.text} hover:border-${selectedSource.color}-200`
+                            }
+                          `}
+                        >
+                          {isDownloading ? (
+                            <div className="flex items-center justify-center">
+                              <div className="w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                            </div>
+                          ) : (
+                            year
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                
+                {isMonthlySource(selectedSource.table) && !selectedYear && (
+                  <p className="text-xs text-slate-500 mt-2">
+                    Click a year to see available months
+                  </p>
+                )}
               </div>
             </div>
 

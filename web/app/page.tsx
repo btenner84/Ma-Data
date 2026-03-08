@@ -253,7 +253,7 @@ export default function SummaryPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Plan Type</label>
                   <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {(filterOptions?.plan_types || ['HMO', 'PPO', 'PFFS', 'MSA']).map(pt => (
+                    {(filterOptions?.plan_types?.length ? filterOptions.plan_types : ['HMO/HMOPOS', 'Local PPO', 'Regional PPO', 'PFFS', 'MSA']).map(pt => (
                       <label key={pt} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -273,7 +273,7 @@ export default function SummaryPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Product Type</label>
                   <div className="space-y-1">
-                    {(filterOptions?.product_types || ['MAPD', 'MA-only', 'PDP']).map(pt => (
+                    {(filterOptions?.product_types?.length ? filterOptions.product_types : ['MAPD', 'PDP']).map(pt => (
                       <label key={pt} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -293,7 +293,7 @@ export default function SummaryPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">SNP Type</label>
                   <div className="space-y-1">
-                    {(filterOptions?.snp_types || ['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP']).map(st => (
+                    {(filterOptions?.snp_types?.length ? filterOptions.snp_types : ['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP']).map(st => (
                       <label key={st} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -313,7 +313,7 @@ export default function SummaryPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Group Type</label>
                   <div className="space-y-1">
-                    {(filterOptions?.group_types || ['Individual', 'Group']).map(gt => (
+                    {(filterOptions?.group_types?.length ? filterOptions.group_types : ['Individual', 'Group']).map(gt => (
                       <label key={gt} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"

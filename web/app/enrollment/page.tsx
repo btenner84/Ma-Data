@@ -441,7 +441,7 @@ export default function EnrollmentPage() {
                     Special Needs Plans (SNP)
                   </label>
                   <div className="flex flex-wrap gap-2">
-                    {(filterOptions?.snp_types || ["Non-SNP", "D-SNP", "C-SNP", "I-SNP"]).map((type) => (
+                    {(filterOptions?.snp_types?.length ? filterOptions.snp_types : ["Non-SNP", "D-SNP", "C-SNP", "I-SNP"]).map((type) => (
                       <button
                         key={type}
                         onClick={() => setSelectedSnpTypes(prev =>
