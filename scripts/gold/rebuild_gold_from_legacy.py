@@ -70,14 +70,18 @@ def save_parquet(df: pd.DataFrame, key: str):
 
 def rebuild_fact_enrollment_national():
     """
-    Rebuild gold/fact_enrollment_national using hybrid approach:
-    - 2019-2026: Monthly Enrollment by Contract (exact totals)
-    - 2013-2018: CPSC aggregated to national (slightly lower due to suppression)
+    Rebuild gold/fact_enrollment_national from Monthly Enrollment by Contract.
+    
+    Two data sources:
+    - 2019-2026: Monthly Enrollment by Contract (exact totals, source='monthly')
+    - 2013-2018: CPSC aggregated as fallback (source='cpsc_fallback')
+    
+    The 'data_source' column tracks which source was used.
     """
     print("\n" + "=" * 70)
-    print("REBUILDING: gold/fact_enrollment_national (HYBRID)")
+    print("REBUILDING: gold/fact_enrollment_national")
     print("  - 2019-2026: Monthly Enrollment by Contract (exact)")
-    print("  - 2013-2018: CPSC aggregated (slight suppression)")
+    print("  - 2013-2018: CPSC fallback (suppressed)")
     print("=" * 70)
     
     import zipfile
@@ -133,9 +137,10 @@ def rebuild_fact_enrollment_national():
                 'snp_type': row.get('snp_type', 'Non-SNP'),
                 'group_type': row.get('group_type', 'Individual'),
                 '_source_file': 'cpsc_aggregated',
+                'data_source': 'cpsc_fallback',  # Track that this is a fallback, not exact
             })
         
-        print(f"   Added {len(all_rows):,} rows from CPSC")
+        print(f"   Added {len(all_rows):,} rows from CPSC (fallback for 2013-2018)")
     
     # --- PART 2: Process Monthly Enrollment by Contract for 2019+ ---
     print("\n3. Processing Monthly Enrollment by Contract files (2019+)...")
@@ -254,6 +259,7 @@ def rebuild_fact_enrollment_national():
                                     'snp_type': snp_type,
                                     'group_type': group_type,
                                     '_source_file': zip_key,
+                                    'data_source': 'monthly',  # Exact Monthly Enrollment data
                                 })
                         break  # Only process first CSV in zip
             

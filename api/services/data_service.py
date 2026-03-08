@@ -501,23 +501,45 @@ class UnifiedDataService:
         
         where_clause = " AND ".join(conditions)
         
-        sql = f"""
-            WITH latest_months AS (
-                SELECT year, MAX(month) as max_month
-                FROM {table}
-                WHERE year >= {start_year} AND year <= {end_year}
-                GROUP BY year
-            )
-            SELECT 
-                e.year,
-                SUM(e.enrollment) as enrollment,
-                COUNT(DISTINCT e.contract_id) as contract_count
-            FROM {table} e
-            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-            WHERE {where_clause}
-            GROUP BY e.year
-            ORDER BY e.year
-        """
+        # For national source, also get the data_source per year to show monthly vs cpsc_fallback
+        if source == "national":
+            sql = f"""
+                WITH latest_months AS (
+                    SELECT year, MAX(month) as max_month
+                    FROM {table}
+                    WHERE year >= {start_year} AND year <= {end_year}
+                    GROUP BY year
+                )
+                SELECT 
+                    e.year,
+                    SUM(e.enrollment) as enrollment,
+                    COUNT(DISTINCT e.contract_id) as contract_count,
+                    MAX(e.data_source) as data_source
+                FROM {table} e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE {where_clause}
+                GROUP BY e.year
+                ORDER BY e.year
+            """
+        else:
+            sql = f"""
+                WITH latest_months AS (
+                    SELECT year, MAX(month) as max_month
+                    FROM {table}
+                    WHERE year >= {start_year} AND year <= {end_year}
+                    GROUP BY year
+                )
+                SELECT 
+                    e.year,
+                    SUM(e.enrollment) as enrollment,
+                    COUNT(DISTINCT e.contract_id) as contract_count,
+                    'cpsc' as data_source
+                FROM {table} e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE {where_clause}
+                GROUP BY e.year
+                ORDER BY e.year
+            """
         tables = [table]
         
         result = self._execute_query(sql, tables, {
@@ -531,13 +553,19 @@ class UnifiedDataService:
         })
         
         rows = result.data.get('rows', [])
-        return {
+        
+        # Build response with data source info per year
+        response = {
             'years': [r['year'] for r in rows],
             'enrollment': [r['enrollment'] for r in rows],
             'contract_count': [r['contract_count'] for r in rows],
+            'data_sources': [r.get('data_source', 'unknown') for r in rows],
             'audit_id': result.audit.query_id,
-            'filters': result.audit.filters_applied
+            'filters': result.audit.filters_applied,
+            'source': source,
         }
+        
+        return response
     
     def get_stars_timeseries_v5(
         self,
