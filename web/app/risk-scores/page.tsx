@@ -152,6 +152,8 @@ export default function RiskScoresPage() {
         years: data.years || [],
         series: { [payerKey]: data.wavg_risk || [] },
         enrollment: { [payerKey]: data.total_enrollment || [] },
+        metric: metric,
+        group_by: null,
         audit_id: data.audit_id,
       };
     },
