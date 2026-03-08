@@ -151,7 +151,7 @@ export default function EnrollmentPage() {
   // Fetch timeseries data using v5 (Gold layer) - no fallback
   // Supports multiple payers by making parallel requests
   const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
-    queryKey: ["enrollment-timeseries-v5", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, showIndustryTotal, groupBy],
+    queryKey: ["enrollment-timeseries-v5", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, showIndustryTotal, groupBy, dataSource],
     queryFn: async () => {
       // Build base params (without parent_org)
       const buildBaseParams = () => {
@@ -163,8 +163,13 @@ export default function EnrollmentPage() {
         }
         if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
         if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
-        if (selectedStates.length > 0) params.set("states", selectedStates.join(","));
-        if (selectedCounties.length > 0) params.set("counties", selectedCounties.join(","));
+        // Only include geography filters when using geographic data source
+        if (dataSource === "geographic") {
+          if (selectedStates.length > 0) params.set("states", selectedStates.join(","));
+          if (selectedCounties.length > 0) params.set("counties", selectedCounties.join("|"));
+        }
+        // Pass the source to determine which table to use
+        params.set("source", dataSource);
         params.set("start_year", "2013");
         params.set("end_year", "2026");
         return params;

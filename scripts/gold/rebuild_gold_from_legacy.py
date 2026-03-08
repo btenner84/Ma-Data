@@ -69,53 +69,158 @@ def save_parquet(df: pd.DataFrame, key: str):
 
 
 def rebuild_fact_enrollment_national():
-    """Rebuild gold/fact_enrollment_national from legacy table."""
+    """Rebuild gold/fact_enrollment_national from Monthly Enrollment by Contract (exact totals)."""
     print("\n" + "=" * 70)
-    print("REBUILDING: gold/fact_enrollment_national")
+    print("REBUILDING: gold/fact_enrollment_national (from Monthly Enrollment by Contract)")
     print("=" * 70)
     
-    source_key = "processed/unified/fact_enrollment_all_years.parquet"
-    output_key = "gold/fact_enrollment_national.parquet"
+    import zipfile
+    from io import BytesIO
     
-    print(f"\n1. Loading source: {source_key}")
-    df = load_parquet(source_key)
+    # Load dimension lookups for enrichment
+    print("\n1. Loading dimension lookups...")
+    contract_dim = load_parquet("processed/unified/dim_contract_v2.parquet")
+    snp_lookup = load_parquet("processed/unified/snp_lookup.parquet")
     
-    if df.empty:
-        print("  ERROR: Source table is empty")
-        return False
+    # Build lookup dicts for fast access
+    contract_dict = {}
+    if not contract_dim.empty:
+        for _, row in contract_dim.iterrows():
+            key = (row['contract_id'], row['year'])
+            contract_dict[key] = {
+                'plan_type': row.get('plan_type'),
+                'product_type': row.get('product_type'),
+            }
+    print(f"   Loaded {len(contract_dict):,} contract mappings")
     
-    print(f"   Loaded {len(df):,} rows")
-    print(f"   Columns: {df.columns.tolist()}")
+    snp_dict = {}
+    if not snp_lookup.empty:
+        for _, row in snp_lookup.iterrows():
+            key = (row['contract_id'], row['year'])
+            snp_dict[key] = row.get('snp_type', 'Non-SNP')
+    print(f"   Loaded {len(snp_dict):,} SNP mappings")
     
-    print("\n2. Adding Gold layer columns...")
+    # Process all monthly enrollment by contract files
+    print("\n2. Processing Monthly Enrollment by Contract files...")
     
-    df['time_key'] = df['year'] * 100 + df['month']
-    df['entity_id'] = df['contract_id']
-    df['plan_id'] = '000'
-    df['_source_row'] = range(len(df))
-    df['_pipeline_run_id'] = PIPELINE_RUN_ID
-    df['_loaded_at'] = datetime.now()
+    # List all available files
+    response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix='raw/enrollment/by_contract/')
+    zip_files = [obj['Key'] for obj in response.get('Contents', []) if obj['Key'].endswith('.zip')]
     
-    final_cols = [
-        'time_key', 'entity_id', 'contract_id', 'plan_id', 'year', 'month',
-        'enrollment', 'plan_count', 'parent_org', 'state',
-        'plan_type', 'product_type', 'snp_type', 'group_type',
-        '_source_file', '_source_row', '_pipeline_run_id', '_loaded_at'
-    ]
+    print(f"   Found {len(zip_files)} zip files")
     
-    for col in final_cols:
-        if col not in df.columns:
-            df[col] = None
+    all_rows = []
     
-    result = df[final_cols].copy()
+    for zip_key in sorted(zip_files):
+        # Extract year-month from path (e.g., raw/enrollment/by_contract/2024-01/...)
+        parts = zip_key.split('/')
+        year_month = parts[3] if len(parts) > 3 else None
+        if not year_month or '-' not in year_month:
+            continue
+        
+        year, month = map(int, year_month.split('-'))
+        
+        try:
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=zip_key)
+            zip_data = BytesIO(obj['Body'].read())
+            
+            with zipfile.ZipFile(zip_data) as z:
+                for name in z.namelist():
+                    if name.endswith('.csv'):
+                        with z.open(name) as f:
+                            df = pd.read_csv(f)
+                            
+                            # Process enrollment data
+                            for _, row in df.iterrows():
+                                contract_id = str(row.get('Contract Number', ''))
+                                parent_org = row.get('Parent Organization', '')
+                                plan_type_raw = row.get('Plan Type', '')
+                                enrollment_val = row.get('Enrollment', 0)
+                                
+                                # Skip suppressed values
+                                if enrollment_val == '*' or pd.isna(enrollment_val):
+                                    enrollment = 0
+                                else:
+                                    try:
+                                        enrollment = int(float(enrollment_val))
+                                    except:
+                                        enrollment = 0
+                                
+                                # Derive group_type from plan_type
+                                group_type = 'Group' if 'Employer' in str(plan_type_raw) else 'Individual'
+                                
+                                # Derive product_type
+                                if 'PDP' in str(plan_type_raw) or contract_id.startswith('S'):
+                                    product_type = 'PDP'
+                                else:
+                                    product_type = 'MAPD'
+                                
+                                # Check if SNP
+                                snp_type = snp_dict.get((contract_id, year), 'Non-SNP')
+                                
+                                # Map plan_type to standardized categories
+                                if 'HMO' in str(plan_type_raw):
+                                    plan_type = 'HMO/HMOPOS'
+                                elif 'Local PPO' in str(plan_type_raw):
+                                    plan_type = 'Local PPO'
+                                elif 'Regional PPO' in str(plan_type_raw):
+                                    plan_type = 'Regional PPO'
+                                elif 'PFFS' in str(plan_type_raw):
+                                    plan_type = 'PFFS'
+                                elif 'PDP' in str(plan_type_raw) or 'Prescription Drug' in str(plan_type_raw):
+                                    plan_type = 'PDP'
+                                elif 'PACE' in str(plan_type_raw):
+                                    plan_type = 'National PACE'
+                                elif 'Cost' in str(plan_type_raw):
+                                    plan_type = '1876 Cost'
+                                else:
+                                    plan_type = plan_type_raw
+                                
+                                all_rows.append({
+                                    'time_key': year * 100 + month,
+                                    'entity_id': contract_id,
+                                    'contract_id': contract_id,
+                                    'plan_id': '000',
+                                    'year': year,
+                                    'month': month,
+                                    'enrollment': enrollment,
+                                    'plan_count': 1,
+                                    'parent_org': parent_org,
+                                    'state': None,  # National level - no state
+                                    'plan_type': plan_type,
+                                    'product_type': product_type,
+                                    'snp_type': snp_type,
+                                    'group_type': group_type,
+                                    '_source_file': zip_key,
+                                })
+                        break  # Only process first CSV in zip
+            
+            print(f"   Processed {year_month}: {sum(1 for r in all_rows if r['year'] == year and r['month'] == month):,} contracts")
+            
+        except Exception as e:
+            print(f"   Error processing {zip_key}: {e}")
     
-    print("\n3. Validating dimension columns...")
+    print(f"\n3. Building final table...")
+    result = pd.DataFrame(all_rows)
+    result['_source_row'] = range(len(result))
+    result['_pipeline_run_id'] = PIPELINE_RUN_ID
+    result['_loaded_at'] = datetime.now()
+    
+    print(f"   Total rows: {len(result):,}")
+    
+    # Validate
+    print("\n4. Validating dimension columns...")
     for col in ['plan_type', 'product_type', 'snp_type', 'group_type']:
         non_null = result[col].notna().sum()
         pct = non_null / len(result) * 100
         print(f"   {col}: {non_null:,} / {len(result):,} ({pct:.1f}% populated)")
     
-    print("\n4. Saving to Gold layer...")
+    # Check totals
+    dec_2024 = result[(result['year'] == 2024) & (result['month'] == 12)]
+    print(f"\n   Dec 2024 enrollment: {dec_2024['enrollment'].sum():,.0f}")
+    
+    print("\n5. Saving to Gold layer...")
+    output_key = "gold/fact_enrollment_national.parquet"
     save_parquet(result, output_key)
     
     return True

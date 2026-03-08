@@ -7066,13 +7066,18 @@ async def get_enrollment_timeseries_v5(
     group_types: Optional[str] = None,
     states: Optional[str] = None,
     counties: Optional[str] = None,
+    source: str = "national",  # "national" (exact totals) or "geographic" (CPSC with state/county)
     start_year: int = 2015,
     end_year: int = 2026
 ):
     """
     Get enrollment timeseries using Gold layer with full filter support.
     
-    Supports all dimension filters including geographic (state/county).
+    Source options:
+    - "national": Uses Monthly Enrollment by Contract data (exact totals, no geography)
+    - "geographic": Uses CPSC data (allows state/county filtering, may have suppression)
+    
+    Supports all dimension filters including geographic (state/county) when source=geographic.
     """
     try:
         from api.services.data_service import get_data_service
@@ -7084,7 +7089,8 @@ async def get_enrollment_timeseries_v5(
             snp_types=snp_types.split(",") if snp_types else None,
             group_types=group_types.split(",") if group_types else None,
             states=states.split(",") if states else None,
-            counties=counties.split(",") if counties else None,
+            counties=counties.split("|") if counties else None,
+            source=source,
             start_year=start_year,
             end_year=end_year
         )

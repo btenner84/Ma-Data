@@ -450,6 +450,7 @@ class UnifiedDataService:
         group_types: Optional[List[str]] = None,
         states: Optional[List[str]] = None,
         counties: Optional[List[str]] = None,
+        source: str = "national",
         start_year: int = 2015,
         end_year: int = 2026
     ) -> Dict:
@@ -457,8 +458,19 @@ class UnifiedDataService:
         
         Note: Fact tables are denormalized - no JOINs needed for filtering.
         Uses latest month per year (point-in-time snapshot, not cumulative).
-        Uses geographic table when county filtering is needed.
+        
+        Source options:
+        - "national": Monthly Enrollment by Contract (exact totals, no state, filters by contract-level dims)
+        - "geographic": CPSC data (allows state/county, may have suppression <10)
         """
+        
+        # Determine table based on source
+        # National table has exact totals but no state/county
+        # Geographic table has state/county but may have suppression
+        if source == "geographic":
+            table = 'gold_fact_enrollment_geographic'
+        else:
+            table = 'gold_fact_enrollment_national'
         
         # Build WHERE conditions - query fact table directly (denormalized)
         conditions = [f"e.year >= {start_year}", f"e.year <= {end_year}"]
@@ -477,17 +489,18 @@ class UnifiedDataService:
         if group_types:
             grp_list = ", ".join([f"'{gt}'" for gt in group_types])
             conditions.append(f"e.group_type IN ({grp_list})")
-        if states:
-            state_list = ", ".join([f"'{s}'" for s in states])
-            conditions.append(f"e.state IN ({state_list})")
-        if counties:
-            county_list = ", ".join([f"'{c}'" for c in counties])
-            conditions.append(f"e.county IN ({county_list})")
+        
+        # State/county only apply to geographic source
+        if source == "geographic":
+            if states:
+                state_list = ", ".join([f"'{s}'" for s in states])
+                conditions.append(f"e.state IN ({state_list})")
+            if counties:
+                county_list = ", ".join([f"'{c}'" for c in counties])
+                conditions.append(f"e.county IN ({county_list})")
         
         where_clause = " AND ".join(conditions)
         
-        # Use geographic table if county filtering, otherwise national
-        table = 'gold_fact_enrollment_geographic' if counties else 'gold_fact_enrollment_national'
         sql = f"""
             WITH latest_months AS (
                 SELECT year, MAX(month) as max_month
@@ -514,6 +527,7 @@ class UnifiedDataService:
             'snp_types': snp_types,
             'group_types': group_types,
             'states': states,
+            'source': source,
         })
         
         rows = result.data.get('rows', [])
