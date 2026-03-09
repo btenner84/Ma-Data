@@ -38,7 +38,7 @@ from db.duckdb_layer import DuckDBLayer, _duckdb_lock
 
 # Map simplified UI plan types to actual CMS values
 PLAN_TYPE_MAP = {
-    'HMO': ['HMO', 'HMO/HMOPOS', 'Medicare-Medicaid Plan HMO/HMOPOS'],
+    'HMO': ['HMO', 'HMOPOS', 'HMO/HMOPOS', 'Medicare-Medicaid Plan HMO/HMOPOS'],
     'PPO': ['Local PPO', 'Regional PPO'],
     'PFFS': ['PFFS'],
     'MSA': ['MSA'],
