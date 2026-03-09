@@ -59,10 +59,11 @@ app = FastAPI(
 )
 
 # CORS for Next.js frontend
-cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
+cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
+# Allow all origins for Railway deployment - both API and Web services have different URLs
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
