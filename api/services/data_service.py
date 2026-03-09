@@ -47,6 +47,50 @@ PLAN_TYPE_MAP = {
     'PDP': ['Medicare Prescription Drug Plan', 'Employer/Union Only Direct Contract PDP'],
 }
 
+# Parent organization name normalization - maps variant names to canonical name
+PARENT_ORG_NORMALIZE = {
+    # Trailing punctuation variants
+    "Molina Healthcare, Inc.,": "Molina Healthcare, Inc.",
+    "American Health Companies, Inc": "American Health Companies, Inc.",
+    
+    # Encoding issues
+    "America+s 1st Choice NY Holdings, LLC": "America's 1st Choice NY Holdings, LLC",
+    "AmericaÆs 1st Choice of South Carolina, Inc.": "America's 1st Choice of South Carolina, Inc.",
+    
+    # Spelling variants
+    "Acension Health": "Ascension Health Alliance",
+}
+
+
+def normalize_parent_org(name: str) -> str:
+    """Normalize parent organization name to canonical form."""
+    if not name:
+        return name
+    # Remove trailing/leading whitespace
+    name = name.strip()
+    # Apply direct mappings
+    return PARENT_ORG_NORMALIZE.get(name, name)
+
+
+def get_parent_org_variants(normalized_name: str) -> List[str]:
+    """Get all raw name variants that map to this normalized name."""
+    variants = [normalized_name]
+    # Find all keys that map to this normalized name
+    for raw, canonical in PARENT_ORG_NORMALIZE.items():
+        if canonical == normalized_name:
+            variants.append(raw)
+    return variants
+
+
+def build_parent_org_filter(parent_org: str, column: str = "parent_org") -> str:
+    """Build SQL filter for parent_org that matches all variants."""
+    variants = get_parent_org_variants(parent_org)
+    if len(variants) == 1:
+        return f"{column} = '{parent_org}'"
+    else:
+        variant_list = ", ".join([f"'{v}'" for v in variants])
+        return f"{column} IN ({variant_list})"
+
 
 def expand_plan_types(simplified_types: List[str]) -> List[str]:
     """Convert simplified plan type names to full CMS names."""
@@ -445,7 +489,11 @@ class UnifiedDataService:
         # Parent orgs from entity dimension
         sql = "SELECT DISTINCT parent_org FROM gold_dim_entity WHERE parent_org IS NOT NULL ORDER BY parent_org"
         parents_result = self._execute_query(sql, ['gold_dim_entity'], {})
-        result['parent_orgs'] = [r['parent_org'] for r in parents_result.data.get('rows', [])]
+        # Normalize and dedupe parent org names
+        raw_orgs = [r['parent_org'] for r in parents_result.data.get('rows', [])]
+        normalized_orgs = list(set(normalize_parent_org(org) for org in raw_orgs))
+        normalized_orgs.sort()
+        result['parent_orgs'] = normalized_orgs
         
         # Plan attributes from plan dimension
         sql = "SELECT DISTINCT plan_type FROM gold_dim_plan WHERE plan_type IS NOT NULL ORDER BY plan_type"
@@ -506,7 +554,7 @@ class UnifiedDataService:
         conditions = [f"e.year >= {start_year}", f"e.year <= {end_year}"]
         
         if parent_org:
-            conditions.append(f"e.parent_org = '{parent_org}'")
+            conditions.append(build_parent_org_filter(parent_org, "e.parent_org"))
         if plan_types:
             # Expand simplified types (HMO -> HMO/HMOPOS, etc.)
             expanded = expand_plan_types(plan_types)
@@ -619,7 +667,7 @@ class UnifiedDataService:
         
         # Filter using parent_org from stars table (or enrollment)
         if parent_org:
-            conditions.append(f"s.parent_org = '{parent_org}'")
+            conditions.append(build_parent_org_filter(parent_org, "s.parent_org"))
         # Filter using dimension columns from enrollment table
         if plan_types:
             pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
@@ -697,7 +745,7 @@ class UnifiedDataService:
         conditions = [f"year >= {start_year}", f"year <= {end_year}"]
         
         if parent_org:
-            conditions.append(f"parent_org = '{parent_org}'")
+            conditions.append(build_parent_org_filter(parent_org))
         if plan_types:
             pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
             conditions.append(f"plan_type IN ({pt_list})")
@@ -829,7 +877,7 @@ class UnifiedDataService:
         where_clauses = [f"year = {year}"]
         
         if parent_org:
-            where_clauses.append(f"parent_org = '{parent_org}'")
+            where_clauses.append(build_parent_org_filter(parent_org))
         
         if plan_types:
             plan_types_str = ", ".join([f"'{pt}'" for pt in plan_types])
@@ -909,7 +957,7 @@ class UnifiedDataService:
             )""")
         
         if parent_org:
-            base_conditions.append(f"parent_org = '{parent_org}'")
+            base_conditions.append(build_parent_org_filter(parent_org))
         if states:
             state_list = ", ".join([f"'{s}'" for s in states])
             base_conditions.append(f"state IN ({state_list})")
