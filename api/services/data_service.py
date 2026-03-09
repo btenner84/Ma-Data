@@ -1142,10 +1142,15 @@ class UnifiedDataService:
         end_year: int = 2026
     ) -> Dict:
         """
-        Get comprehensive enrollment time series matrix with full audit trail.
+        Get comprehensive enrollment time series matrix - OPTIMIZED VERSION.
         
-        Returns enrollment, counties, and TAM for:
-        - Total
+        Uses 3 bulk queries instead of 30+ individual queries:
+        1. National enrollment by all dimension combinations
+        2. Geographic county counts by dimension combinations  
+        3. TAM calculations by dimension combinations
+        
+        Returns a matrix with:
+        - Total enrollment
         - By Product Type (PDP, MA) with Group/Individual sub-breakdown
         - By Plan Type (HMO, PPO, etc.) with Group/Individual sub-breakdown
         - By SNP Type (Non-SNP, D-SNP, etc.) with Group/Individual sub-breakdown
@@ -1154,29 +1159,10 @@ class UnifiedDataService:
         """
         years = list(range(start_year, end_year + 1))
         
-        # Build parent org filter for e.parent_org
-        parent_filter_e = ""
+        # Build parent org filter
+        parent_filter = ""
         if parent_org:
-            parent_filter_e = f"AND {build_parent_org_filter(parent_org, 'e.parent_org')}"
-        
-        # SQL templates for national and geographic queries (filter to latest month per year)
-        NAT_CTE = f"""
-        WITH latest_months AS (
-            SELECT year, MAX(month) as max_month
-            FROM gold_fact_enrollment_national
-            WHERE year BETWEEN {start_year} AND {end_year}
-            GROUP BY year
-        )
-        """
-        
-        GEO_CTE = f"""
-        WITH latest_months AS (
-            SELECT year, MAX(month) as max_month
-            FROM gold_fact_enrollment_geographic
-            WHERE year BETWEEN {start_year} AND {end_year}
-            GROUP BY year
-        )
-        """
+            parent_filter = f"AND {build_parent_org_filter(parent_org, 'e.parent_org')}"
         
         # Define audit info for different metric types
         AUDIT_INFO = {
@@ -1212,344 +1198,266 @@ class UnifiedDataService:
             }
         
         def cell(value, audit_type: str, filters: Dict) -> Dict:
-            return {'value': value, 'audit': make_audit(audit_type, filters)}
+            return {'value': value if value else 0, 'audit': make_audit(audit_type, filters)}
         
-        matrix = {'years': years, 'rows': []}
+        # Plan type mapping for consolidation
+        PLAN_TYPE_MAP = {
+            'HMO': ['HMO', 'HMOPOS', 'HMO/HMOPOS', 'Medicare-Medicaid Plan HMO/HMOPOS'],
+            'PPO': ['Local PPO', 'Regional PPO'],
+            'PFFS': ['PFFS'],
+            'Cost': ['1876 Cost'],
+            'PACE': ['National PACE'],
+        }
         
-        # 1. TOTAL ENROLLMENT
-        sql = NAT_CTE + f"""
-        SELECT e.year, SUM(e.enrollment) as enrollment
+        # Build CASE statement for plan type consolidation
+        plan_case_parts = []
+        for consolidated, raw_types in PLAN_TYPE_MAP.items():
+            types_str = ", ".join([f"'{t}'" for t in raw_types])
+            plan_case_parts.append(f"WHEN e.plan_type IN ({types_str}) THEN '{consolidated}'")
+        plan_case = "CASE " + " ".join(plan_case_parts) + " ELSE 'Other' END"
+        
+        # ========== QUERY 1: National enrollment (all dimensions) ==========
+        national_sql = f"""
+        WITH latest_months AS (
+            SELECT year, MAX(month) as max_month
+            FROM gold_fact_enrollment_national
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        )
+        SELECT 
+            e.year,
+            e.product_type,
+            {plan_case} as plan_type_consolidated,
+            e.snp_type,
+            e.group_type,
+            SUM(e.enrollment) as enrollment
         FROM gold_fact_enrollment_national e
         INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-        WHERE e.year BETWEEN {start_year} AND {end_year} {parent_filter_e}
-        GROUP BY e.year ORDER BY e.year
+        WHERE e.year BETWEEN {start_year} AND {end_year} {parent_filter}
+        GROUP BY e.year, e.product_type, {plan_case}, e.snp_type, e.group_type
         """
-        result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-        year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-        matrix['rows'].append({
+        
+        nat_result = self._execute_query(national_sql, ['gold_fact_enrollment_national'], {})
+        nat_rows = nat_result.data.get('rows', []) if nat_result and nat_result.data else []
+        
+        # ========== QUERY 2: Geographic county counts (all dimensions) ==========
+        geo_sql = f"""
+        WITH latest_months AS (
+            SELECT year, MAX(month) as max_month
+            FROM gold_fact_enrollment_geographic
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        )
+        SELECT 
+            e.year,
+            e.product_type,
+            e.snp_type,
+            COUNT(DISTINCT e.fips) as counties
+        FROM gold_fact_enrollment_geographic e
+        INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+        WHERE e.year BETWEEN {start_year} AND {end_year} {parent_filter}
+        GROUP BY e.year, e.product_type, e.snp_type
+        """
+        
+        geo_result = self._execute_query(geo_sql, ['gold_fact_enrollment_geographic'], {})
+        geo_rows = geo_result.data.get('rows', []) if geo_result and geo_result.data else []
+        
+        # ========== QUERY 3: TAM by product type (MA only) ==========
+        tam_sql = f"""
+        WITH latest_months AS (
+            SELECT year, MAX(month) as max_month
+            FROM gold_fact_enrollment_geographic
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        ),
+        ma_counties AS (
+            SELECT DISTINCT e.year, e.fips, e.snp_type
+            FROM gold_fact_enrollment_geographic e
+            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+            WHERE e.product_type = 'MAPD' {parent_filter}
+        )
+        SELECT mc.year, mc.snp_type, SUM(dc.eligibles) as tam
+        FROM ma_counties mc
+        JOIN gold_dim_county dc ON mc.fips = dc.fips AND mc.year = dc.year
+        WHERE mc.year BETWEEN {start_year} AND {end_year}
+        GROUP BY mc.year, mc.snp_type
+        """
+        
+        tam_result = self._execute_query(tam_sql, ['gold_fact_enrollment_geographic', 'gold_dim_county'], {})
+        tam_rows = tam_result.data.get('rows', []) if tam_result and tam_result.data else []
+        
+        # ========== Build lookup dictionaries for fast access ==========
+        
+        # National enrollment lookups
+        def nat_key(year, product=None, plan=None, snp=None, group=None):
+            return (year, product, plan, snp, group)
+        
+        nat_data = {}
+        for r in nat_rows:
+            y = r['year']
+            prod = r['product_type']
+            plan = r['plan_type_consolidated']
+            snp = r['snp_type']
+            grp = r['group_type']
+            enroll = r['enrollment'] or 0
+            
+            # Aggregate at different levels
+            # Total
+            nat_data[nat_key(y)] = nat_data.get(nat_key(y), 0) + enroll
+            # By product
+            nat_data[nat_key(y, prod)] = nat_data.get(nat_key(y, prod), 0) + enroll
+            # By product + group (MA only)
+            if prod == 'MAPD':
+                nat_data[nat_key(y, prod, None, None, grp)] = nat_data.get(nat_key(y, prod, None, None, grp), 0) + enroll
+                # By plan type (MA only)
+                nat_data[nat_key(y, prod, plan)] = nat_data.get(nat_key(y, prod, plan), 0) + enroll
+                nat_data[nat_key(y, prod, plan, None, grp)] = nat_data.get(nat_key(y, prod, plan, None, grp), 0) + enroll
+                # By SNP type (MA only)
+                nat_data[nat_key(y, prod, None, snp)] = nat_data.get(nat_key(y, prod, None, snp), 0) + enroll
+                nat_data[nat_key(y, prod, None, snp, grp)] = nat_data.get(nat_key(y, prod, None, snp, grp), 0) + enroll
+        
+        # Geographic county lookups
+        geo_data = {}
+        for r in geo_rows:
+            y = r['year']
+            prod = r['product_type']
+            snp = r['snp_type']
+            counties = r['counties'] or 0
+            
+            # By product
+            if prod == 'MAPD':
+                geo_data[(y, 'MAPD')] = geo_data.get((y, 'MAPD'), 0) + counties
+                # By SNP type
+                geo_data[(y, 'MAPD', snp)] = geo_data.get((y, 'MAPD', snp), 0) + counties
+        
+        # TAM lookups
+        tam_data = {}
+        for r in tam_rows:
+            y = r['year']
+            snp = r['snp_type']
+            tam = r['tam'] or 0
+            
+            # Total MA TAM
+            tam_data[(y, 'MAPD')] = tam_data.get((y, 'MAPD'), 0) + tam
+            # By SNP type
+            tam_data[(y, 'MAPD', snp)] = tam
+        
+        # ========== Build the matrix rows ==========
+        matrix_rows = []
+        
+        # 1. TOTAL ENROLLMENT
+        matrix_rows.append({
             'id': 'total',
             'label': 'Total Enrollment',
             'level': 0,
-            'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y}) for y in years}
+            'data': {y: cell(nat_data.get(nat_key(y), 0), 'enrollment_national', {'year': y}) for y in years}
         })
         
-        # 2. BY PRODUCT TYPE (PDP vs MA)
-        for product in ['PDP', 'MAPD']:
-            label = 'PDP' if product == 'PDP' else 'MA'
-            sql = NAT_CTE + f"""
-            SELECT e.year, SUM(e.enrollment) as enrollment
-            FROM gold_fact_enrollment_national e
-            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-            WHERE e.year BETWEEN {start_year} AND {end_year} 
-              AND e.product_type = '{product}' {parent_filter_e}
-            GROUP BY e.year ORDER BY e.year
-            """
-            result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-            year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-            matrix['rows'].append({
+        # 2. BY PRODUCT TYPE
+        for product, label in [('PDP', 'PDP'), ('MAPD', 'MA')]:
+            matrix_rows.append({
                 'id': f'product_{product.lower()}',
                 'label': label,
                 'level': 1,
                 'section': 'Product Type',
-                'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'product_type': product}) for y in years}
+                'data': {y: cell(nat_data.get(nat_key(y, product), 0), 'enrollment_national', {'year': y, 'product_type': product}) for y in years}
             })
             
-            # MA sub-breakdowns (skip for PDP)
+            # MA sub-breakdowns
             if product == 'MAPD':
-                # Counties for MA
-                sql = GEO_CTE + f"""
-                SELECT e.year, COUNT(DISTINCT e.fips) as counties
-                FROM gold_fact_enrollment_geographic e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
-                year_data = {r['year']: r['counties'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': 'product_ma_counties',
                     'label': '└ Counties',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'counties', {'year': y, 'product_type': 'MAPD'}) for y in years}
+                    'data': {y: cell(geo_data.get((y, 'MAPD'), 0), 'counties', {'year': y, 'product_type': 'MAPD'}) for y in years}
                 })
-                
-                # TAM for MA
-                sql = GEO_CTE + f"""
-                , ma_counties AS (
-                    SELECT DISTINCT e.year, e.fips 
-                    FROM gold_fact_enrollment_geographic e
-                    INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                    WHERE e.product_type = 'MAPD' {parent_filter_e}
-                )
-                SELECT mc.year, SUM(dc.eligibles) as tam
-                FROM ma_counties mc
-                JOIN gold_dim_county dc ON mc.fips = dc.fips AND mc.year = dc.year
-                WHERE mc.year BETWEEN {start_year} AND {end_year}
-                GROUP BY mc.year ORDER BY mc.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_geographic', 'gold_dim_county'], {})
-                year_data = {r['year']: r['tam'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': 'product_ma_tam',
                     'label': '└ TAM',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'tam', {'year': y, 'product_type': 'MAPD'}) for y in years}
+                    'data': {y: cell(tam_data.get((y, 'MAPD'), 0), 'tam', {'year': y, 'product_type': 'MAPD'}) for y in years}
                 })
-                
-                # Group enrollment
-                sql = NAT_CTE + f"""
-                SELECT e.year, SUM(e.enrollment) as enrollment
-                FROM gold_fact_enrollment_national e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.group_type = 'Group' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-                year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': 'product_ma_group',
                     'label': '└ Group',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'product_type': 'MAPD', 'group_type': 'Group'}) for y in years}
+                    'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', None, None, 'Group'), 0), 'enrollment_national', {'year': y, 'product_type': 'MAPD', 'group_type': 'Group'}) for y in years}
                 })
-                
-                # Individual enrollment
-                sql = NAT_CTE + f"""
-                SELECT e.year, SUM(e.enrollment) as enrollment
-                FROM gold_fact_enrollment_national e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.group_type = 'Individual' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-                year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': 'product_ma_individual',
                     'label': '└ Individual',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'product_type': 'MAPD', 'group_type': 'Individual'}) for y in years}
+                    'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', None, None, 'Individual'), 0), 'enrollment_national', {'year': y, 'product_type': 'MAPD', 'group_type': 'Individual'}) for y in years}
                 })
         
-        # 3. BY PLAN TYPE (HMO, PPO, etc.) - MA Only
-        plan_types = [
-            ('HMO', ['HMO', 'HMOPOS', 'HMO/HMOPOS', 'Medicare-Medicaid Plan HMO/HMOPOS']),
-            ('PPO', ['Local PPO', 'Regional PPO']),
-            ('PFFS', ['PFFS']),
-            ('Cost', ['1876 Cost']),
-            ('PACE', ['National PACE']),
-        ]
-        
-        for plan_label, plan_values in plan_types:
-            plan_list = ", ".join([f"'{p}'" for p in plan_values])
-            
-            # Enrollment
-            sql = NAT_CTE + f"""
-            SELECT e.year, SUM(e.enrollment) as enrollment
-            FROM gold_fact_enrollment_national e
-            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-            WHERE e.year BETWEEN {start_year} AND {end_year}
-              AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) {parent_filter_e}
-            GROUP BY e.year ORDER BY e.year
-            """
-            result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-            year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-            matrix['rows'].append({
+        # 3. BY PLAN TYPE (MA Only)
+        for plan_label in ['HMO', 'PPO', 'PFFS', 'Cost', 'PACE']:
+            matrix_rows.append({
                 'id': f'plan_{plan_label.lower()}',
                 'label': plan_label,
                 'level': 1,
                 'section': 'Plan Type (MA)',
-                'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'plan_type': plan_label}) for y in years}
+                'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', plan_label), 0), 'enrollment_national', {'year': y, 'plan_type': plan_label}) for y in years}
             })
             
-            # Only show sub-breakdowns for major plan types (HMO, PPO)
+            # Sub-breakdowns for HMO/PPO only
             if plan_label in ['HMO', 'PPO']:
-                # Counties
-                sql = GEO_CTE + f"""
-                SELECT e.year, COUNT(DISTINCT e.fips) as counties
-                FROM gold_fact_enrollment_geographic e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
-                year_data = {r['year']: r['counties'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
-                    'id': f'plan_{plan_label.lower()}_counties',
-                    'label': '└ Counties',
-                    'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'counties', {'year': y, 'plan_type': plan_label}) for y in years}
-                })
-                
-                # TAM
-                sql = GEO_CTE + f"""
-                , plan_counties AS (
-                    SELECT DISTINCT e.year, e.fips 
-                    FROM gold_fact_enrollment_geographic e
-                    INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                    WHERE e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) {parent_filter_e}
-                )
-                SELECT pc.year, SUM(dc.eligibles) as tam
-                FROM plan_counties pc
-                JOIN gold_dim_county dc ON pc.fips = dc.fips AND pc.year = dc.year
-                WHERE pc.year BETWEEN {start_year} AND {end_year}
-                GROUP BY pc.year ORDER BY pc.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_geographic', 'gold_dim_county'], {})
-                year_data = {r['year']: r['tam'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
-                    'id': f'plan_{plan_label.lower()}_tam',
-                    'label': '└ TAM',
-                    'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'tam', {'year': y, 'plan_type': plan_label}) for y in years}
-                })
-                
-                # Group
-                sql = NAT_CTE + f"""
-                SELECT e.year, SUM(e.enrollment) as enrollment
-                FROM gold_fact_enrollment_national e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) AND e.group_type = 'Group' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-                year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': f'plan_{plan_label.lower()}_group',
                     'label': '└ Group',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'plan_type': plan_label, 'group_type': 'Group'}) for y in years}
+                    'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', plan_label, None, 'Group'), 0), 'enrollment_national', {'year': y, 'plan_type': plan_label, 'group_type': 'Group'}) for y in years}
                 })
-                
-                # Individual
-                sql = NAT_CTE + f"""
-                SELECT e.year, SUM(e.enrollment) as enrollment
-                FROM gold_fact_enrollment_national e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) AND e.group_type = 'Individual' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-                year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': f'plan_{plan_label.lower()}_individual',
                     'label': '└ Individual',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'plan_type': plan_label, 'group_type': 'Individual'}) for y in years}
+                    'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', plan_label, None, 'Individual'), 0), 'enrollment_national', {'year': y, 'plan_type': plan_label, 'group_type': 'Individual'}) for y in years}
                 })
         
-        # 4. BY SNP TYPE (Non-SNP, D-SNP, C-SNP, I-SNP) - MA Only
-        snp_types = ['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP']
-        
-        for snp in snp_types:
-            # Enrollment
-            sql = NAT_CTE + f"""
-            SELECT e.year, SUM(e.enrollment) as enrollment
-            FROM gold_fact_enrollment_national e
-            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-            WHERE e.year BETWEEN {start_year} AND {end_year}
-              AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' {parent_filter_e}
-            GROUP BY e.year ORDER BY e.year
-            """
-            result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-            year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-            matrix['rows'].append({
+        # 4. BY SNP TYPE (MA Only)
+        for snp in ['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP']:
+            matrix_rows.append({
                 'id': f'snp_{snp.lower().replace("-", "")}',
                 'label': snp,
                 'level': 1,
                 'section': 'SNP Type (MA)',
-                'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'snp_type': snp}) for y in years}
+                'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', None, snp), 0), 'enrollment_national', {'year': y, 'snp_type': snp}) for y in years}
             })
             
-            # Only show sub-breakdowns for major SNP types (Non-SNP, D-SNP)
+            # Sub-breakdowns for Non-SNP/D-SNP only
             if snp in ['Non-SNP', 'D-SNP']:
-                # Counties
-                sql = GEO_CTE + f"""
-                SELECT e.year, COUNT(DISTINCT e.fips) as counties
-                FROM gold_fact_enrollment_geographic e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
-                year_data = {r['year']: r['counties'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': f'snp_{snp.lower().replace("-", "")}_counties',
                     'label': '└ Counties',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'counties', {'year': y, 'snp_type': snp}) for y in years}
+                    'data': {y: cell(geo_data.get((y, 'MAPD', snp), 0), 'counties', {'year': y, 'snp_type': snp}) for y in years}
                 })
-                
-                # TAM
-                sql = GEO_CTE + f"""
-                , snp_counties AS (
-                    SELECT DISTINCT e.year, e.fips 
-                    FROM gold_fact_enrollment_geographic e
-                    INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                    WHERE e.product_type = 'MAPD' AND e.snp_type = '{snp}' {parent_filter_e}
-                )
-                SELECT sc.year, SUM(dc.eligibles) as tam
-                FROM snp_counties sc
-                JOIN gold_dim_county dc ON sc.fips = dc.fips AND sc.year = dc.year
-                WHERE sc.year BETWEEN {start_year} AND {end_year}
-                GROUP BY sc.year ORDER BY sc.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_geographic', 'gold_dim_county'], {})
-                year_data = {r['year']: r['tam'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': f'snp_{snp.lower().replace("-", "")}_tam',
                     'label': '└ TAM',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'tam', {'year': y, 'snp_type': snp}) for y in years}
+                    'data': {y: cell(tam_data.get((y, 'MAPD', snp), 0), 'tam', {'year': y, 'snp_type': snp}) for y in years}
                 })
-                
-                # Group
-                sql = NAT_CTE + f"""
-                SELECT e.year, SUM(e.enrollment) as enrollment
-                FROM gold_fact_enrollment_national e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' AND e.group_type = 'Group' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-                year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': f'snp_{snp.lower().replace("-", "")}_group',
                     'label': '└ Group',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'snp_type': snp, 'group_type': 'Group'}) for y in years}
+                    'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', None, snp, 'Group'), 0), 'enrollment_national', {'year': y, 'snp_type': snp, 'group_type': 'Group'}) for y in years}
                 })
-                
-                # Individual
-                sql = NAT_CTE + f"""
-                SELECT e.year, SUM(e.enrollment) as enrollment
-                FROM gold_fact_enrollment_national e
-                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
-                WHERE e.year BETWEEN {start_year} AND {end_year}
-                  AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' AND e.group_type = 'Individual' {parent_filter_e}
-                GROUP BY e.year ORDER BY e.year
-                """
-                result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
-                year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
-                matrix['rows'].append({
+                matrix_rows.append({
                     'id': f'snp_{snp.lower().replace("-", "")}_individual',
                     'label': '└ Individual',
                     'level': 2,
-                    'data': {y: cell(year_data.get(y, 0), 'enrollment_national', {'year': y, 'snp_type': snp, 'group_type': 'Individual'}) for y in years}
+                    'data': {y: cell(nat_data.get(nat_key(y, 'MAPD', None, snp, 'Individual'), 0), 'enrollment_national', {'year': y, 'snp_type': snp, 'group_type': 'Individual'}) for y in years}
                 })
         
         return {
             'years': years,
-            'rows': matrix['rows'],
+            'rows': matrix_rows,
             'filters': {'parent_org': parent_org},
-            'audit_definitions': AUDIT_INFO
+            'audit_definitions': AUDIT_INFO,
+            '_optimization': '3 bulk queries instead of 30+'
         }
 
 
