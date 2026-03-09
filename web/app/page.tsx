@@ -188,6 +188,19 @@ export default function SummaryPage() {
     },
   });
 
+  // Geographic metrics (TAM, market share)
+  const { data: geoMetrics } = useQuery({
+    queryKey: ["geo-metrics", breakdownYear, enrollPayer],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.append("year", breakdownYear.toString());
+      if (enrollPayer) params.append("parent_org", enrollPayer);
+      
+      const res = await fetch(`${API_BASE}/api/v5/geographic/metrics?${params.toString()}`);
+      return res.json();
+    },
+  });
+
   // Transform enrollment data for chart
   const enrollmentChartData = enrollmentData?.years?.map((year: number, i: number) => ({
     year,
@@ -530,6 +543,29 @@ export default function SummaryPage() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* Geographic Coverage */}
+                <div className="bg-gray-50 rounded-lg p-3 col-span-2">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3">Geographic Coverage</h4>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-600">{geoMetrics?.summary?.county_count?.toLocaleString() || '—'}</div>
+                      <div className="text-xs text-gray-500">Counties</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">{formatNumber(geoMetrics?.summary?.enrollment)}</div>
+                      <div className="text-xs text-gray-500">Geo Enrollment</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-purple-600">{formatNumber(geoMetrics?.summary?.eligibles)}</div>
+                      <div className="text-xs text-gray-500">TAM (Eligibles)</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-orange-600">{geoMetrics?.summary?.market_share?.toFixed(1) || '—'}%</div>
+                      <div className="text-xs text-gray-500">Market Share</div>
+                    </div>
                   </div>
                 </div>
 
