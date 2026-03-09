@@ -140,7 +140,7 @@ export default function RiskScoresPage() {
       if (selectedPlanTypes.length > 0) baseParams.set("plan_types", selectedPlanTypes.join(","));
       if (selectedSnpTypes.length > 0) baseParams.set("snp_types", selectedSnpTypes.join(","));
       if (selectedGroupTypes.length > 0) baseParams.set("group_types", selectedGroupTypes.join(","));
-      baseParams.set("start_year", "2006");
+      baseParams.set("start_year", "2013");
       baseParams.set("end_year", "2024");
       
       // Always fetch Industry Total data
