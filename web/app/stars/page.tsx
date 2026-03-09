@@ -2673,7 +2673,7 @@ export default function StarsPage() {
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide">Plan Type</label>
                   <div className="flex flex-wrap gap-2">
-                    {['HMO/HMOPOS', 'PPO', 'PFFS'].map((type) => (
+                    {['HMO', 'PPO', 'PFFS', 'MSA'].map((type) => (
                       <button
                         key={type}
                         onClick={() => setSelectedPlanTypes(prev =>
@@ -2685,10 +2685,11 @@ export default function StarsPage() {
                             : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                         }`}
                       >
-                        {type === 'HMO/HMOPOS' ? 'HMO' : type}
+                        {type}
                       </button>
                     ))}
                   </div>
+                  <p className="text-xs text-gray-400 mt-1">PPO includes Local & Regional PPO</p>
                 </div>
 
                 {/* SNP Type */}
@@ -3308,7 +3309,7 @@ GROUP BY overall_rating`}
                 <div className="mb-4">
                   <label className="block text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">Plan Type</label>
                   <div className="flex flex-wrap gap-2">
-                    {['HMO', 'PPO', 'PFFS'].map((type) => (
+                    {['HMO', 'PPO', 'PFFS', 'MSA'].map((type) => (
                       <button
                         key={type}
                         onClick={() => setDistTimePlanTypes(prev => prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type])}

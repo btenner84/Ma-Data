@@ -715,7 +715,9 @@ class UnifiedDataService:
             conditions.append(build_parent_org_filter(parent_org, "s.parent_org"))
         # Filter using dimension columns from enrollment table
         if plan_types:
-            pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
+            # Expand simplified types (HMO -> HMO/HMOPOS, PPO -> Local PPO/Regional PPO, etc.)
+            expanded = expand_plan_types(plan_types)
+            pt_list = ", ".join([f"'{pt}'" for pt in expanded])
             conditions.append(f"e.plan_type IN ({pt_list})")
         if product_types:
             prod_list = ", ".join([f"'{pt}'" for pt in product_types])
@@ -801,7 +803,9 @@ class UnifiedDataService:
         if parent_org:
             conditions.append(build_parent_org_filter(parent_org))
         if plan_types:
-            pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
+            # Expand simplified types (HMO -> HMO/HMOPOS, PPO -> Local PPO/Regional PPO, etc.)
+            expanded = expand_plan_types(plan_types)
+            pt_list = ", ".join([f"'{pt}'" for pt in expanded])
             conditions.append(f"plan_type IN ({pt_list})")
         if snp_types:
             snp_list = ", ".join([f"'{st}'" for st in snp_types])
@@ -934,7 +938,9 @@ class UnifiedDataService:
             where_clauses.append(build_parent_org_filter(parent_org))
         
         if plan_types:
-            plan_types_str = ", ".join([f"'{pt}'" for pt in plan_types])
+            # Expand simplified types (HMO -> HMO/HMOPOS, PPO -> Local PPO/Regional PPO, etc.)
+            expanded = expand_plan_types(plan_types)
+            plan_types_str = ", ".join([f"'{pt}'" for pt in expanded])
             where_clauses.append(f"plan_type IN ({plan_types_str})")
         
         if snp_types:

@@ -344,7 +344,7 @@ export default function RiskScoresPage() {
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Plan Type</label>
                   <div className="flex flex-wrap gap-2">
-                    {["HMO", "PPO", "RPPO", "PFFS", "MSA"].map((type) => (
+                    {["HMO", "PPO", "PFFS", "MSA"].map((type) => (
                       <button
                         key={type}
                         onClick={() => setSelectedPlanTypes(prev =>
@@ -360,6 +360,7 @@ export default function RiskScoresPage() {
                       </button>
                     ))}
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">PPO includes Local PPO and Regional PPO</p>
                 </div>
 
                 {/* SNP Type */}
