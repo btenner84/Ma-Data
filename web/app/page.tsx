@@ -404,7 +404,7 @@ export default function SummaryPage() {
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
                   </div>
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minHeight={350}>
                     <LineChart data={enrollmentChartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                       <XAxis dataKey="year" stroke="#6b7280" fontSize={12} />
