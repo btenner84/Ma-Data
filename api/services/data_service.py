@@ -1194,11 +1194,30 @@ class UnifiedDataService:
         
         matrix = {'years': years, 'rows': []}
         
+        # Get latest month for each year (December for historical, latest available for current)
+        # This ensures point-in-time enrollment, not sum of all months
+        month_filter = f"""
+        AND (year, month) IN (
+            SELECT year, MAX(month) FROM gold_fact_enrollment_national 
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        )
+        """
+        
+        # For geographic queries
+        geo_month_filter = f"""
+        AND (year, month) IN (
+            SELECT year, MAX(month) FROM gold_fact_enrollment_geographic
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        )
+        """
+        
         # 1. TOTAL ENROLLMENT
         sql = f"""
         SELECT year, SUM(enrollment) as enrollment
         FROM gold_fact_enrollment_national
-        WHERE year BETWEEN {start_year} AND {end_year} {parent_filter}
+        WHERE year BETWEEN {start_year} AND {end_year} {month_filter} {parent_filter}
         GROUP BY year ORDER BY year
         """
         result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1217,7 +1236,7 @@ class UnifiedDataService:
             SELECT year, SUM(enrollment) as enrollment
             FROM gold_fact_enrollment_national
             WHERE year BETWEEN {start_year} AND {end_year} 
-              AND product_type = '{product}' {parent_filter}
+              AND product_type = '{product}' {month_filter} {parent_filter}
             GROUP BY year ORDER BY year
             """
             result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1237,7 +1256,7 @@ class UnifiedDataService:
                 SELECT year, COUNT(DISTINCT fips) as counties
                 FROM gold_fact_enrollment_geographic
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' {parent_filter}
+                  AND product_type = 'MAPD' {geo_month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
@@ -1253,7 +1272,7 @@ class UnifiedDataService:
                 sql = f"""
                 WITH ma_counties AS (
                     SELECT DISTINCT year, fips FROM gold_fact_enrollment_geographic
-                    WHERE product_type = 'MAPD' {parent_filter}
+                    WHERE product_type = 'MAPD' {geo_month_filter} {parent_filter}
                 )
                 SELECT mc.year, SUM(dc.eligibles) as tam
                 FROM ma_counties mc
@@ -1275,7 +1294,7 @@ class UnifiedDataService:
                 SELECT year, SUM(enrollment) as enrollment
                 FROM gold_fact_enrollment_national
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND group_type = 'Group' {parent_filter}
+                  AND product_type = 'MAPD' AND group_type = 'Group' {month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1292,7 +1311,7 @@ class UnifiedDataService:
                 SELECT year, SUM(enrollment) as enrollment
                 FROM gold_fact_enrollment_national
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND group_type = 'Individual' {parent_filter}
+                  AND product_type = 'MAPD' AND group_type = 'Individual' {month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1321,7 +1340,7 @@ class UnifiedDataService:
             SELECT year, SUM(enrollment) as enrollment
             FROM gold_fact_enrollment_national
             WHERE year BETWEEN {start_year} AND {end_year}
-              AND product_type = 'MAPD' AND plan_type IN ({plan_list}) {parent_filter}
+              AND product_type = 'MAPD' AND plan_type IN ({plan_list}) {month_filter} {parent_filter}
             GROUP BY year ORDER BY year
             """
             result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1341,7 +1360,7 @@ class UnifiedDataService:
                 SELECT year, COUNT(DISTINCT fips) as counties
                 FROM gold_fact_enrollment_geographic
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) {parent_filter}
+                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) {geo_month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
@@ -1357,7 +1376,7 @@ class UnifiedDataService:
                 sql = f"""
                 WITH plan_counties AS (
                     SELECT DISTINCT year, fips FROM gold_fact_enrollment_geographic
-                    WHERE product_type = 'MAPD' AND plan_type IN ({plan_list}) {parent_filter}
+                    WHERE product_type = 'MAPD' AND plan_type IN ({plan_list}) {geo_month_filter} {parent_filter}
                 )
                 SELECT pc.year, SUM(dc.eligibles) as tam
                 FROM plan_counties pc
@@ -1379,7 +1398,7 @@ class UnifiedDataService:
                 SELECT year, SUM(enrollment) as enrollment
                 FROM gold_fact_enrollment_national
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) AND group_type = 'Group' {parent_filter}
+                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) AND group_type = 'Group' {month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1396,7 +1415,7 @@ class UnifiedDataService:
                 SELECT year, SUM(enrollment) as enrollment
                 FROM gold_fact_enrollment_national
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) AND group_type = 'Individual' {parent_filter}
+                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) AND group_type = 'Individual' {month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1417,7 +1436,7 @@ class UnifiedDataService:
             SELECT year, SUM(enrollment) as enrollment
             FROM gold_fact_enrollment_national
             WHERE year BETWEEN {start_year} AND {end_year}
-              AND product_type = 'MAPD' AND snp_type = '{snp}' {parent_filter}
+              AND product_type = 'MAPD' AND snp_type = '{snp}' {month_filter} {parent_filter}
             GROUP BY year ORDER BY year
             """
             result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1437,7 +1456,7 @@ class UnifiedDataService:
                 SELECT year, COUNT(DISTINCT fips) as counties
                 FROM gold_fact_enrollment_geographic
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND snp_type = '{snp}' {parent_filter}
+                  AND product_type = 'MAPD' AND snp_type = '{snp}' {geo_month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
@@ -1453,7 +1472,7 @@ class UnifiedDataService:
                 sql = f"""
                 WITH snp_counties AS (
                     SELECT DISTINCT year, fips FROM gold_fact_enrollment_geographic
-                    WHERE product_type = 'MAPD' AND snp_type = '{snp}' {parent_filter}
+                    WHERE product_type = 'MAPD' AND snp_type = '{snp}' {geo_month_filter} {parent_filter}
                 )
                 SELECT sc.year, SUM(dc.eligibles) as tam
                 FROM snp_counties sc
@@ -1475,7 +1494,7 @@ class UnifiedDataService:
                 SELECT year, SUM(enrollment) as enrollment
                 FROM gold_fact_enrollment_national
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND snp_type = '{snp}' AND group_type = 'Group' {parent_filter}
+                  AND product_type = 'MAPD' AND snp_type = '{snp}' AND group_type = 'Group' {month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
@@ -1492,7 +1511,7 @@ class UnifiedDataService:
                 SELECT year, SUM(enrollment) as enrollment
                 FROM gold_fact_enrollment_national
                 WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND snp_type = '{snp}' AND group_type = 'Individual' {parent_filter}
+                  AND product_type = 'MAPD' AND snp_type = '{snp}' AND group_type = 'Individual' {month_filter} {parent_filter}
                 GROUP BY year ORDER BY year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})

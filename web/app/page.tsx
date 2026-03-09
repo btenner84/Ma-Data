@@ -60,6 +60,7 @@ const COLORS = {
 const BREAKDOWN_COLORS = [COLORS.blue, COLORS.green, COLORS.yellow, COLORS.purple, COLORS.red, COLORS.orange];
 
 // Map granular CMS plan types to simplified categories
+// PFFS, MSA, PACE, Cost all < 1% - bucket as "Other"
 const PLAN_TYPE_CONSOLIDATION: Record<string, string> = {
   'HMO': 'HMO',
   'HMOPOS': 'HMO',
@@ -67,10 +68,10 @@ const PLAN_TYPE_CONSOLIDATION: Record<string, string> = {
   'Medicare-Medicaid Plan HMO/HMOPOS': 'HMO',
   'Local PPO': 'PPO',
   'Regional PPO': 'PPO',
-  'PFFS': 'PFFS',
-  'MSA': 'MSA',
-  'National PACE': 'PACE',
-  '1876 Cost': 'Cost',
+  'PFFS': 'Other',
+  'MSA': 'Other',
+  'National PACE': 'Other',
+  '1876 Cost': 'Other',
   'Medicare Prescription Drug Plan': 'PDP',
   'Employer/Union Only Direct Contract PDP': 'PDP',
 };
