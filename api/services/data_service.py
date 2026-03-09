@@ -697,6 +697,11 @@ class UnifiedDataService:
     ) -> Dict:
         """Get 4+ star enrollment percentage timeseries with full filter support.
         
+        IMPORTANT: Stars year X uses enrollment from year X+1.
+        - 2025 Stars → 2026 Enrollment (Dec or latest available)
+        - 2024 Stars → 2025 Enrollment (Dec)
+        - 2026 Stars → 2026 Enrollment (Feb, until 2027 data available)
+        
         Joins stars to enrollment (both denormalized) to calculate enrollment-weighted %.
         Uses latest month per year for enrollment (point-in-time snapshot).
         """
@@ -722,11 +727,16 @@ class UnifiedDataService:
         
         where_clause = " AND ".join(conditions)
         
+        # Stars year X uses enrollment year X+1 (capped at max available year)
+        # We need enrollment from start_year+1 to end_year+1
+        enrollment_start = start_year + 1
+        enrollment_end = end_year + 1
+        
         sql = f"""
             WITH latest_months AS (
                 SELECT year, MAX(month) as max_month
                 FROM gold_fact_enrollment_national
-                WHERE year >= {start_year} AND year <= {end_year}
+                WHERE year >= {enrollment_start} AND year <= {enrollment_end}
                 GROUP BY year
             ),
             enrollment_snapshot AS (
@@ -741,7 +751,11 @@ class UnifiedDataService:
                 COUNT(DISTINCT s.contract_id) as contract_count
             FROM gold_fact_stars s
             LEFT JOIN enrollment_snapshot e 
-                ON s.contract_id = e.contract_id AND s.year = e.year
+                ON s.contract_id = e.contract_id 
+                AND e.year = CASE 
+                    WHEN s.year >= 2026 THEN 2026  -- For 2026+ stars, use 2026 enrollment until 2027+ available
+                    ELSE s.year + 1               -- Stars year X uses enrollment year X+1
+                END
             WHERE s.overall_rating IS NOT NULL AND {where_clause}
             GROUP BY s.year
             ORDER BY s.year
