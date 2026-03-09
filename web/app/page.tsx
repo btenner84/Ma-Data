@@ -110,15 +110,17 @@ export default function SummaryPage() {
   });
 
   // ========== BREAKDOWN QUERIES (for single year, respects macro payer filter) ==========
-  const buildBreakdownUrl = (filterParam: string) => {
+  const buildBreakdownUrl = (filterParam: string, maOnly: boolean = false) => {
     const params = new URLSearchParams();
     params.append("start_year", breakdownYear.toString());
     params.append("end_year", breakdownYear.toString());
     if (enrollPayer) params.append("parent_org", enrollPayer);
+    // For MA-only metrics (SNP, Group), exclude PDP
+    if (maOnly) params.append("product_types", "MAPD");
     return `${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}&${filterParam}`;
   };
 
-  // Product Type breakdown
+  // Product Type breakdown (all products)
   const { data: productBreakdown } = useQuery({
     queryKey: ["breakdown-product", breakdownYear, enrollPayer],
     queryFn: async () => {
@@ -133,13 +135,13 @@ export default function SummaryPage() {
     },
   });
 
-  // Group Type breakdown
+  // Group Type breakdown (MA only - PDP doesn't have Individual/Group)
   const { data: groupBreakdown } = useQuery({
     queryKey: ["breakdown-group", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(buildBreakdownUrl("group_types=Individual")).then(r => r.json()),
-        fetch(buildBreakdownUrl("group_types=Group")).then(r => r.json()),
+        fetch(buildBreakdownUrl("group_types=Individual", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("group_types=Group", true)).then(r => r.json()),
       ]);
       return [
         { name: "Individual", value: results[0]?.enrollment?.[0] || 0 },
@@ -148,15 +150,15 @@ export default function SummaryPage() {
     },
   });
 
-  // SNP Type breakdown
+  // SNP Type breakdown (MA only - PDP doesn't have SNP types)
   const { data: snpBreakdown } = useQuery({
     queryKey: ["breakdown-snp", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(buildBreakdownUrl("snp_types=Non-SNP")).then(r => r.json()),
-        fetch(buildBreakdownUrl("snp_types=D-SNP")).then(r => r.json()),
-        fetch(buildBreakdownUrl("snp_types=C-SNP")).then(r => r.json()),
-        fetch(buildBreakdownUrl("snp_types=I-SNP")).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=Non-SNP", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=D-SNP", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=C-SNP", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=I-SNP", true)).then(r => r.json()),
       ]);
       return [
         { name: "Non-SNP", value: results[0]?.enrollment?.[0] || 0 },
@@ -167,15 +169,15 @@ export default function SummaryPage() {
     },
   });
 
-  // Plan Type breakdown
+  // Plan Type breakdown (MA only - PDP has different plan types)
   const { data: planBreakdown } = useQuery({
     queryKey: ["breakdown-plan", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(buildBreakdownUrl("plan_types=HMO")).then(r => r.json()),
-        fetch(buildBreakdownUrl("plan_types=PPO")).then(r => r.json()),
-        fetch(buildBreakdownUrl("plan_types=PFFS")).then(r => r.json()),
-        fetch(buildBreakdownUrl("plan_types=Cost")).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=HMO", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=PPO", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=PFFS", true)).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=Cost", true)).then(r => r.json()),
       ]);
       return [
         { name: "HMO", value: results[0]?.enrollment?.[0] || 0 },
@@ -183,6 +185,28 @@ export default function SummaryPage() {
         { name: "PFFS", value: results[2]?.enrollment?.[0] || 0 },
         { name: "Cost", value: results[3]?.enrollment?.[0] || 0 },
       ].filter(x => x.value > 0);
+    },
+  });
+
+  // Geographic metrics (counties, TAM)
+  const { data: geoMetrics } = useQuery({
+    queryKey: ["geo-metrics", breakdownYear, enrollPayer],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.append("start_year", breakdownYear.toString());
+      params.append("end_year", breakdownYear.toString());
+      params.append("source", "geographic");
+      if (enrollPayer) params.append("parent_org", enrollPayer);
+      
+      const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}`);
+      const data = await res.json();
+      
+      // Get county count from geographic data
+      // Note: This is a simplified version - actual implementation would need a dedicated endpoint
+      return {
+        countyCount: data?.county_count || 0,
+        enrollment: data?.enrollment?.[0] || 0,
+      };
     },
   });
 
@@ -431,27 +455,24 @@ export default function SummaryPage() {
                 </div>
               </div>
 
-              {/* Breakdown Grid - 2x2 */}
-              <div className="grid grid-cols-2 gap-4 flex-1">
+              {/* Breakdown Grid - 2x3 */}
+              <div className="grid grid-cols-2 gap-3 flex-1">
                 
                 {/* Product Type Breakdown */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">By Product Type</h4>
-                  <div className="space-y-2">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">By Product Type</h4>
+                  <div className="space-y-1.5">
                     {productBreakdown?.map((item, i) => {
                       const total = totalBreakdown(productBreakdown);
                       const pct = total > 0 ? (item.value / total) * 100 : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1">
+                          <div className="flex justify-between text-xs mb-0.5">
                             <span className="font-medium">{item.name}</span>
                             <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full rounded-full transition-all" 
-                              style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }}
-                            />
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
                         </div>
                       );
@@ -459,24 +480,24 @@ export default function SummaryPage() {
                   </div>
                 </div>
 
-                {/* Group Type Breakdown */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">By Market Segment</h4>
-                  <div className="space-y-2">
+                {/* Group Type Breakdown (MA Only) */}
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h4 className="text-sm font-semibold text-gray-700">By Market Segment</h4>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
+                  </div>
+                  <div className="space-y-1.5">
                     {groupBreakdown?.map((item, i) => {
                       const total = totalBreakdown(groupBreakdown);
                       const pct = total > 0 ? (item.value / total) * 100 : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1">
+                          <div className="flex justify-between text-xs mb-0.5">
                             <span className="font-medium">{item.name}</span>
                             <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full rounded-full transition-all" 
-                              style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }}
-                            />
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
                         </div>
                       );
@@ -484,24 +505,24 @@ export default function SummaryPage() {
                   </div>
                 </div>
 
-                {/* SNP Type Breakdown */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">By SNP Type</h4>
-                  <div className="space-y-2">
+                {/* SNP Type Breakdown (MA Only) */}
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h4 className="text-sm font-semibold text-gray-700">By SNP Type</h4>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
+                  </div>
+                  <div className="space-y-1.5">
                     {snpBreakdown?.map((item, i) => {
                       const total = totalBreakdown(snpBreakdown);
                       const pct = total > 0 ? (item.value / total) * 100 : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1">
+                          <div className="flex justify-between text-xs mb-0.5">
                             <span className="font-medium">{item.name}</span>
                             <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full rounded-full transition-all" 
-                              style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }}
-                            />
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
                         </div>
                       );
@@ -509,28 +530,47 @@ export default function SummaryPage() {
                   </div>
                 </div>
 
-                {/* Plan Type Breakdown */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">By Plan Type</h4>
-                  <div className="space-y-2">
+                {/* Plan Type Breakdown (MA Only) */}
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h4 className="text-sm font-semibold text-gray-700">By Plan Type</h4>
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
+                  </div>
+                  <div className="space-y-1.5">
                     {planBreakdown?.map((item, i) => {
                       const total = totalBreakdown(planBreakdown);
                       const pct = total > 0 ? (item.value / total) * 100 : 0;
                       return (
                         <div key={item.name}>
-                          <div className="flex justify-between text-sm mb-1">
+                          <div className="flex justify-between text-xs mb-0.5">
                             <span className="font-medium">{item.name}</span>
                             <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full rounded-full transition-all" 
-                              style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }}
-                            />
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* Geographic Coverage */}
+                <div className="bg-gray-50 rounded-lg p-3 col-span-2">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Geographic Coverage</h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-600">{geoMetrics?.countyCount?.toLocaleString() || '—'}</div>
+                      <div className="text-xs text-gray-500">Counties</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">{formatNumber(geoMetrics?.enrollment)}</div>
+                      <div className="text-xs text-gray-500">Geo Enrollment</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-purple-600">—</div>
+                      <div className="text-xs text-gray-500">TAM Share</div>
+                    </div>
                   </div>
                 </div>
 
