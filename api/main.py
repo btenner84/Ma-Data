@@ -7495,6 +7495,39 @@ async def get_geographic_metrics_v5(
         return {"error": str(e)}
 
 
+@app.get("/api/v5/enrollment/matrix")
+async def get_enrollment_matrix_v5(
+    parent_org: Optional[str] = None,
+    start_year: int = 2015,
+    end_year: int = 2026
+):
+    """
+    Get comprehensive enrollment time series matrix with full audit trail.
+    
+    Returns enrollment, counties, and TAM over time for:
+    - Total enrollment
+    - By Product Type (PDP, MA) with Group/Individual breakdowns
+    - By Plan Type (HMO, PPO, etc.) with Group/Individual breakdowns  
+    - By SNP Type (Non-SNP, D-SNP, etc.) with Group/Individual breakdowns
+    
+    Each data point includes audit metadata showing:
+    - Source files (CMS data files)
+    - Tables queried
+    - Calculation methodology
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_enrollment_matrix_v5(
+            parent_org=parent_org,
+            start_year=start_year,
+            end_year=end_year
+        )
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

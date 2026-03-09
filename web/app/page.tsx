@@ -14,7 +14,7 @@ import {
   Bar,
   Cell,
 } from "recharts";
-import { ChevronDown, Search, Filter } from "lucide-react";
+import { ChevronDown, Search, Filter, X, Info } from "lucide-react";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -244,6 +244,29 @@ export default function SummaryPage() {
       return res.json();
     },
   });
+
+  // Enrollment matrix (time series table)
+  const { data: matrixData, isLoading: matrixLoading } = useQuery({
+    queryKey: ["enrollment-matrix", enrollPayer],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (enrollPayer) params.append("parent_org", enrollPayer);
+      params.append("start_year", "2015");
+      params.append("end_year", "2026");
+      
+      const res = await fetch(`${API_BASE}/api/v5/enrollment/matrix?${params.toString()}`);
+      return res.json();
+    },
+  });
+
+  // Audit modal state
+  const [auditModal, setAuditModal] = useState<{
+    open: boolean;
+    label: string;
+    year: number;
+    value: number;
+    audit: { source: string; tables: string[]; calculation: string; filters_applied: Record<string, any> } | null;
+  }>({ open: false, label: '', year: 0, value: 0, audit: null });
 
   // Transform enrollment data for chart
   const enrollmentChartData = enrollmentData?.years?.map((year: number, i: number) => ({
@@ -627,6 +650,144 @@ export default function SummaryPage() {
           </div>
         </div>
       </div>
+
+      {/* ENROLLMENT TIME SERIES TABLE */}
+      <div className="max-w-[1800px] mx-auto px-6 pb-6">
+        <div className="bg-white rounded-xl shadow-sm border">
+          <div className="border-b px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900">Enrollment Time Series</h2>
+            <p className="text-sm text-gray-500 mt-1">Click any cell to view audit trail and data sources</p>
+          </div>
+          
+          <div className="overflow-x-auto">
+            {matrixLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b">
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700 sticky left-0 bg-gray-50 min-w-[200px]">Metric</th>
+                    {matrixData?.years?.map((year: number) => (
+                      <th key={year} className="text-right px-3 py-3 font-semibold text-gray-700 min-w-[80px]">{year}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {matrixData?.rows?.map((row: any, idx: number) => {
+                    const isSection = row.section && (idx === 0 || matrixData.rows[idx - 1]?.section !== row.section);
+                    return (
+                      <>
+                        {isSection && (
+                          <tr key={`section-${row.section}`} className="bg-blue-50">
+                            <td colSpan={(matrixData?.years?.length || 0) + 1} className="px-4 py-2 font-semibold text-blue-800 text-xs uppercase tracking-wide">
+                              {row.section}
+                            </td>
+                          </tr>
+                        )}
+                        <tr 
+                          key={row.id} 
+                          className={`border-b hover:bg-gray-50 ${row.level === 0 ? 'bg-gray-100 font-semibold' : ''} ${row.level === 2 ? 'text-gray-600' : ''}`}
+                        >
+                          <td className={`px-4 py-2 sticky left-0 bg-white ${row.level === 0 ? 'bg-gray-100' : ''} ${row.level === 2 ? 'pl-8 text-gray-500' : ''}`}>
+                            {row.label}
+                          </td>
+                          {matrixData?.years?.map((year: number) => {
+                            const cellData = row.data?.[year];
+                            const value = cellData?.value || 0;
+                            const isCounty = row.label.includes('Counties');
+                            const isTam = row.label.includes('TAM');
+                            
+                            return (
+                              <td 
+                                key={year} 
+                                className="text-right px-3 py-2 cursor-pointer hover:bg-blue-100 transition-colors group relative"
+                                onClick={() => setAuditModal({
+                                  open: true,
+                                  label: row.label,
+                                  year,
+                                  value,
+                                  audit: cellData?.audit || null
+                                })}
+                              >
+                                <span className="group-hover:text-blue-600">
+                                  {isCounty ? value.toLocaleString() : isTam ? formatNumber(value) : formatNumber(value)}
+                                </span>
+                                <Info className="w-3 h-3 text-gray-300 group-hover:text-blue-500 absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* AUDIT TRAIL MODAL */}
+      {auditModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setAuditModal({ ...auditModal, open: false })}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50 rounded-t-xl">
+              <div>
+                <h3 className="font-semibold text-gray-900">Audit Trail</h3>
+                <p className="text-sm text-gray-500">{auditModal.label} - {auditModal.year}</p>
+              </div>
+              <button onClick={() => setAuditModal({ ...auditModal, open: false })} className="p-2 hover:bg-gray-200 rounded-lg">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {/* Value */}
+              <div className="bg-blue-50 rounded-lg p-4">
+                <div className="text-sm text-blue-600 font-medium">Value</div>
+                <div className="text-2xl font-bold text-blue-800">
+                  {auditModal.label.includes('Counties') 
+                    ? auditModal.value.toLocaleString() 
+                    : formatNumber(auditModal.value)}
+                </div>
+              </div>
+              
+              {/* Source */}
+              {auditModal.audit && (
+                <>
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Data Source</div>
+                    <div className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{auditModal.audit.source}</div>
+                  </div>
+                  
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Tables Queried</div>
+                    <div className="flex flex-wrap gap-2">
+                      {auditModal.audit.tables?.map(t => (
+                        <span key={t} className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Calculation Method</div>
+                    <div className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{auditModal.audit.calculation}</div>
+                  </div>
+                  
+                  <div>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Filters Applied</div>
+                    <div className="text-sm font-mono text-gray-600 bg-gray-50 rounded-lg p-3">
+                      {JSON.stringify(auditModal.audit.filters_applied, null, 2)}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Click outside to close dropdowns */}
       {showEnrollPayerDropdown && (
