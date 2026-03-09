@@ -1092,8 +1092,11 @@ class UnifiedDataService:
         # Build breakdowns with TAM for each dimension
         breakdowns['by_plan_type'] = build_breakdown_with_tam('plan_type', base_filter, year)
         breakdowns['by_product_type'] = build_breakdown_with_tam('product_type', base_filter, year)
-        breakdowns['by_snp_type'] = build_breakdown_with_tam('snp_type', base_filter, year)
-        breakdowns['by_group_type'] = build_breakdown_with_tam('group_type', base_filter, year)
+        
+        # SNP and Group breakdowns should be MA Only (exclude PDP)
+        ma_only_filter = f"{base_filter} AND product_type = 'MAPD'"
+        breakdowns['by_snp_type'] = build_breakdown_with_tam('snp_type', ma_only_filter, year)
+        breakdowns['by_group_type'] = build_breakdown_with_tam('group_type', ma_only_filter, year)
         
         # By state (simpler, no TAM per state for now)
         state_sql = f"""
@@ -1194,23 +1197,21 @@ class UnifiedDataService:
         
         matrix = {'years': years, 'rows': []}
         
-        # Get latest month for each year (December for historical, latest available for current)
-        # This ensures point-in-time enrollment, not sum of all months
+        # Use December for all years, except for current year use latest month
+        # Simpler approach: filter to month=12 for complete years, latest for partial
         month_filter = f"""
-        AND (year, month) IN (
-            SELECT year, MAX(month) FROM gold_fact_enrollment_national 
-            WHERE year BETWEEN {start_year} AND {end_year}
-            GROUP BY year
-        )
+        AND month = CASE 
+            WHEN year < 2026 THEN 12 
+            ELSE (SELECT MAX(month) FROM gold_fact_enrollment_national WHERE year = 2026)
+        END
         """
         
         # For geographic queries
         geo_month_filter = f"""
-        AND (year, month) IN (
-            SELECT year, MAX(month) FROM gold_fact_enrollment_geographic
-            WHERE year BETWEEN {start_year} AND {end_year}
-            GROUP BY year
-        )
+        AND month = CASE 
+            WHEN year < 2026 THEN 12 
+            ELSE (SELECT MAX(month) FROM gold_fact_enrollment_geographic WHERE year = 2026)
+        END
         """
         
         # 1. TOTAL ENROLLMENT
