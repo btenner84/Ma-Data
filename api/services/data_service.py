@@ -992,68 +992,71 @@ class UnifiedDataService:
         # Base filter for all breakdown queries
         base_filter = f"{base_where} AND {dim_where}"
         
-        # By plan type
-        plan_sql = f"""
-        SELECT plan_type, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
-        FROM gold_fact_enrollment_geographic
-        WHERE {base_filter}
-        GROUP BY plan_type ORDER BY enrollment DESC
-        """
-        plan_result = self._execute_query(plan_sql, ['gold_fact_enrollment_geographic'], {})
-        breakdowns['by_plan_type'] = [
-            {'name': r['plan_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
-            for r in plan_result.data.get('rows', [])
-        ]
+        # Helper function to build breakdown with TAM
+        def build_breakdown_with_tam(dimension_col: str, base_filter: str, year: int):
+            sql = f"""
+            WITH geo_agg AS (
+                SELECT {dimension_col} as dim_value, fips, SUM(enrollment) as enrollment
+                FROM gold_fact_enrollment_geographic
+                WHERE {base_filter}
+                GROUP BY {dimension_col}, fips
+            ),
+            dim_summary AS (
+                SELECT dim_value, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
+                FROM geo_agg
+                GROUP BY dim_value
+            ),
+            dim_counties AS (
+                SELECT DISTINCT dim_value, fips FROM geo_agg
+            ),
+            county_elig AS (
+                SELECT fips, eligibles FROM gold_dim_county
+                WHERE year = {year} AND month = (SELECT MAX(month) FROM gold_dim_county WHERE year = {year})
+            ),
+            dim_tam AS (
+                SELECT dc.dim_value, SUM(ce.eligibles) as eligibles
+                FROM dim_counties dc
+                LEFT JOIN county_elig ce ON dc.fips = ce.fips
+                GROUP BY dc.dim_value
+            )
+            SELECT 
+                ds.dim_value as name,
+                ds.counties,
+                ds.enrollment,
+                dt.eligibles,
+                ROUND(100.0 * ds.enrollment / NULLIF(dt.eligibles, 0), 2) as market_share
+            FROM dim_summary ds
+            LEFT JOIN dim_tam dt ON ds.dim_value = dt.dim_value
+            ORDER BY ds.enrollment DESC
+            """
+            result = self._execute_query(sql, ['gold_fact_enrollment_geographic', 'gold_dim_county'], {})
+            return [
+                {
+                    'name': r['name'], 
+                    'counties': r['counties'], 
+                    'enrollment': r['enrollment'],
+                    'eligibles': r['eligibles'],
+                    'market_share': r['market_share']
+                }
+                for r in result.data.get('rows', [])
+            ]
         
-        # By product type
-        prod_sql = f"""
-        SELECT product_type, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
-        FROM gold_fact_enrollment_geographic
-        WHERE {base_filter}
-        GROUP BY product_type ORDER BY enrollment DESC
-        """
-        prod_result = self._execute_query(prod_sql, ['gold_fact_enrollment_geographic'], {})
-        breakdowns['by_product_type'] = [
-            {'name': r['product_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
-            for r in prod_result.data.get('rows', [])
-        ]
+        # Build breakdowns with TAM for each dimension
+        breakdowns['by_plan_type'] = build_breakdown_with_tam('plan_type', base_filter, year)
+        breakdowns['by_product_type'] = build_breakdown_with_tam('product_type', base_filter, year)
+        breakdowns['by_snp_type'] = build_breakdown_with_tam('snp_type', base_filter, year)
+        breakdowns['by_group_type'] = build_breakdown_with_tam('group_type', base_filter, year)
         
-        # By SNP type
-        snp_sql = f"""
-        SELECT snp_type, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
-        FROM gold_fact_enrollment_geographic
-        WHERE {base_filter}
-        GROUP BY snp_type ORDER BY enrollment DESC
-        """
-        snp_result = self._execute_query(snp_sql, ['gold_fact_enrollment_geographic'], {})
-        breakdowns['by_snp_type'] = [
-            {'name': r['snp_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
-            for r in snp_result.data.get('rows', [])
-        ]
-        
-        # By group type
-        grp_sql = f"""
-        SELECT group_type, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
-        FROM gold_fact_enrollment_geographic
-        WHERE {base_filter}
-        GROUP BY group_type ORDER BY enrollment DESC
-        """
-        grp_result = self._execute_query(grp_sql, ['gold_fact_enrollment_geographic'], {})
-        breakdowns['by_group_type'] = [
-            {'name': r['group_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
-            for r in grp_result.data.get('rows', [])
-        ]
-        
-        # By state (top 10)
+        # By state (simpler, no TAM per state for now)
         state_sql = f"""
-        SELECT state, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
+        SELECT state as name, COUNT(DISTINCT fips) as counties, SUM(enrollment) as enrollment
         FROM gold_fact_enrollment_geographic
         WHERE {base_filter}
         GROUP BY state ORDER BY enrollment DESC LIMIT 10
         """
         state_result = self._execute_query(state_sql, ['gold_fact_enrollment_geographic'], {})
         breakdowns['by_state'] = [
-            {'name': r['state'], 'counties': r['counties'], 'enrollment': r['enrollment']}
+            {'name': r['name'], 'counties': r['counties'], 'enrollment': r['enrollment']}
             for r in state_result.data.get('rows', [])
         ]
         

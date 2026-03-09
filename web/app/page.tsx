@@ -449,122 +449,154 @@ export default function SummaryPage() {
               {/* Breakdown Grid - 2x3 */}
               <div className="grid grid-cols-2 gap-3 flex-1">
                 
-                {/* Product Type Breakdown */}
+                {/* Product Type Breakdown with Geo Metrics */}
                 <div className="bg-gray-50 rounded-lg p-3">
                   <h4 className="text-sm font-semibold text-gray-700 mb-2">By Product Type</h4>
-                  <div className="space-y-1.5">
-                    {productBreakdown?.map((item, i) => {
-                      const total = totalBreakdown(productBreakdown);
-                      const pct = total > 0 ? (item.value / total) * 100 : 0;
+                  <div className="space-y-2">
+                    {(geoMetrics?.breakdowns?.by_product_type || productBreakdown)?.map((item: any, i: number) => {
+                      const enrollment = item.enrollment || item.value || 0;
+                      const total = (geoMetrics?.breakdowns?.by_product_type || productBreakdown)?.reduce((s: number, x: any) => s + (x.enrollment || x.value || 0), 0) || 1;
+                      const pct = (enrollment / total) * 100;
                       return (
-                        <div key={item.name}>
-                          <div className="flex justify-between text-xs mb-0.5">
+                        <div key={item.name} className="border-b border-gray-200 pb-2 last:border-0">
+                          <div className="flex justify-between text-xs mb-1">
                             <span className="font-medium">{item.name}</span>
-                            <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
+                            <span className="text-gray-600">{formatNumber(enrollment)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-1">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
+                          {item.counties && (
+                            <div className="flex justify-between text-[10px] text-gray-500">
+                              <span>{item.counties?.toLocaleString()} counties</span>
+                              <span>TAM: {formatNumber(item.eligibles)}</span>
+                              <span>Share: {item.market_share}%</span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Group Type Breakdown (MA Only) */}
+                {/* Group Type Breakdown with Geo Metrics */}
                 <div className="bg-gray-50 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <h4 className="text-sm font-semibold text-gray-700">By Market Segment</h4>
                     <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
                   </div>
-                  <div className="space-y-1.5">
-                    {groupBreakdown?.map((item, i) => {
-                      const total = totalBreakdown(groupBreakdown);
-                      const pct = total > 0 ? (item.value / total) * 100 : 0;
+                  <div className="space-y-2">
+                    {(geoMetrics?.breakdowns?.by_group_type || groupBreakdown)?.map((item: any, i: number) => {
+                      const enrollment = item.enrollment || item.value || 0;
+                      const total = (geoMetrics?.breakdowns?.by_group_type || groupBreakdown)?.reduce((s: number, x: any) => s + (x.enrollment || x.value || 0), 0) || 1;
+                      const pct = (enrollment / total) * 100;
                       return (
-                        <div key={item.name}>
-                          <div className="flex justify-between text-xs mb-0.5">
+                        <div key={item.name} className="border-b border-gray-200 pb-2 last:border-0">
+                          <div className="flex justify-between text-xs mb-1">
                             <span className="font-medium">{item.name}</span>
-                            <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
+                            <span className="text-gray-600">{formatNumber(enrollment)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-1">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
+                          {item.counties && (
+                            <div className="flex justify-between text-[10px] text-gray-500">
+                              <span>{item.counties?.toLocaleString()} counties</span>
+                              <span>TAM: {formatNumber(item.eligibles)}</span>
+                              <span>Share: {item.market_share}%</span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* SNP Type Breakdown (MA Only) */}
+                {/* SNP Type Breakdown with Geo Metrics */}
                 <div className="bg-gray-50 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <h4 className="text-sm font-semibold text-gray-700">By SNP Type</h4>
                     <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
                   </div>
-                  <div className="space-y-1.5">
-                    {snpBreakdown?.map((item, i) => {
-                      const total = totalBreakdown(snpBreakdown);
-                      const pct = total > 0 ? (item.value / total) * 100 : 0;
+                  <div className="space-y-2">
+                    {(geoMetrics?.breakdowns?.by_snp_type || snpBreakdown)?.map((item: any, i: number) => {
+                      const enrollment = item.enrollment || item.value || 0;
+                      const total = (geoMetrics?.breakdowns?.by_snp_type || snpBreakdown)?.reduce((s: number, x: any) => s + (x.enrollment || x.value || 0), 0) || 1;
+                      const pct = (enrollment / total) * 100;
                       return (
-                        <div key={item.name}>
-                          <div className="flex justify-between text-xs mb-0.5">
+                        <div key={item.name} className="border-b border-gray-200 pb-2 last:border-0">
+                          <div className="flex justify-between text-xs mb-1">
                             <span className="font-medium">{item.name}</span>
-                            <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
+                            <span className="text-gray-600">{formatNumber(enrollment)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-1">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
+                          {item.counties && (
+                            <div className="flex justify-between text-[10px] text-gray-500">
+                              <span>{item.counties?.toLocaleString()} counties</span>
+                              <span>TAM: {formatNumber(item.eligibles)}</span>
+                              <span>Share: {item.market_share}%</span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Plan Type Breakdown (MA Only) */}
+                {/* Plan Type Breakdown with Geo Metrics */}
                 <div className="bg-gray-50 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <h4 className="text-sm font-semibold text-gray-700">By Plan Type</h4>
                     <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
                   </div>
-                  <div className="space-y-1.5">
-                    {planBreakdown?.map((item, i) => {
-                      const total = totalBreakdown(planBreakdown);
-                      const pct = total > 0 ? (item.value / total) * 100 : 0;
+                  <div className="space-y-2">
+                    {(geoMetrics?.breakdowns?.by_plan_type || planBreakdown)?.map((item: any, i: number) => {
+                      const enrollment = item.enrollment || item.value || 0;
+                      const total = (geoMetrics?.breakdowns?.by_plan_type || planBreakdown)?.reduce((s: number, x: any) => s + (x.enrollment || x.value || 0), 0) || 1;
+                      const pct = (enrollment / total) * 100;
                       return (
-                        <div key={item.name}>
-                          <div className="flex justify-between text-xs mb-0.5">
+                        <div key={item.name} className="border-b border-gray-200 pb-2 last:border-0">
+                          <div className="flex justify-between text-xs mb-1">
                             <span className="font-medium">{item.name}</span>
-                            <span className="text-gray-600">{formatNumber(item.value)} ({pct.toFixed(1)}%)</span>
+                            <span className="text-gray-600">{formatNumber(enrollment)} ({pct.toFixed(1)}%)</span>
                           </div>
-                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-1">
                             <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: BREAKDOWN_COLORS[i] }} />
                           </div>
+                          {item.counties && (
+                            <div className="flex justify-between text-[10px] text-gray-500">
+                              <span>{item.counties?.toLocaleString()} counties</span>
+                              <span>TAM: {formatNumber(item.eligibles)}</span>
+                              <span>Share: {item.market_share}%</span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* Geographic Coverage */}
-                <div className="bg-gray-50 rounded-lg p-3 col-span-2">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">Geographic Coverage</h4>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-600">{geoMetrics?.summary?.county_count?.toLocaleString() || '—'}</div>
-                      <div className="text-xs text-gray-500">Counties</div>
+                {/* Total Geographic Summary */}
+                <div className="bg-blue-50 rounded-lg p-3 col-span-2">
+                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Total Geographic Coverage</h4>
+                  <div className="grid grid-cols-4 gap-4 text-center">
+                    <div>
+                      <div className="text-xl font-bold text-blue-600">{geoMetrics?.summary?.county_count?.toLocaleString() || '—'}</div>
+                      <div className="text-[10px] text-gray-500">Counties</div>
                     </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">{formatNumber(geoMetrics?.summary?.enrollment)}</div>
-                      <div className="text-xs text-gray-500">Geo Enrollment</div>
+                    <div>
+                      <div className="text-xl font-bold text-green-600">{formatNumber(geoMetrics?.summary?.enrollment)}</div>
+                      <div className="text-[10px] text-gray-500">Enrollment</div>
                     </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-purple-600">{formatNumber(geoMetrics?.summary?.eligibles)}</div>
-                      <div className="text-xs text-gray-500">TAM (Eligibles)</div>
+                    <div>
+                      <div className="text-xl font-bold text-purple-600">{formatNumber(geoMetrics?.summary?.eligibles)}</div>
+                      <div className="text-[10px] text-gray-500">TAM</div>
                     </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-orange-600">{geoMetrics?.summary?.market_share?.toFixed(1) || '—'}%</div>
-                      <div className="text-xs text-gray-500">Market Share</div>
+                    <div>
+                      <div className="text-xl font-bold text-orange-600">{geoMetrics?.summary?.market_share?.toFixed(1) || '—'}%</div>
+                      <div className="text-[10px] text-gray-500">Market Share</div>
                     </div>
                   </div>
                 </div>
