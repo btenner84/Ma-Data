@@ -70,19 +70,21 @@ PARENT_ORG_MA_GROUPS = {
                                "Allina Health and Aetna Insurance Holding Company"],
     
     # Elevance was renamed from Anthem in 2022
-    "Elevance Health, Inc.": ["Elevance Health, Inc.", "Anthem, Inc.", "Anthem Insurance Companies, Inc.",
-                              "WellPoint, Inc."],
+    "Elevance Health, Inc.": ["Elevance Health, Inc.", "Elevance Health, Inc. & BCBSMA & BCBSRI & BCBSVT",
+                              "Anthem Inc.", "Anthem, Inc.", "Anthem Insurance Co. & BCBSMA & BCBSRI & BCBSVT",
+                              "Anthem Insurance Companies, Inc.", "WellPoint, Inc."],
     
     # Centene acquired WellCare in 2020
     "Centene Corporation": ["Centene Corporation", "WellCare Health Plans, Inc.", 
                             "Health Net, Inc.", "Fidelis Care New York"],
     
     # UnitedHealth Group variations
-    "UnitedHealth Group, Incorporated": ["UnitedHealth Group, Incorporated", "UnitedHealth Group", 
-                                          "UnitedHealthcare", "UnitedHealthCare"],
+    "UnitedHealth Group, Inc.": ["UnitedHealth Group, Inc.", "UnitedHealth Group, Incorporated", 
+                                  "UnitedHealth Group", "UnitedHealthcare", "UnitedHealthCare"],
     
-    # Cigna acquired Express Scripts, later merged parts with Humana
-    "Cigna Group": ["Cigna Group", "Cigna Corporation", "Cigna Health and Life Insurance Company"],
+    # Cigna variations
+    "The Cigna Group": ["The Cigna Group", "Cigna Group", "CIGNA", "Cigna Corporation", 
+                        "Cigna Health and Life Insurance Company"],
 }
 
 
