@@ -1154,10 +1154,29 @@ class UnifiedDataService:
         """
         years = list(range(start_year, end_year + 1))
         
-        # Build parent org filter
-        parent_filter = ""
+        # Build parent org filter for e.parent_org
+        parent_filter_e = ""
         if parent_org:
-            parent_filter = f"AND {build_parent_org_filter(parent_org)}"
+            parent_filter_e = f"AND {build_parent_org_filter(parent_org, 'e.parent_org')}"
+        
+        # SQL templates for national and geographic queries (filter to latest month per year)
+        NAT_CTE = f"""
+        WITH latest_months AS (
+            SELECT year, MAX(month) as max_month
+            FROM gold_fact_enrollment_national
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        )
+        """
+        
+        GEO_CTE = f"""
+        WITH latest_months AS (
+            SELECT year, MAX(month) as max_month
+            FROM gold_fact_enrollment_geographic
+            WHERE year BETWEEN {start_year} AND {end_year}
+            GROUP BY year
+        )
+        """
         
         # Define audit info for different metric types
         AUDIT_INFO = {
@@ -1197,29 +1216,13 @@ class UnifiedDataService:
         
         matrix = {'years': years, 'rows': []}
         
-        # Use December for all years, except for current year use latest month
-        # Simpler approach: filter to month=12 for complete years, latest for partial
-        month_filter = f"""
-        AND month = CASE 
-            WHEN year < 2026 THEN 12 
-            ELSE (SELECT MAX(month) FROM gold_fact_enrollment_national WHERE year = 2026)
-        END
-        """
-        
-        # For geographic queries
-        geo_month_filter = f"""
-        AND month = CASE 
-            WHEN year < 2026 THEN 12 
-            ELSE (SELECT MAX(month) FROM gold_fact_enrollment_geographic WHERE year = 2026)
-        END
-        """
-        
         # 1. TOTAL ENROLLMENT
-        sql = f"""
-        SELECT year, SUM(enrollment) as enrollment
-        FROM gold_fact_enrollment_national
-        WHERE year BETWEEN {start_year} AND {end_year} {month_filter} {parent_filter}
-        GROUP BY year ORDER BY year
+        sql = NAT_CTE + f"""
+        SELECT e.year, SUM(e.enrollment) as enrollment
+        FROM gold_fact_enrollment_national e
+        INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+        WHERE e.year BETWEEN {start_year} AND {end_year} {parent_filter_e}
+        GROUP BY e.year ORDER BY e.year
         """
         result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
         year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1233,12 +1236,13 @@ class UnifiedDataService:
         # 2. BY PRODUCT TYPE (PDP vs MA)
         for product in ['PDP', 'MAPD']:
             label = 'PDP' if product == 'PDP' else 'MA'
-            sql = f"""
-            SELECT year, SUM(enrollment) as enrollment
-            FROM gold_fact_enrollment_national
-            WHERE year BETWEEN {start_year} AND {end_year} 
-              AND product_type = '{product}' {month_filter} {parent_filter}
-            GROUP BY year ORDER BY year
+            sql = NAT_CTE + f"""
+            SELECT e.year, SUM(e.enrollment) as enrollment
+            FROM gold_fact_enrollment_national e
+            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+            WHERE e.year BETWEEN {start_year} AND {end_year} 
+              AND e.product_type = '{product}' {parent_filter_e}
+            GROUP BY e.year ORDER BY e.year
             """
             result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
             year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1253,12 +1257,13 @@ class UnifiedDataService:
             # MA sub-breakdowns (skip for PDP)
             if product == 'MAPD':
                 # Counties for MA
-                sql = f"""
-                SELECT year, COUNT(DISTINCT fips) as counties
-                FROM gold_fact_enrollment_geographic
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' {geo_month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = GEO_CTE + f"""
+                SELECT e.year, COUNT(DISTINCT e.fips) as counties
+                FROM gold_fact_enrollment_geographic e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
                 year_data = {r['year']: r['counties'] for r in result.data.get('rows', [])}
@@ -1270,10 +1275,12 @@ class UnifiedDataService:
                 })
                 
                 # TAM for MA
-                sql = f"""
-                WITH ma_counties AS (
-                    SELECT DISTINCT year, fips FROM gold_fact_enrollment_geographic
-                    WHERE product_type = 'MAPD' {geo_month_filter} {parent_filter}
+                sql = GEO_CTE + f"""
+                , ma_counties AS (
+                    SELECT DISTINCT e.year, e.fips 
+                    FROM gold_fact_enrollment_geographic e
+                    INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                    WHERE e.product_type = 'MAPD' {parent_filter_e}
                 )
                 SELECT mc.year, SUM(dc.eligibles) as tam
                 FROM ma_counties mc
@@ -1291,12 +1298,13 @@ class UnifiedDataService:
                 })
                 
                 # Group enrollment
-                sql = f"""
-                SELECT year, SUM(enrollment) as enrollment
-                FROM gold_fact_enrollment_national
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND group_type = 'Group' {month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = NAT_CTE + f"""
+                SELECT e.year, SUM(e.enrollment) as enrollment
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.group_type = 'Group' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
                 year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1308,12 +1316,13 @@ class UnifiedDataService:
                 })
                 
                 # Individual enrollment
-                sql = f"""
-                SELECT year, SUM(enrollment) as enrollment
-                FROM gold_fact_enrollment_national
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND group_type = 'Individual' {month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = NAT_CTE + f"""
+                SELECT e.year, SUM(e.enrollment) as enrollment
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.group_type = 'Individual' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
                 year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1337,12 +1346,13 @@ class UnifiedDataService:
             plan_list = ", ".join([f"'{p}'" for p in plan_values])
             
             # Enrollment
-            sql = f"""
-            SELECT year, SUM(enrollment) as enrollment
-            FROM gold_fact_enrollment_national
-            WHERE year BETWEEN {start_year} AND {end_year}
-              AND product_type = 'MAPD' AND plan_type IN ({plan_list}) {month_filter} {parent_filter}
-            GROUP BY year ORDER BY year
+            sql = NAT_CTE + f"""
+            SELECT e.year, SUM(e.enrollment) as enrollment
+            FROM gold_fact_enrollment_national e
+            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+            WHERE e.year BETWEEN {start_year} AND {end_year}
+              AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) {parent_filter_e}
+            GROUP BY e.year ORDER BY e.year
             """
             result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
             year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1357,12 +1367,13 @@ class UnifiedDataService:
             # Only show sub-breakdowns for major plan types (HMO, PPO)
             if plan_label in ['HMO', 'PPO']:
                 # Counties
-                sql = f"""
-                SELECT year, COUNT(DISTINCT fips) as counties
-                FROM gold_fact_enrollment_geographic
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) {geo_month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = GEO_CTE + f"""
+                SELECT e.year, COUNT(DISTINCT e.fips) as counties
+                FROM gold_fact_enrollment_geographic e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
                 year_data = {r['year']: r['counties'] for r in result.data.get('rows', [])}
@@ -1374,10 +1385,12 @@ class UnifiedDataService:
                 })
                 
                 # TAM
-                sql = f"""
-                WITH plan_counties AS (
-                    SELECT DISTINCT year, fips FROM gold_fact_enrollment_geographic
-                    WHERE product_type = 'MAPD' AND plan_type IN ({plan_list}) {geo_month_filter} {parent_filter}
+                sql = GEO_CTE + f"""
+                , plan_counties AS (
+                    SELECT DISTINCT e.year, e.fips 
+                    FROM gold_fact_enrollment_geographic e
+                    INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                    WHERE e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) {parent_filter_e}
                 )
                 SELECT pc.year, SUM(dc.eligibles) as tam
                 FROM plan_counties pc
@@ -1395,12 +1408,13 @@ class UnifiedDataService:
                 })
                 
                 # Group
-                sql = f"""
-                SELECT year, SUM(enrollment) as enrollment
-                FROM gold_fact_enrollment_national
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) AND group_type = 'Group' {month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = NAT_CTE + f"""
+                SELECT e.year, SUM(e.enrollment) as enrollment
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) AND e.group_type = 'Group' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
                 year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1412,12 +1426,13 @@ class UnifiedDataService:
                 })
                 
                 # Individual
-                sql = f"""
-                SELECT year, SUM(enrollment) as enrollment
-                FROM gold_fact_enrollment_national
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND plan_type IN ({plan_list}) AND group_type = 'Individual' {month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = NAT_CTE + f"""
+                SELECT e.year, SUM(e.enrollment) as enrollment
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.plan_type IN ({plan_list}) AND e.group_type = 'Individual' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
                 year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1433,12 +1448,13 @@ class UnifiedDataService:
         
         for snp in snp_types:
             # Enrollment
-            sql = f"""
-            SELECT year, SUM(enrollment) as enrollment
-            FROM gold_fact_enrollment_national
-            WHERE year BETWEEN {start_year} AND {end_year}
-              AND product_type = 'MAPD' AND snp_type = '{snp}' {month_filter} {parent_filter}
-            GROUP BY year ORDER BY year
+            sql = NAT_CTE + f"""
+            SELECT e.year, SUM(e.enrollment) as enrollment
+            FROM gold_fact_enrollment_national e
+            INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+            WHERE e.year BETWEEN {start_year} AND {end_year}
+              AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' {parent_filter_e}
+            GROUP BY e.year ORDER BY e.year
             """
             result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
             year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1453,12 +1469,13 @@ class UnifiedDataService:
             # Only show sub-breakdowns for major SNP types (Non-SNP, D-SNP)
             if snp in ['Non-SNP', 'D-SNP']:
                 # Counties
-                sql = f"""
-                SELECT year, COUNT(DISTINCT fips) as counties
-                FROM gold_fact_enrollment_geographic
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND snp_type = '{snp}' {geo_month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = GEO_CTE + f"""
+                SELECT e.year, COUNT(DISTINCT e.fips) as counties
+                FROM gold_fact_enrollment_geographic e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_geographic'], {})
                 year_data = {r['year']: r['counties'] for r in result.data.get('rows', [])}
@@ -1470,10 +1487,12 @@ class UnifiedDataService:
                 })
                 
                 # TAM
-                sql = f"""
-                WITH snp_counties AS (
-                    SELECT DISTINCT year, fips FROM gold_fact_enrollment_geographic
-                    WHERE product_type = 'MAPD' AND snp_type = '{snp}' {geo_month_filter} {parent_filter}
+                sql = GEO_CTE + f"""
+                , snp_counties AS (
+                    SELECT DISTINCT e.year, e.fips 
+                    FROM gold_fact_enrollment_geographic e
+                    INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                    WHERE e.product_type = 'MAPD' AND e.snp_type = '{snp}' {parent_filter_e}
                 )
                 SELECT sc.year, SUM(dc.eligibles) as tam
                 FROM snp_counties sc
@@ -1491,12 +1510,13 @@ class UnifiedDataService:
                 })
                 
                 # Group
-                sql = f"""
-                SELECT year, SUM(enrollment) as enrollment
-                FROM gold_fact_enrollment_national
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND snp_type = '{snp}' AND group_type = 'Group' {month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = NAT_CTE + f"""
+                SELECT e.year, SUM(e.enrollment) as enrollment
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' AND e.group_type = 'Group' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
                 year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
@@ -1508,12 +1528,13 @@ class UnifiedDataService:
                 })
                 
                 # Individual
-                sql = f"""
-                SELECT year, SUM(enrollment) as enrollment
-                FROM gold_fact_enrollment_national
-                WHERE year BETWEEN {start_year} AND {end_year}
-                  AND product_type = 'MAPD' AND snp_type = '{snp}' AND group_type = 'Individual' {month_filter} {parent_filter}
-                GROUP BY year ORDER BY year
+                sql = NAT_CTE + f"""
+                SELECT e.year, SUM(e.enrollment) as enrollment
+                FROM gold_fact_enrollment_national e
+                INNER JOIN latest_months lm ON e.year = lm.year AND e.month = lm.max_month
+                WHERE e.year BETWEEN {start_year} AND {end_year}
+                  AND e.product_type = 'MAPD' AND e.snp_type = '{snp}' AND e.group_type = 'Individual' {parent_filter_e}
+                GROUP BY e.year ORDER BY e.year
                 """
                 result = self._execute_query(sql, ['gold_fact_enrollment_national'], {})
                 year_data = {r['year']: r['enrollment'] for r in result.data.get('rows', [])}
