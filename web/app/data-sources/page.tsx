@@ -192,7 +192,7 @@ const colorConfig: Record<string, {
   teal: { bg: "bg-teal-500", bgHover: "hover:bg-teal-600", border: "border-teal-200", text: "text-teal-600", light: "bg-teal-50", icon: "bg-teal-100", ring: "ring-teal-500" },
 };
 
-const MONTHS = [
+const ALL_MONTHS = [
   { value: "01", label: "January" },
   { value: "02", label: "February" },
   { value: "03", label: "March" },
@@ -206,6 +206,14 @@ const MONTHS = [
   { value: "11", label: "November" },
   { value: "12", label: "December" },
 ];
+
+// Get available months for a year - 2026 only has Jan/Feb data so far
+function getAvailableMonths(year: number) {
+  if (year === 2026) {
+    return ALL_MONTHS.filter(m => parseInt(m.value) <= 2); // Jan, Feb only
+  }
+  return ALL_MONTHS; // All months for prior years
+}
 
 const isMonthlySource = (table: string) => 
   ["cpsc_enrollment", "enrollment_by_contract", "snp_enrollment"].includes(table);
@@ -722,7 +730,7 @@ export default function DataSourcesPage() {
                       ← Back to years
                     </button>
                     <div className="grid grid-cols-3 gap-2">
-                      {MONTHS.map((month) => {
+                      {getAvailableMonths(selectedYear).map((month) => {
                         const isDownloading = downloading === `${selectedSource.id}-${selectedYear}-${month.value}`;
                         const colors = colorConfig[selectedSource.color];
                         
