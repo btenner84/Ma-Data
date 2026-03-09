@@ -5700,7 +5700,10 @@ def get_s3_presigned_url(s3_key: str, filename: str, expiration: int = 3600):
     return url
 
 def find_raw_file(prefix: str, year: int, month: str = "12") -> tuple:
-    """Find a raw file in S3, returns (s3_key, filename) or raises error."""
+    """Find a raw file in S3, returns (s3_key, filename) or raises error.
+    
+    Prefers the largest file in the folder (actual data vs placeholders).
+    """
     import boto3
     s3 = boto3.client('s3')
     bucket = 'ma-data123'
@@ -5711,6 +5714,8 @@ def find_raw_file(prefix: str, year: int, month: str = "12") -> tuple:
     
     files = [obj for obj in response.get('Contents', []) if obj['Size'] > 1000]
     if files:
+        # Sort by size descending to get the largest (actual data) file
+        files.sort(key=lambda x: x['Size'], reverse=True)
         key = files[0]['Key']
         filename = key.split('/')[-1]
         return key, filename
@@ -5720,6 +5725,8 @@ def find_raw_file(prefix: str, year: int, month: str = "12") -> tuple:
     response = s3.list_objects_v2(Bucket=bucket, Prefix=search_prefix, MaxKeys=10)
     files = [obj for obj in response.get('Contents', []) if obj['Size'] > 1000]
     if files:
+        # Sort by size descending to get the largest file
+        files.sort(key=lambda x: x['Size'], reverse=True)
         key = files[0]['Key']
         filename = key.split('/')[-1]
         return key, filename
@@ -5897,11 +5904,14 @@ async def download_crosswalk_raw(
 @app.get("/api/data-sources/stars")
 async def download_stars_raw(
     year: int = 2024,
-    format: str = "raw"
+    format: str = "raw",
+    file_type: str = "ratings"  # "ratings" or "display"
 ):
     """
     Download RAW Star Ratings file from CMS.
     Returns the original ZIP file from S3.
+    
+    file_type: "ratings" (default) for star ratings, "display" for display measures
     """
     try:
         import boto3
@@ -5919,7 +5929,18 @@ async def download_stars_raw(
                 detail=f"Raw stars file not found for {year}. Available years: 2007-2026"
             )
         
-        s3_key = files[0]['Key']
+        # Find the preferred file type (ratings vs display)
+        preferred_suffix = f"_{file_type}.zip"
+        s3_key = None
+        for f in files:
+            if preferred_suffix in f['Key']:
+                s3_key = f['Key']
+                break
+        
+        # Fallback to first file if preferred not found
+        if not s3_key:
+            s3_key = files[0]['Key']
+        
         filename = s3_key.split('/')[-1]
         
         url = get_s3_presigned_url(s3_key, filename)
@@ -5958,6 +5979,8 @@ async def download_risk_scores_raw(
                 detail=f"Raw risk scores file not found for {year}. Available years: 2006-2024"
             )
         
+        # Sort by size descending to get the largest (actual data) file
+        files.sort(key=lambda x: x['Size'], reverse=True)
         s3_key = files[0]['Key']
         filename = s3_key.split('/')[-1]
         

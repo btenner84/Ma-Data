@@ -227,7 +227,8 @@ function getDownloadUrl(table: string, year: number, month: string = "12"): stri
     case "snp_enrollment":
       return `${API_BASE}/api/data-sources/snp?year=${year}&month=${month}&format=raw`;
     case "stars_overall":
-      return `${API_BASE}/api/data-sources/stars?year=${year}&format=raw`;
+      // file_type=ratings gets the star ratings data, not display measures
+      return `${API_BASE}/api/data-sources/stars?year=${year}&format=raw&file_type=ratings`;
     case "risk_scores":
       return `${API_BASE}/api/data-sources/risk-scores?year=${year}&format=raw`;
     case "crosswalk":
