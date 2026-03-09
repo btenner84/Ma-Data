@@ -35,6 +35,33 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from db.duckdb_layer import DuckDBLayer
 
 
+# Map simplified UI plan types to actual CMS values
+PLAN_TYPE_MAP = {
+    'HMO': ['HMO', 'HMO/HMOPOS', 'Medicare-Medicaid Plan HMO/HMOPOS'],
+    'PPO': ['Local PPO', 'Regional PPO'],
+    'PFFS': ['PFFS'],
+    'MSA': ['MSA'],
+    'PACE': ['National PACE'],
+    'Cost': ['1876 Cost'],
+    'PDP': ['Medicare Prescription Drug Plan', 'Employer/Union Only Direct Contract PDP'],
+}
+
+
+def expand_plan_types(simplified_types: List[str]) -> List[str]:
+    """Convert simplified plan type names to full CMS names."""
+    if not simplified_types:
+        return None
+    expanded = []
+    for t in simplified_types:
+        t_upper = t.strip()
+        if t_upper in PLAN_TYPE_MAP:
+            expanded.extend(PLAN_TYPE_MAP[t_upper])
+        else:
+            # Check if it's already an exact CMS value
+            expanded.append(t_upper)
+    return list(set(expanded))
+
+
 @dataclass
 class AuditMetadata:
     """Metadata for tracing query results back to source."""
@@ -478,7 +505,9 @@ class UnifiedDataService:
         if parent_org:
             conditions.append(f"e.parent_org = '{parent_org}'")
         if plan_types:
-            pt_list = ", ".join([f"'{pt}'" for pt in plan_types])
+            # Expand simplified types (HMO -> HMO/HMOPOS, etc.)
+            expanded = expand_plan_types(plan_types)
+            pt_list = ", ".join([f"'{pt}'" for pt in expanded])
             conditions.append(f"e.plan_type IN ({pt_list})")
         if product_types:
             prod_list = ", ".join([f"'{pt}'" for pt in product_types])
