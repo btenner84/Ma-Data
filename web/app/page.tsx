@@ -188,28 +188,6 @@ export default function SummaryPage() {
     },
   });
 
-  // Geographic metrics (counties, TAM)
-  const { data: geoMetrics } = useQuery({
-    queryKey: ["geo-metrics", breakdownYear, enrollPayer],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append("start_year", breakdownYear.toString());
-      params.append("end_year", breakdownYear.toString());
-      params.append("source", "geographic");
-      if (enrollPayer) params.append("parent_org", enrollPayer);
-      
-      const res = await fetch(`${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}`);
-      const data = await res.json();
-      
-      // Get county count from geographic data
-      // Note: This is a simplified version - actual implementation would need a dedicated endpoint
-      return {
-        countyCount: data?.county_count || 0,
-        enrollment: data?.enrollment?.[0] || 0,
-      };
-    },
-  });
-
   // Transform enrollment data for chart
   const enrollmentChartData = enrollmentData?.years?.map((year: number, i: number) => ({
     year,
@@ -552,25 +530,6 @@ export default function SummaryPage() {
                         </div>
                       );
                     })}
-                  </div>
-                </div>
-
-                {/* Geographic Coverage */}
-                <div className="bg-gray-50 rounded-lg p-3 col-span-2">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Geographic Coverage</h4>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-600">{geoMetrics?.countyCount?.toLocaleString() || '—'}</div>
-                      <div className="text-xs text-gray-500">Counties</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">{formatNumber(geoMetrics?.enrollment)}</div>
-                      <div className="text-xs text-gray-500">Geo Enrollment</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-purple-600">—</div>
-                      <div className="text-xs text-gray-500">TAM Share</div>
-                    </div>
                   </div>
                 </div>
 
