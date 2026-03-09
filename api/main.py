@@ -5871,25 +5871,39 @@ async def download_crosswalk_raw(
     """
     Download RAW Contract Crosswalk file from CMS.
     Returns the original ZIP file from S3.
+    
+    Handles multiple naming patterns:
+    - crosswalk_YYYY.zip (standard)
+    - crosswalk_YYYY_to_YYYY+1.zip (transition years)
     """
     try:
         import boto3
         s3 = boto3.client('s3')
         bucket = 'ma-data123'
         
-        # Crosswalk files are named crosswalk_YYYY.zip directly in raw/crosswalks/
-        s3_key = f"raw/crosswalks/crosswalk_{year}.zip"
+        # Try multiple naming patterns
+        possible_keys = [
+            f"raw/crosswalks/crosswalk_{year}.zip",
+            f"raw/crosswalks/crosswalk_{year}_to_{year+1}.zip",
+        ]
         
-        # Verify file exists
-        try:
-            s3.head_object(Bucket=bucket, Key=s3_key)
-        except:
+        s3_key = None
+        filename = None
+        for key in possible_keys:
+            try:
+                s3.head_object(Bucket=bucket, Key=key)
+                s3_key = key
+                filename = key.split('/')[-1]
+                break
+            except:
+                continue
+        
+        if not s3_key:
             raise HTTPException(
                 status_code=404, 
                 detail=f"Raw crosswalk file not found for {year}. Available years: 2006-2026"
             )
         
-        filename = f"crosswalk_{year}.zip"
         url = get_s3_presigned_url(s3_key, filename)
         
         from fastapi.responses import RedirectResponse
