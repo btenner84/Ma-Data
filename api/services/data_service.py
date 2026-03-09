@@ -61,6 +61,30 @@ PARENT_ORG_NORMALIZE = {
     "Acension Health": "Ascension Health Alliance",
 }
 
+# Parent organization M&A consolidation - maps acquired/subsidiary companies to parent group
+# When user selects the parent, we also include enrollment from acquired entities
+PARENT_ORG_MA_GROUPS = {
+    # CVS acquired Aetna in 2018
+    "CVS Health Corporation": ["CVS Health Corporation", "CVS Caremark Corporation", "Aetna Inc.", 
+                               "ALLINA HEALTH AND AETNA INSURANCE COMPANY", 
+                               "Allina Health and Aetna Insurance Holding Company"],
+    
+    # Elevance was renamed from Anthem in 2022
+    "Elevance Health, Inc.": ["Elevance Health, Inc.", "Anthem, Inc.", "Anthem Insurance Companies, Inc.",
+                              "WellPoint, Inc."],
+    
+    # Centene acquired WellCare in 2020
+    "Centene Corporation": ["Centene Corporation", "WellCare Health Plans, Inc.", 
+                            "Health Net, Inc.", "Fidelis Care New York"],
+    
+    # UnitedHealth Group variations
+    "UnitedHealth Group, Incorporated": ["UnitedHealth Group, Incorporated", "UnitedHealth Group", 
+                                          "UnitedHealthcare", "UnitedHealthCare"],
+    
+    # Cigna acquired Express Scripts, later merged parts with Humana
+    "Cigna Group": ["Cigna Group", "Cigna Corporation", "Cigna Health and Life Insurance Company"],
+}
+
 
 def normalize_parent_org(name: str) -> str:
     """Normalize parent organization name to canonical form."""
@@ -73,22 +97,36 @@ def normalize_parent_org(name: str) -> str:
 
 
 def get_parent_org_variants(normalized_name: str) -> List[str]:
-    """Get all raw name variants that map to this normalized name."""
-    variants = [normalized_name]
-    # Find all keys that map to this normalized name
+    """Get all raw name variants that map to this normalized name, including M&A groups."""
+    variants = set([normalized_name])
+    
+    # Check if this is an M&A group parent - include all subsidiaries
+    if normalized_name in PARENT_ORG_MA_GROUPS:
+        variants.update(PARENT_ORG_MA_GROUPS[normalized_name])
+    
+    # Also check if this name is a subsidiary in any group
+    for parent, subsidiaries in PARENT_ORG_MA_GROUPS.items():
+        if normalized_name in subsidiaries:
+            variants.update(subsidiaries)
+    
+    # Add name normalization variants
     for raw, canonical in PARENT_ORG_NORMALIZE.items():
-        if canonical == normalized_name:
-            variants.append(raw)
-    return variants
+        if canonical == normalized_name or canonical in variants:
+            variants.add(raw)
+    
+    return list(variants)
 
 
 def build_parent_org_filter(parent_org: str, column: str = "parent_org") -> str:
-    """Build SQL filter for parent_org that matches all variants."""
+    """Build SQL filter for parent_org that matches all variants including M&A related entities."""
     variants = get_parent_org_variants(parent_org)
     if len(variants) == 1:
-        return f"{column} = '{parent_org}'"
+        # Escape single quotes in name
+        escaped = parent_org.replace("'", "''")
+        return f"{column} = '{escaped}'"
     else:
-        variant_list = ", ".join([f"'{v}'" for v in variants])
+        # Escape single quotes in all variant names
+        variant_list = ", ".join([f"'{v.replace(chr(39), chr(39)+chr(39))}'" for v in variants])
         return f"{column} IN ({variant_list})"
 
 
