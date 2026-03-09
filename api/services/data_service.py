@@ -26,13 +26,14 @@ Usage:
 
 import os
 import uuid
+import threading
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from db.duckdb_layer import DuckDBLayer
+from db.duckdb_layer import DuckDBLayer, _duckdb_lock
 
 
 # Map simplified UI plan types to actual CMS values
@@ -177,14 +178,16 @@ class UnifiedDataService:
         return where_clause, params
     
     def _execute_query(self, sql: str, tables: List[str], filters: Dict) -> DataResult:
-        """Execute query and return result with audit metadata."""
+        """Execute query and return result with audit metadata. Thread-safe via lock."""
         query_id = str(uuid.uuid4())[:8]
         start_time = datetime.now()
         
         try:
-            result = self.db.conn.execute(sql)
-            rows = result.fetchall()
-            columns = [desc[0] for desc in result.description] if result.description else []
+            # Thread-safe query execution
+            with _duckdb_lock:
+                result = self.db.conn.execute(sql)
+                rows = result.fetchall()
+                columns = [desc[0] for desc in result.description] if result.description else []
             
             data = [dict(zip(columns, row)) for row in rows]
             

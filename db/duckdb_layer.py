@@ -34,6 +34,7 @@ import os
 import json
 import uuid
 import hashlib
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 from io import BytesIO
@@ -50,6 +51,9 @@ AUDIT_PREFIX = "processed/audit/queries"
 
 # Initialize S3
 s3 = boto3.client('s3', region_name=S3_REGION)
+
+# Thread lock for DuckDB connection safety
+_duckdb_lock = threading.Lock()
 
 
 class MAQueryEngine:
@@ -291,6 +295,7 @@ class MAQueryEngine:
     def query(self, sql: str) -> pd.DataFrame:
         """
         Execute a SQL query and return results as DataFrame.
+        Thread-safe via lock.
 
         Args:
             sql: SQL query string
@@ -298,7 +303,8 @@ class MAQueryEngine:
         Returns:
             pandas DataFrame with results
         """
-        return self.conn.execute(sql).fetchdf()
+        with _duckdb_lock:
+            return self.conn.execute(sql).fetchdf()
 
     def query_with_audit(
         self,
@@ -326,8 +332,9 @@ class MAQueryEngine:
         tables_accessed = self._extract_tables(sql)
 
         try:
-            # Execute query
-            result = self.conn.execute(sql).fetchdf()
+            # Execute query (thread-safe)
+            with _duckdb_lock:
+                result = self.conn.execute(sql).fetchdf()
 
             # Log successful query
             audit_record = {
