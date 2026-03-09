@@ -7458,6 +7458,42 @@ async def get_enrollment_audit_download_v5(
         return {"error": str(e)}
 
 
+@app.get("/api/v5/geographic/metrics")
+async def get_geographic_metrics_v5(
+    parent_org: Optional[str] = None,
+    plan_types: Optional[str] = None,
+    product_types: Optional[str] = None,
+    snp_types: Optional[str] = None,
+    group_types: Optional[str] = None,
+    states: Optional[str] = None,
+    year: int = 2026,
+    month: Optional[int] = None
+):
+    """
+    Get geographic metrics with TAM (Total Addressable Market) calculations.
+    
+    Returns county coverage, enrollment, and market share with full dimension filtering.
+    Supports all filters: HMO/PPO, MAPD/PDP, D-SNP/Non-SNP, Individual/Group.
+    
+    All results are auditable with source file tracking.
+    """
+    try:
+        from api.services.data_service import get_data_service
+        service = get_data_service()
+        return service.get_geographic_metrics_v5(
+            parent_org=parent_org,
+            plan_types=plan_types.split(",") if plan_types else None,
+            product_types=product_types.split(",") if product_types else None,
+            snp_types=snp_types.split(",") if snp_types else None,
+            group_types=group_types.split(",") if group_types else None,
+            states=states.split(",") if states else None,
+            year=year,
+            month=month
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -120,3 +120,4 @@ dist/
 
 # Exception: keep example notebooks
 !notebooks/examples/*.ipynb
+.tmp/

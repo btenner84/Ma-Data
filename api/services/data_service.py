@@ -871,6 +871,281 @@ class UnifiedDataService:
                 })
         
         return {"contracts": contracts, "year": year}
+    
+    def get_geographic_metrics_v5(
+        self,
+        parent_org: Optional[str] = None,
+        plan_types: Optional[List[str]] = None,
+        product_types: Optional[List[str]] = None,
+        snp_types: Optional[List[str]] = None,
+        group_types: Optional[List[str]] = None,
+        states: Optional[List[str]] = None,
+        year: int = 2026,
+        month: Optional[int] = None
+    ) -> Dict:
+        """
+        Get geographic metrics with TAM (Total Addressable Market) calculations.
+        
+        Joins geographic enrollment with dim_plan to get dimensions (plan_type, 
+        snp_type, group_type) since geographic fact table has these as NULL.
+        
+        Returns:
+        - county_count: Number of counties with enrollment matching filters
+        - enrollment: Total enrollment in those counties
+        - eligibles: Total Medicare eligibles (TAM) in those counties
+        - market_share: enrollment / eligibles * 100
+        - by_plan_type, by_product_type, by_snp_type, by_group_type: Breakdowns
+        
+        All metrics are traceable via audit metadata.
+        """
+        # Build base filters (on geographic fact table directly)
+        base_conditions = [f"g.year = {year}"]
+        
+        if month:
+            base_conditions.append(f"g.month = {month}")
+        else:
+            base_conditions.append(f"""g.month = (
+                SELECT MAX(month) FROM gold_fact_enrollment_geographic WHERE year = {year}
+            )""")
+        
+        if parent_org:
+            base_conditions.append(f"g.parent_org = '{parent_org}'")
+        if states:
+            state_list = ", ".join([f"'{s}'" for s in states])
+            base_conditions.append(f"g.state IN ({state_list})")
+        
+        base_where = " AND ".join(base_conditions)
+        
+        # Build dimension filters (applied AFTER join with dim_plan)
+        dim_filters = []
+        if plan_types:
+            expanded = expand_plan_types(plan_types)
+            pt_list = ", ".join([f"'{pt}'" for pt in expanded])
+            dim_filters.append(f"plan_type IN ({pt_list})")
+        if product_types:
+            prod_list = ", ".join([f"'{pt}'" for pt in product_types])
+            dim_filters.append(f"product_type IN ({prod_list})")
+        if snp_types:
+            snp_list = ", ".join([f"'{st}'" for st in snp_types])
+            dim_filters.append(f"snp_type IN ({snp_list})")
+        if group_types:
+            grp_list = ", ".join([f"'{gt}'" for gt in group_types])
+            dim_filters.append(f"group_type IN ({grp_list})")
+        
+        dim_where = " AND ".join(dim_filters) if dim_filters else "1=1"
+        
+        # Main aggregation query - join with dim_plan to get dimensions
+        sql = f"""
+        WITH dim_plan_lookup AS (
+            SELECT DISTINCT
+                contract_id,
+                CAST(COALESCE(NULLIF(REGEXP_REPLACE(LTRIM(CAST(plan_id AS VARCHAR), '0'), '\\..*', ''), ''), '0') AS VARCHAR) as plan_id_norm,
+                plan_type,
+                COALESCE(snp_type, 'Non-SNP') as snp_type,
+                COALESCE(group_type, 'Individual') as group_type
+            FROM gold_dim_plan
+        ),
+        
+        enriched_enrollment AS (
+            SELECT 
+                g.fips_code,
+                g.state,
+                g.county,
+                g.contract_id,
+                COALESCE(p.plan_type, 
+                    CASE WHEN g.contract_id LIKE 'H%' THEN 'HMO' 
+                         WHEN g.contract_id LIKE 'R%' THEN 'Regional PPO'
+                         WHEN g.contract_id LIKE 'S%' THEN 'PDP'
+                         ELSE 'Other' END
+                ) as plan_type,
+                CASE WHEN g.contract_id LIKE 'S%' THEN 'PDP' ELSE 'MAPD' END as product_type,
+                COALESCE(p.snp_type, 'Non-SNP') as snp_type,
+                COALESCE(p.group_type, 'Individual') as group_type,
+                g.enrollment,
+                g._source_file
+            FROM gold_fact_enrollment_geographic g
+            LEFT JOIN dim_plan_lookup p 
+                ON g.contract_id = p.contract_id 
+                AND CAST(COALESCE(NULLIF(REGEXP_REPLACE(LTRIM(CAST(g.plan_id AS VARCHAR), '0'), '\\..*', ''), ''), '0') AS VARCHAR) = p.plan_id_norm
+            WHERE {base_where}
+        ),
+        
+        filtered_enrollment AS (
+            SELECT * FROM enriched_enrollment
+            WHERE {dim_where}
+        ),
+        
+        county_enrollment AS (
+            SELECT 
+                fips_code,
+                state,
+                county,
+                SUM(enrollment) as enrollment
+            FROM filtered_enrollment
+            GROUP BY fips_code, state, county
+        ),
+        
+        county_eligibles AS (
+            SELECT fips, eligibles, _source_file
+            FROM gold_dim_county
+            WHERE year = {year}
+              AND month = (SELECT MAX(month) FROM gold_dim_county WHERE year = {year})
+        )
+        
+        SELECT 
+            COUNT(DISTINCT ce.fips_code) as county_count,
+            SUM(ce.enrollment) as total_enrollment,
+            SUM(el.eligibles) as total_eligibles,
+            ROUND(100.0 * SUM(ce.enrollment) / NULLIF(SUM(el.eligibles), 0), 2) as market_share
+        FROM county_enrollment ce
+        LEFT JOIN county_eligibles el ON ce.fips_code = el.fips
+        """
+        
+        result = self._execute_query(sql, ['gold_fact_enrollment_geographic', 'gold_dim_county'], {
+            'parent_org': parent_org,
+            'plan_types': plan_types,
+            'product_types': product_types,
+            'snp_types': snp_types,
+            'group_types': group_types,
+            'states': states,
+            'year': year,
+        })
+        
+        rows = result.data.get('rows', [])
+        summary = rows[0] if rows else {}
+        
+        # Get breakdowns by dimension
+        breakdowns = {}
+        
+        # By plan type
+        plan_sql = f"""
+        SELECT plan_type, COUNT(DISTINCT fips_code) as counties, SUM(enrollment) as enrollment
+        FROM filtered_enrollment
+        GROUP BY plan_type
+        ORDER BY enrollment DESC
+        """
+        # Wrap in CTE for reuse
+        full_plan_sql = f"""
+        WITH dim_plan_lookup AS (
+            SELECT DISTINCT contract_id,
+                CAST(COALESCE(NULLIF(REGEXP_REPLACE(LTRIM(CAST(plan_id AS VARCHAR), '0'), '\\..*', ''), ''), '0') AS VARCHAR) as plan_id_norm,
+                plan_type, COALESCE(snp_type, 'Non-SNP') as snp_type, COALESCE(group_type, 'Individual') as group_type
+            FROM gold_dim_plan
+        ),
+        enriched_enrollment AS (
+            SELECT g.fips_code, g.contract_id,
+                COALESCE(p.plan_type, CASE WHEN g.contract_id LIKE 'H%' THEN 'HMO' WHEN g.contract_id LIKE 'R%' THEN 'Regional PPO' WHEN g.contract_id LIKE 'S%' THEN 'PDP' ELSE 'Other' END) as plan_type,
+                CASE WHEN g.contract_id LIKE 'S%' THEN 'PDP' ELSE 'MAPD' END as product_type,
+                COALESCE(p.snp_type, 'Non-SNP') as snp_type, COALESCE(p.group_type, 'Individual') as group_type,
+                g.enrollment
+            FROM gold_fact_enrollment_geographic g
+            LEFT JOIN dim_plan_lookup p ON g.contract_id = p.contract_id 
+                AND CAST(COALESCE(NULLIF(REGEXP_REPLACE(LTRIM(CAST(g.plan_id AS VARCHAR), '0'), '\\..*', ''), ''), '0') AS VARCHAR) = p.plan_id_norm
+            WHERE {base_where}
+        ),
+        filtered_enrollment AS (SELECT * FROM enriched_enrollment WHERE {dim_where})
+        SELECT plan_type, COUNT(DISTINCT fips_code) as counties, SUM(enrollment) as enrollment
+        FROM filtered_enrollment GROUP BY plan_type ORDER BY enrollment DESC
+        """
+        plan_result = self._execute_query(full_plan_sql, ['gold_fact_enrollment_geographic', 'gold_dim_plan'], {})
+        breakdowns['by_plan_type'] = [
+            {'name': r['plan_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
+            for r in plan_result.data.get('rows', [])
+        ]
+        
+        # Common CTE for all breakdowns
+        cte_sql = f"""
+        WITH dim_plan_lookup AS (
+            SELECT DISTINCT contract_id,
+                CAST(COALESCE(NULLIF(REGEXP_REPLACE(LTRIM(CAST(plan_id AS VARCHAR), '0'), '\\..*', ''), ''), '0') AS VARCHAR) as plan_id_norm,
+                plan_type, COALESCE(snp_type, 'Non-SNP') as snp_type, COALESCE(group_type, 'Individual') as group_type
+            FROM gold_dim_plan
+        ),
+        enriched_enrollment AS (
+            SELECT g.fips_code, g.state, g.contract_id,
+                COALESCE(p.plan_type, CASE WHEN g.contract_id LIKE 'H%' THEN 'HMO' WHEN g.contract_id LIKE 'R%' THEN 'Regional PPO' WHEN g.contract_id LIKE 'S%' THEN 'PDP' ELSE 'Other' END) as plan_type,
+                CASE WHEN g.contract_id LIKE 'S%' THEN 'PDP' ELSE 'MAPD' END as product_type,
+                COALESCE(p.snp_type, 'Non-SNP') as snp_type, COALESCE(p.group_type, 'Individual') as group_type,
+                g.enrollment
+            FROM gold_fact_enrollment_geographic g
+            LEFT JOIN dim_plan_lookup p ON g.contract_id = p.contract_id 
+                AND CAST(COALESCE(NULLIF(REGEXP_REPLACE(LTRIM(CAST(g.plan_id AS VARCHAR), '0'), '\\..*', ''), ''), '0') AS VARCHAR) = p.plan_id_norm
+            WHERE {base_where}
+        ),
+        filtered_enrollment AS (SELECT * FROM enriched_enrollment WHERE {dim_where})
+        """
+        
+        # By product type
+        prod_sql = f"""
+        {cte_sql}
+        SELECT product_type, COUNT(DISTINCT fips_code) as counties, SUM(enrollment) as enrollment
+        FROM filtered_enrollment GROUP BY product_type ORDER BY enrollment DESC
+        """
+        prod_result = self._execute_query(prod_sql, ['gold_fact_enrollment_geographic', 'gold_dim_plan'], {})
+        breakdowns['by_product_type'] = [
+            {'name': r['product_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
+            for r in prod_result.data.get('rows', [])
+        ]
+        
+        # By SNP type
+        snp_sql = f"""
+        {cte_sql}
+        SELECT snp_type, COUNT(DISTINCT fips_code) as counties, SUM(enrollment) as enrollment
+        FROM filtered_enrollment GROUP BY snp_type ORDER BY enrollment DESC
+        """
+        snp_result = self._execute_query(snp_sql, ['gold_fact_enrollment_geographic', 'gold_dim_plan'], {})
+        breakdowns['by_snp_type'] = [
+            {'name': r['snp_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
+            for r in snp_result.data.get('rows', [])
+        ]
+        
+        # By group type
+        grp_sql = f"""
+        {cte_sql}
+        SELECT group_type, COUNT(DISTINCT fips_code) as counties, SUM(enrollment) as enrollment
+        FROM filtered_enrollment GROUP BY group_type ORDER BY enrollment DESC
+        """
+        grp_result = self._execute_query(grp_sql, ['gold_fact_enrollment_geographic', 'gold_dim_plan'], {})
+        breakdowns['by_group_type'] = [
+            {'name': r['group_type'], 'counties': r['counties'], 'enrollment': r['enrollment']}
+            for r in grp_result.data.get('rows', [])
+        ]
+        
+        # By state (top 10)
+        state_sql = f"""
+        {cte_sql}
+        SELECT state, COUNT(DISTINCT fips_code) as counties, SUM(enrollment) as enrollment
+        FROM filtered_enrollment GROUP BY state ORDER BY enrollment DESC LIMIT 10
+        """
+        state_result = self._execute_query(state_sql, ['gold_fact_enrollment_geographic', 'gold_dim_plan'], {})
+        breakdowns['by_state'] = [
+            {'name': r['state'], 'counties': r['counties'], 'enrollment': r['enrollment']}
+            for r in state_result.data.get('rows', [])
+        ]
+        
+        return {
+            'year': year,
+            'filters': {
+                'parent_org': parent_org,
+                'plan_types': plan_types,
+                'product_types': product_types,
+                'snp_types': snp_types,
+                'group_types': group_types,
+                'states': states,
+            },
+            'summary': {
+                'county_count': summary.get('county_count', 0),
+                'enrollment': summary.get('total_enrollment', 0),
+                'eligibles': summary.get('total_eligibles', 0),
+                'market_share': summary.get('market_share', 0),
+            },
+            'breakdowns': breakdowns,
+            'audit': {
+                'query_id': result.audit.query_id,
+                'tables': result.audit.tables_queried,
+                'source_files': result.audit.source_files[:5],
+            }
+        }
 
 
 # Singleton instance
