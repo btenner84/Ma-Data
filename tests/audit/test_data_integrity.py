@@ -224,6 +224,56 @@ class DataIntegrityAudit:
         
         for filter_name, filter_value in combos:
             self.test_filter_combo_yoy(filter_name, filter_value)
+    
+    # ========================================================================
+    # TEST: Multi-Filter Combinations (e.g., Individual + MAPD)
+    # ========================================================================
+    def test_multi_filter_combos(self):
+        """Test common filter combinations to catch linkage issues"""
+        print(f"\n{'='*60}")
+        print(f"MULTI-FILTER COMBINATION TESTS")
+        print(f"{'='*60}")
+        
+        # Common combos users would try
+        combos = [
+            {'group_types': 'Individual', 'product_types': 'MAPD'},  # Individual MA
+            {'group_types': 'Individual', 'snp_types': 'Non-SNP'},  # Individual Non-SNP
+            {'group_types': 'Individual', 'snp_types': 'D-SNP'},    # Individual D-SNP
+            {'snp_types': 'Non-SNP', 'product_types': 'MAPD'},      # Non-SNP MAPD
+            {'plan_types': 'HMO', 'group_types': 'Individual'},     # Individual HMO
+        ]
+        
+        for combo in combos:
+            combo_name = " + ".join([f"{k}={v}" for k, v in combo.items()])
+            
+            # Get data for last 3 years
+            data = self.get_enrollment(source="national", start_year=2024, end_year=2026, **combo)
+            
+            if 'error' in data or not data.get('enrollment'):
+                self.log(f"Combo: {combo_name}", False, f"No data returned")
+                continue
+            
+            years = data.get('years', [])
+            enrollments = data.get('enrollment', [])
+            
+            # Check YoY growth
+            prev_enroll = None
+            for year, enroll in zip(years, enrollments):
+                if prev_enroll and prev_enroll > 0 and enroll:
+                    yoy = (enroll - prev_enroll) / prev_enroll * 100
+                    if yoy < MAX_YOY_DECLINE:
+                        self.log(
+                            f"{combo_name} {year-1}->{year}",
+                            False,
+                            f"SUSPICIOUS DROP: {yoy:+.1f}% ({prev_enroll:,.0f} -> {enroll:,.0f})"
+                        )
+                    else:
+                        self.log(
+                            f"{combo_name} {year-1}->{year}",
+                            True,
+                            f"{yoy:+.1f}% ({prev_enroll:,.0f} -> {enroll:,.0f})"
+                        )
+                prev_enroll = enroll
 
     # ========================================================================
     # MAIN AUDIT
@@ -245,7 +295,10 @@ class DataIntegrityAudit:
         # 3. Test all filter combos for suspicious YoY drops
         self.test_all_filter_combos_yoy()
         
-        # 4. Test National vs Geographic alignment
+        # 4. Test multi-filter combinations (catches linkage issues)
+        self.test_multi_filter_combos()
+        
+        # 5. Test National vs Geographic alignment
         for year in [2024, 2025, 2026]:
             self.test_national_vs_geographic(year)
         
