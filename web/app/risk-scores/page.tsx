@@ -132,29 +132,52 @@ export default function RiskScoresPage() {
     return params.toString();
   };
 
-  // Fetch timeseries data using v5 - no fallback
+  // Fetch timeseries data using v5 - supports multiple payers
   const { data: rawTimeseriesData, isLoading } = useQuery<RiskScoreTimeSeriesV2>({
     queryKey: ["risk-timeseries-v5", selectedPlanTypes, selectedGroupTypes, selectedSnpTypes, selectedParentOrgs, metric],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (selectedParentOrgs.length === 1) params.set("parent_org", selectedParentOrgs[0]);
-      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
-      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
-      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
-      params.set("start_year", "2006");
-      params.set("end_year", "2024");
+      const baseParams = new URLSearchParams();
+      if (selectedPlanTypes.length > 0) baseParams.set("plan_types", selectedPlanTypes.join(","));
+      if (selectedSnpTypes.length > 0) baseParams.set("snp_types", selectedSnpTypes.join(","));
+      if (selectedGroupTypes.length > 0) baseParams.set("group_types", selectedGroupTypes.join(","));
+      baseParams.set("start_year", "2006");
+      baseParams.set("end_year", "2024");
       
-      const res = await fetch(`${API_BASE}/api/v5/risk/timeseries?${params.toString()}`);
-      const data = await res.json();
+      // Always fetch Industry Total data
+      const industryRes = await fetch(`${API_BASE}/api/v5/risk/timeseries?${baseParams.toString()}`);
+      const industryData = await industryRes.json();
       
-      const payerKey = selectedParentOrgs.length === 1 ? selectedParentOrgs[0] : "Industry Total";
+      const series: Record<string, number[]> = {
+        "Industry Total": industryData.wavg_risk || []
+      };
+      const enrollment: Record<string, number[]> = {
+        "Industry Total": industryData.total_enrollment || []
+      };
+      
+      // Fetch data for each selected payer in parallel
+      if (selectedParentOrgs.length > 0) {
+        const payerPromises = selectedParentOrgs.map(async (payer) => {
+          const payerParams = new URLSearchParams(baseParams);
+          payerParams.set("parent_org", payer);
+          const res = await fetch(`${API_BASE}/api/v5/risk/timeseries?${payerParams.toString()}`);
+          const data = await res.json();
+          return { payer, data };
+        });
+        
+        const payerResults = await Promise.all(payerPromises);
+        payerResults.forEach(({ payer, data }) => {
+          series[payer] = data.wavg_risk || [];
+          enrollment[payer] = data.total_enrollment || [];
+        });
+      }
+      
       return {
-        years: data.years || [],
-        series: { [payerKey]: data.wavg_risk || [] },
-        enrollment: { [payerKey]: data.total_enrollment || [] },
+        years: industryData.years || [],
+        series,
+        enrollment,
         metric: metric,
         group_by: null,
-        audit_id: data.audit_id,
+        audit_id: industryData.audit_id,
       };
     },
   });

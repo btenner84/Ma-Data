@@ -2390,28 +2390,45 @@ export default function StarsPage() {
     return params.toString();
   };
 
-  // Fetch 4+ star time series using v5 - no fallback
+  // Fetch 4+ star time series using v5 - supports multiple payers
   const { data: rawTimeseriesData, isLoading: timeseriesLoading } = useQuery<FourPlusTimeseriesData>({
     queryKey: ["stars-fourplus-timeseries-v5", graphPayers, selectedPlanTypes, selectedGroupTypes, selectedSnpTypes],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (graphPayers.length === 1 && graphPayers[0] !== "Industry") {
-        params.set("parent_org", graphPayers[0]);
+      const baseParams = new URLSearchParams();
+      if (selectedPlanTypes.length > 0) baseParams.set("plan_types", selectedPlanTypes.join(","));
+      if (selectedSnpTypes.length > 0) baseParams.set("snp_types", selectedSnpTypes.join(","));
+      if (selectedGroupTypes.length > 0) baseParams.set("group_types", selectedGroupTypes.join(","));
+      baseParams.set("start_year", "2015");
+      baseParams.set("end_year", "2026");
+      
+      // Always fetch Industry data
+      const industryRes = await fetch(`${API_BASE}/api/v5/stars/timeseries?${baseParams.toString()}`);
+      const industryData = await industryRes.json();
+      
+      const series: Record<string, number[]> = {
+        "Industry": industryData.pct_fourplus || []
+      };
+      
+      // Fetch data for each selected payer in parallel
+      if (graphPayers.length > 0) {
+        const payerPromises = graphPayers.map(async (payer) => {
+          const payerParams = new URLSearchParams(baseParams);
+          payerParams.set("parent_org", payer);
+          const res = await fetch(`${API_BASE}/api/v5/stars/timeseries?${payerParams.toString()}`);
+          const data = await res.json();
+          return { payer, data };
+        });
+        
+        const payerResults = await Promise.all(payerPromises);
+        payerResults.forEach(({ payer, data }) => {
+          series[payer] = data.pct_fourplus || [];
+        });
       }
-      if (selectedPlanTypes.length > 0) params.set("plan_types", selectedPlanTypes.join(","));
-      if (selectedSnpTypes.length > 0) params.set("snp_types", selectedSnpTypes.join(","));
-      if (selectedGroupTypes.length > 0) params.set("group_types", selectedGroupTypes.join(","));
-      params.set("start_year", "2015");
-      params.set("end_year", "2026");
       
-      const res = await fetch(`${API_BASE}/api/v5/stars/timeseries?${params.toString()}`);
-      const data = await res.json();
-      
-      const payerKey = graphPayers.length === 1 ? graphPayers[0] : "Industry";
       return {
-        years: data.years || [],
-        series: { [payerKey]: data.pct_fourplus || [] },
-        audit_id: data.audit_id,
+        years: industryData.years || [],
+        series,
+        audit_id: industryData.audit_id,
         filters: { plan_types: null, product_types: null, group_types: null, snp_types: null },
       };
     },
