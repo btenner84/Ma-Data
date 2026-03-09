@@ -109,14 +109,22 @@ export default function SummaryPage() {
     },
   });
 
-  // ========== BREAKDOWN QUERIES (for single year) ==========
+  // ========== BREAKDOWN QUERIES (for single year, respects macro payer filter) ==========
+  const buildBreakdownUrl = (filterParam: string) => {
+    const params = new URLSearchParams();
+    params.append("start_year", breakdownYear.toString());
+    params.append("end_year", breakdownYear.toString());
+    if (enrollPayer) params.append("parent_org", enrollPayer);
+    return `${API_BASE}/api/v5/enrollment/timeseries?${params.toString()}&${filterParam}`;
+  };
+
   // Product Type breakdown
   const { data: productBreakdown } = useQuery({
-    queryKey: ["breakdown-product", breakdownYear],
+    queryKey: ["breakdown-product", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&product_types=MAPD`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&product_types=PDP`).then(r => r.json()),
+        fetch(buildBreakdownUrl("product_types=MAPD")).then(r => r.json()),
+        fetch(buildBreakdownUrl("product_types=PDP")).then(r => r.json()),
       ]);
       return [
         { name: "MAPD", value: results[0]?.enrollment?.[0] || 0 },
@@ -127,11 +135,11 @@ export default function SummaryPage() {
 
   // Group Type breakdown
   const { data: groupBreakdown } = useQuery({
-    queryKey: ["breakdown-group", breakdownYear],
+    queryKey: ["breakdown-group", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&group_types=Individual`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&group_types=Group`).then(r => r.json()),
+        fetch(buildBreakdownUrl("group_types=Individual")).then(r => r.json()),
+        fetch(buildBreakdownUrl("group_types=Group")).then(r => r.json()),
       ]);
       return [
         { name: "Individual", value: results[0]?.enrollment?.[0] || 0 },
@@ -142,13 +150,13 @@ export default function SummaryPage() {
 
   // SNP Type breakdown
   const { data: snpBreakdown } = useQuery({
-    queryKey: ["breakdown-snp", breakdownYear],
+    queryKey: ["breakdown-snp", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&snp_types=Non-SNP`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&snp_types=D-SNP`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&snp_types=C-SNP`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&snp_types=I-SNP`).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=Non-SNP")).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=D-SNP")).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=C-SNP")).then(r => r.json()),
+        fetch(buildBreakdownUrl("snp_types=I-SNP")).then(r => r.json()),
       ]);
       return [
         { name: "Non-SNP", value: results[0]?.enrollment?.[0] || 0 },
@@ -161,13 +169,13 @@ export default function SummaryPage() {
 
   // Plan Type breakdown
   const { data: planBreakdown } = useQuery({
-    queryKey: ["breakdown-plan", breakdownYear],
+    queryKey: ["breakdown-plan", breakdownYear, enrollPayer],
     queryFn: async () => {
       const results = await Promise.all([
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&plan_types=HMO`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&plan_types=PPO`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&plan_types=PFFS`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v5/enrollment/timeseries?start_year=${breakdownYear}&end_year=${breakdownYear}&plan_types=Cost`).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=HMO")).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=PPO")).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=PFFS")).then(r => r.json()),
+        fetch(buildBreakdownUrl("plan_types=Cost")).then(r => r.json()),
       ]);
       return [
         { name: "HMO", value: results[0]?.enrollment?.[0] || 0 },
@@ -202,209 +210,65 @@ export default function SummaryPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Page Title */}
-      <div className="bg-white border-b">
-        <div className="max-w-[1800px] mx-auto px-6 py-4">
-          <h1 className="text-2xl font-bold text-gray-900">MA Market Summary</h1>
+      {/* MACRO FILTER: Payer Selector - Sticky Header */}
+      <div className="bg-white border-b sticky top-0 z-20">
+        <div className="max-w-[1800px] mx-auto px-6 py-3">
+          <div className="flex items-center gap-4">
+            <span className="text-sm font-medium text-gray-600">Viewing:</span>
+            <div className="relative">
+              <button
+                onClick={() => setShowEnrollPayerDropdown(!showEnrollPayerDropdown)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium min-w-[200px]"
+              >
+                <span className="truncate">{enrollDisplayName}</span>
+                <ChevronDown className="w-4 h-4 flex-shrink-0" />
+              </button>
+              
+              {showEnrollPayerDropdown && (
+                <div className="absolute top-full left-0 mt-1 w-80 bg-white rounded-lg shadow-xl border z-30">
+                  <div className="p-2 border-b">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search payer..."
+                        value={enrollPayerSearch}
+                        onChange={(e) => setEnrollPayerSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm"
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    <button
+                      onClick={() => { setEnrollPayer(null); setShowEnrollPayerDropdown(false); setEnrollPayerSearch(""); }}
+                      className={`w-full text-left px-4 py-2 hover:bg-gray-100 text-sm ${!enrollPayer ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
+                    >
+                      Industry (All)
+                    </button>
+                    {filteredPayers.map(payer => (
+                      <button
+                        key={payer}
+                        onClick={() => { setEnrollPayer(payer); setShowEnrollPayerDropdown(false); setEnrollPayerSearch(""); }}
+                        className={`w-full text-left px-4 py-2 hover:bg-gray-100 text-sm ${enrollPayer === payer ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
+                      >
+                        {payer}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* ENROLLMENT SECTION */}
       <div className="max-w-[1800px] mx-auto px-6 py-6">
         <div className="bg-white rounded-xl shadow-sm border">
-          {/* Section Header with Filters */}
+          {/* Section Header */}
           <div className="border-b px-6 py-4">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <h2 className="text-xl font-semibold text-gray-900">Enrollment</h2>
-              
-              <div className="flex items-center gap-3 flex-wrap">
-                {/* Payer Selector */}
-                <div className="relative">
-                  <button
-                    onClick={() => setShowEnrollPayerDropdown(!showEnrollPayerDropdown)}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium min-w-[160px]"
-                  >
-                    <span className="truncate">{enrollDisplayName}</span>
-                    <ChevronDown className="w-4 h-4 flex-shrink-0" />
-                  </button>
-                  
-                  {showEnrollPayerDropdown && (
-                    <div className="absolute top-full left-0 mt-1 w-72 bg-white rounded-lg shadow-xl border z-30">
-                      <div className="p-2 border-b">
-                        <div className="relative">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                          <input
-                            type="text"
-                            placeholder="Search payer..."
-                            value={enrollPayerSearch}
-                            onChange={(e) => setEnrollPayerSearch(e.target.value)}
-                            className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm"
-                            autoFocus
-                          />
-                        </div>
-                      </div>
-                      <div className="max-h-64 overflow-y-auto">
-                        <button
-                          onClick={() => { setEnrollPayer(null); setShowEnrollPayerDropdown(false); setEnrollPayerSearch(""); }}
-                          className={`w-full text-left px-4 py-2 hover:bg-gray-100 text-sm ${!enrollPayer ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
-                        >
-                          Industry (All)
-                        </button>
-                        {filteredPayers.map(payer => (
-                          <button
-                            key={payer}
-                            onClick={() => { setEnrollPayer(payer); setShowEnrollPayerDropdown(false); setEnrollPayerSearch(""); }}
-                            className={`w-full text-left px-4 py-2 hover:bg-gray-100 text-sm ${enrollPayer === payer ? 'bg-blue-50 text-blue-700 font-medium' : ''}`}
-                          >
-                            {payer}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Filter Button */}
-                <button
-                  onClick={() => setShowEnrollFilters(!showEnrollFilters)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm ${enrollActiveFilterCount > 0 ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white hover:bg-gray-50'}`}
-                >
-                  <Filter className="w-4 h-4" />
-                  <span>Filters</span>
-                  {enrollActiveFilterCount > 0 && (
-                    <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full">{enrollActiveFilterCount}</span>
-                  )}
-                </button>
-
-                {/* Year Range for Chart */}
-                <div className="flex items-center gap-2 text-sm">
-                  <select
-                    value={enrollStartYear}
-                    onChange={(e) => setEnrollStartYear(Number(e.target.value))}
-                    className="border rounded px-2 py-1 text-sm"
-                  >
-                    {filterOptions?.years?.filter(y => y >= 2013 && y <= 2026).map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                  <span className="text-gray-500">to</span>
-                  <select
-                    value={enrollEndYear}
-                    onChange={(e) => setEnrollEndYear(Number(e.target.value))}
-                    className="border rounded px-2 py-1 text-sm"
-                  >
-                    {filterOptions?.years?.filter(y => y >= 2013 && y <= 2026).map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Expanded Filter Panel */}
-            {showEnrollFilters && (
-              <div className="mt-4 p-4 bg-gray-50 rounded-lg border">
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  {/* Plan Type */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Plan Type</label>
-                    <div className="space-y-1 max-h-24 overflow-y-auto">
-                      {['HMO', 'PPO', 'PFFS', 'MSA', 'Cost'].map(pt => (
-                        <label key={pt} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={enrollPlanTypes.includes(pt)}
-                            onChange={(e) => {
-                              if (e.target.checked) setEnrollPlanTypes([...enrollPlanTypes, pt]);
-                              else setEnrollPlanTypes(enrollPlanTypes.filter(x => x !== pt));
-                            }}
-                          />
-                          {pt}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Product Type */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Product Type</label>
-                    <div className="space-y-1">
-                      {['MAPD', 'PDP'].map(pt => (
-                        <label key={pt} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={enrollProductTypes.includes(pt)}
-                            onChange={(e) => {
-                              if (e.target.checked) setEnrollProductTypes([...enrollProductTypes, pt]);
-                              else setEnrollProductTypes(enrollProductTypes.filter(x => x !== pt));
-                            }}
-                          />
-                          {pt}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* SNP Type */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">SNP Type</label>
-                    <div className="space-y-1">
-                      {['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP'].map(st => (
-                        <label key={st} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={enrollSnpTypes.includes(st)}
-                            onChange={(e) => {
-                              if (e.target.checked) setEnrollSnpTypes([...enrollSnpTypes, st]);
-                              else setEnrollSnpTypes(enrollSnpTypes.filter(x => x !== st));
-                            }}
-                          />
-                          {st}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Group Type */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Market Segment</label>
-                    <div className="space-y-1">
-                      {['Individual', 'Group'].map(gt => (
-                        <label key={gt} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={enrollGroupTypes.includes(gt)}
-                            onChange={(e) => {
-                              if (e.target.checked) setEnrollGroupTypes([...enrollGroupTypes, gt]);
-                              else setEnrollGroupTypes(enrollGroupTypes.filter(x => x !== gt));
-                            }}
-                          />
-                          {gt}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* State */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">State</label>
-                    <select
-                      multiple
-                      value={enrollStates}
-                      onChange={(e) => setEnrollStates(Array.from(e.target.selectedOptions, o => o.value))}
-                      className="w-full border rounded text-sm h-24"
-                    >
-                      {filterOptions?.states?.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                {enrollActiveFilterCount > 0 && (
-                  <button
-                    onClick={() => { setEnrollPlanTypes([]); setEnrollProductTypes([]); setEnrollSnpTypes([]); setEnrollGroupTypes([]); setEnrollStates([]); }}
-                    className="mt-3 text-sm text-red-600 hover:text-red-800"
-                  >
-                    Clear all filters
-                  </button>
-                )}
-              </div>
-            )}
+            <h2 className="text-xl font-semibold text-gray-900">Enrollment</h2>
           </div>
 
           {/* Main Content: 50/50 Split */}
@@ -412,12 +276,114 @@ export default function SummaryPage() {
             
             {/* LEFT: Enrollment Chart (50%) */}
             <div className="lg:w-1/2 p-6 border-r flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-800">Enrollment Over Time</h3>
-                <div className="text-2xl font-bold text-blue-600">{formatNumber(latestEnrollment)}</div>
+              {/* Chart Header with Filters */}
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-gray-800">Enrollment Over Time</h3>
+                  <div className="text-2xl font-bold text-blue-600">{formatNumber(latestEnrollment)}</div>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  {/* Filter Button */}
+                  <button
+                    onClick={() => setShowEnrollFilters(!showEnrollFilters)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs ${enrollActiveFilterCount > 0 ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white hover:bg-gray-50'}`}
+                  >
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>Filters</span>
+                    {enrollActiveFilterCount > 0 && (
+                      <span className="bg-blue-600 text-white text-xs px-1 rounded-full">{enrollActiveFilterCount}</span>
+                    )}
+                  </button>
+                  
+                  {/* Year Range */}
+                  <select
+                    value={enrollStartYear}
+                    onChange={(e) => setEnrollStartYear(Number(e.target.value))}
+                    className="border rounded px-2 py-1 text-xs"
+                  >
+                    {filterOptions?.years?.filter(y => y >= 2013 && y <= 2026).map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <span className="text-gray-400 text-xs">to</span>
+                  <select
+                    value={enrollEndYear}
+                    onChange={(e) => setEnrollEndYear(Number(e.target.value))}
+                    className="border rounded px-2 py-1 text-xs"
+                  >
+                    {filterOptions?.years?.filter(y => y >= 2013 && y <= 2026).map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
               </div>
+
+              {/* Expanded Filter Panel */}
+              {showEnrollFilters && (
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg border text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Plan Type</label>
+                      <div className="space-y-0.5">
+                        {['HMO', 'PPO', 'PFFS', 'MSA', 'Cost'].map(pt => (
+                          <label key={pt} className="flex items-center gap-1.5 text-xs">
+                            <input type="checkbox" checked={enrollPlanTypes.includes(pt)}
+                              onChange={(e) => e.target.checked ? setEnrollPlanTypes([...enrollPlanTypes, pt]) : setEnrollPlanTypes(enrollPlanTypes.filter(x => x !== pt))} />
+                            {pt}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Product</label>
+                      <div className="space-y-0.5">
+                        {['MAPD', 'PDP'].map(pt => (
+                          <label key={pt} className="flex items-center gap-1.5 text-xs">
+                            <input type="checkbox" checked={enrollProductTypes.includes(pt)}
+                              onChange={(e) => e.target.checked ? setEnrollProductTypes([...enrollProductTypes, pt]) : setEnrollProductTypes(enrollProductTypes.filter(x => x !== pt))} />
+                            {pt}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">SNP Type</label>
+                      <div className="space-y-0.5">
+                        {['Non-SNP', 'D-SNP', 'C-SNP', 'I-SNP'].map(st => (
+                          <label key={st} className="flex items-center gap-1.5 text-xs">
+                            <input type="checkbox" checked={enrollSnpTypes.includes(st)}
+                              onChange={(e) => e.target.checked ? setEnrollSnpTypes([...enrollSnpTypes, st]) : setEnrollSnpTypes(enrollSnpTypes.filter(x => x !== st))} />
+                            {st}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Segment</label>
+                      <div className="space-y-0.5">
+                        {['Individual', 'Group'].map(gt => (
+                          <label key={gt} className="flex items-center gap-1.5 text-xs">
+                            <input type="checkbox" checked={enrollGroupTypes.includes(gt)}
+                              onChange={(e) => e.target.checked ? setEnrollGroupTypes([...enrollGroupTypes, gt]) : setEnrollGroupTypes(enrollGroupTypes.filter(x => x !== gt))} />
+                            {gt}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">State</label>
+                      <select multiple value={enrollStates} onChange={(e) => setEnrollStates(Array.from(e.target.selectedOptions, o => o.value))}
+                        className="w-full border rounded text-xs h-16">
+                        {filterOptions?.states?.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {enrollActiveFilterCount > 0 && (
+                    <button onClick={() => { setEnrollPlanTypes([]); setEnrollProductTypes([]); setEnrollSnpTypes([]); setEnrollGroupTypes([]); setEnrollStates([]); }}
+                      className="mt-2 text-xs text-red-600 hover:text-red-800">Clear filters</button>
+                  )}
+                </div>
+              )}
               
-              <div className="flex-1 min-h-[400px]">
+              {/* Chart */}
+              <div className="flex-1 min-h-[350px]">
                 {!isMounted || enrollmentLoading ? (
                   <div className="flex items-center justify-center h-full">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
