@@ -120,10 +120,12 @@ class MAQueryEngine:
             'gold_dim_geography': f's3://{S3_BUCKET}/gold/dim_geography.parquet',
             'gold_dim_entity': f's3://{S3_BUCKET}/gold/dim_entity.parquet',
             'gold_dim_plan': f's3://{S3_BUCKET}/gold/dim_plan.parquet',
+            'gold_dim_crosswalk': f's3://{S3_BUCKET}/gold/dim_crosswalk.parquet',
+            'gold_dim_contract_lineage': f's3://{S3_BUCKET}/gold/dim_contract_lineage.parquet',
             
             # Fact tables
             'gold_fact_enrollment_national': f's3://{S3_BUCKET}/gold/fact_enrollment_national.parquet',
-            'gold_fact_enrollment_geographic': f's3://{S3_BUCKET}/gold/fact_enrollment_geographic/*.parquet',  # Partitioned
+            'gold_fact_enrollment_geographic': f's3://{S3_BUCKET}/gold/fact_enrollment_geographic/year=*/data.parquet',  # Partitioned by year
             'gold_fact_stars': f's3://{S3_BUCKET}/gold/fact_stars.parquet',
             'gold_fact_risk_scores': f's3://{S3_BUCKET}/gold/fact_risk_scores.parquet',
             
