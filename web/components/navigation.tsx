@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Users, Star, TrendingUp, Database } from "lucide-react";
+import { Users, Star, TrendingUp, Database } from "lucide-react";
 
 const navItems = [
-  { href: "/", label: "Summary", icon: Home },
   { href: "/enrollment", label: "Enrollment", icon: Users },
   { href: "/stars", label: "Stars", icon: Star },
   { href: "/risk-scores", label: "Risk Scores", icon: TrendingUp },
@@ -20,8 +19,7 @@ export function Navigation() {
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex space-x-8">
           {navItems.map((item) => {
-            const isActive = pathname === item.href ||
-              (item.href !== "/" && pathname.startsWith(item.href));
+            const isActive = pathname === item.href || pathname.startsWith(item.href);
             const Icon = item.icon;
 
             return (
