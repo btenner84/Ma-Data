@@ -59,6 +59,50 @@ const COLORS = {
 
 const BREAKDOWN_COLORS = [COLORS.blue, COLORS.green, COLORS.yellow, COLORS.purple, COLORS.red, COLORS.orange];
 
+// Map granular CMS plan types to simplified categories
+const PLAN_TYPE_CONSOLIDATION: Record<string, string> = {
+  'HMO': 'HMO',
+  'HMOPOS': 'HMO',
+  'HMO/HMOPOS': 'HMO',
+  'Medicare-Medicaid Plan HMO/HMOPOS': 'HMO',
+  'Local PPO': 'PPO',
+  'Regional PPO': 'PPO',
+  'PFFS': 'PFFS',
+  'MSA': 'MSA',
+  'National PACE': 'PACE',
+  '1876 Cost': 'Cost',
+  'Medicare Prescription Drug Plan': 'PDP',
+  'Employer/Union Only Direct Contract PDP': 'PDP',
+};
+
+function consolidatePlanTypes(items: any[]): any[] {
+  if (!items?.length) return [];
+  const consolidated: Record<string, any> = {};
+  
+  for (const item of items) {
+    const simpleName = PLAN_TYPE_CONSOLIDATION[item.name] || item.name;
+    if (!consolidated[simpleName]) {
+      consolidated[simpleName] = { 
+        name: simpleName, 
+        enrollment: 0, 
+        counties: item.counties || 0,
+        eligibles: item.eligibles || 0,
+      };
+    }
+    consolidated[simpleName].enrollment += (item.enrollment || item.value || 0);
+    // Take max counties (they overlap)
+    consolidated[simpleName].counties = Math.max(consolidated[simpleName].counties, item.counties || 0);
+  }
+  
+  // Calculate market share for each consolidated type
+  const result = Object.values(consolidated).map((item: any) => ({
+    ...item,
+    market_share: item.eligibles ? Math.round(1000 * item.enrollment / item.eligibles) / 10 : 0
+  }));
+  
+  return result.sort((a: any, b: any) => b.enrollment - a.enrollment);
+}
+
 export default function SummaryPage() {
   const isMounted = useIsMounted();
   
@@ -545,16 +589,16 @@ export default function SummaryPage() {
                   </div>
                 </div>
 
-                {/* Plan Type Breakdown with Geo Metrics */}
+                {/* Plan Type Breakdown with Geo Metrics - Consolidated */}
                 <div className="bg-gray-50 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <h4 className="text-sm font-semibold text-gray-700">By Plan Type</h4>
                     <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">MA Only</span>
                   </div>
                   <div className="space-y-2">
-                    {(geoMetrics?.breakdowns?.by_plan_type || planBreakdown)?.map((item: any, i: number) => {
+                    {consolidatePlanTypes(geoMetrics?.breakdowns?.by_plan_type || planBreakdown)?.map((item: any, i: number) => {
                       const enrollment = item.enrollment || item.value || 0;
-                      const total = (geoMetrics?.breakdowns?.by_plan_type || planBreakdown)?.reduce((s: number, x: any) => s + (x.enrollment || x.value || 0), 0) || 1;
+                      const total = consolidatePlanTypes(geoMetrics?.breakdowns?.by_plan_type || planBreakdown)?.reduce((s: number, x: any) => s + (x.enrollment || x.value || 0), 0) || 1;
                       const pct = (enrollment / total) * 100;
                       return (
                         <div key={item.name} className="border-b border-gray-200 pb-2 last:border-0">
@@ -575,29 +619,6 @@ export default function SummaryPage() {
                         </div>
                       );
                     })}
-                  </div>
-                </div>
-
-                {/* Total Geographic Summary */}
-                <div className="bg-blue-50 rounded-lg p-3 col-span-2">
-                  <h4 className="text-sm font-semibold text-blue-800 mb-2">Total Geographic Coverage</h4>
-                  <div className="grid grid-cols-4 gap-4 text-center">
-                    <div>
-                      <div className="text-xl font-bold text-blue-600">{geoMetrics?.summary?.county_count?.toLocaleString() || '—'}</div>
-                      <div className="text-[10px] text-gray-500">Counties</div>
-                    </div>
-                    <div>
-                      <div className="text-xl font-bold text-green-600">{formatNumber(geoMetrics?.summary?.enrollment)}</div>
-                      <div className="text-[10px] text-gray-500">Enrollment</div>
-                    </div>
-                    <div>
-                      <div className="text-xl font-bold text-purple-600">{formatNumber(geoMetrics?.summary?.eligibles)}</div>
-                      <div className="text-[10px] text-gray-500">TAM</div>
-                    </div>
-                    <div>
-                      <div className="text-xl font-bold text-orange-600">{geoMetrics?.summary?.market_share?.toFixed(1) || '—'}%</div>
-                      <div className="text-[10px] text-gray-500">Market Share</div>
-                    </div>
                   </div>
                 </div>
 
