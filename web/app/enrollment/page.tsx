@@ -150,8 +150,11 @@ export default function EnrollmentPage() {
 
   // Fetch timeseries data using v5 (Gold layer) - no fallback
   // Supports multiple payers by making parallel requests
-  const { data: rawTimeseriesData, isLoading } = useQuery<TimeseriesData>({
+  const { data: rawTimeseriesData, isLoading, isError, error } = useQuery<TimeseriesData>({
     queryKey: ["enrollment-timeseries-v5", selectedPlanTypes, selectedProductTypes, selectedSnpTypes, selectedGroupTypes, selectedStates, selectedCounties, selectedParentOrgs, showIndustryTotal, groupBy, dataSource],
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+    staleTime: 5 * 60 * 1000, // 5 minutes
     queryFn: async () => {
       // Build base params (without parent_org)
       const buildBaseParams = () => {
@@ -678,7 +681,15 @@ export default function EnrollmentPage() {
           {/* Total Display */}
           <div className="ml-auto text-right bg-gray-50 px-4 py-2 rounded-lg">
             <div className="text-xs text-gray-500 uppercase tracking-wide">Total Enrollment</div>
-            <div className="text-2xl font-bold text-gray-900">{formatNumber(latestTotal)}</div>
+            <div className="text-2xl font-bold text-gray-900">
+              {activeLoading ? (
+                <span className="text-gray-400">Loading...</span>
+              ) : isError ? (
+                <span className="text-red-500 text-sm">Error loading data</span>
+              ) : (
+                formatNumber(latestTotal)
+              )}
+            </div>
           </div>
         </div>
       </div>
